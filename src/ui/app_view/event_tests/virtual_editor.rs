@@ -631,3 +631,68 @@ fn report_includes_virtual_click_diagnostics() {
     assert!(report.contains("virtual_click_event#"));
     assert!(report.contains("Left cursor=2:4"));
 }
+
+#[test]
+fn typing_right_after_opening_from_the_tree_edits_the_top_of_the_file() {
+    let mut t = virtual_app("big.txt");
+    assert!(t.app().left.cursor_position.is_none());
+    t.type_text("X");
+    // DISCREPANCY(D16): without clicking into the large-file editor, typed text still goes
+    // into it (nothing holds keyboard focus), at the very start of the file...
+    assert!(text(&t).starts_with("Xfn first_word"));
+    // ...while Delete is taken by the still-active file tree and asks to delete the file.
+    t.key(egui::Key::Delete);
+    assert!(t.has_label("Delete File"));
+    t.key(egui::Key::Escape);
+}
+
+#[test]
+fn page_bursts_prune_the_layout_caches() {
+    let mut t = virtual_app("big.txt");
+    t.click_virtual(0, 0);
+    for _ in 0..130 {
+        t.harness.input_mut().events.push(egui::Event::Key {
+            key: egui::Key::PageDown,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        t.step();
+    }
+    let cache = t.app().left.virtual_line_layout_cache.as_ref().unwrap();
+    assert!(cache.entries.len() <= 4096);
+    let numbers = t
+        .app()
+        .left
+        .virtual_line_number_layout_cache
+        .as_ref()
+        .unwrap();
+    assert!(numbers.entries.len() <= 4096);
+}
+
+#[test]
+fn double_clicking_leading_whitespace_selects_nothing() {
+    let mut t = virtual_app("big.txt");
+    let pos = t.virtual_pos(1, 0);
+    t.double_click_at(pos);
+    assert!(!t.app().left.has_virtual_text_selection());
+}
+
+#[test]
+fn huge_external_rust_files_skip_highlighting() {
+    let mut t = TestApp::plain();
+    let library = t.tmp.join(".cargo").join("registry").join("huge");
+    std::fs::create_dir_all(&library).unwrap();
+    let mut source = String::new();
+    while source.len() < 600 * 1024 {
+        source.push_str("pub fn generated_function_with_a_long_name() -> u32 { 1 }\n");
+    }
+    std::fs::write(library.join("huge.rs"), source).unwrap();
+    t.platform.queue_folder_pick(&library);
+    t.click_nth("Add", 0);
+    t.click_first("huge.rs");
+    t.steps(3);
+    let cache = t.app().left.syntax_highlight_cache.as_ref().unwrap();
+    assert!(cache.spans.is_empty());
+}

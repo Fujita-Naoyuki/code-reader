@@ -877,3 +877,55 @@ fn long_navigation_chains_collapse_the_breadcrumb_and_follow_renames() {
     );
     let _ = renamed;
 }
+
+#[test]
+fn late_rust_responses_after_a_timeout_are_ignored() {
+    let mut t = rust_app();
+    let request = f12_on_helper(&mut t);
+    t.app_mut()
+        .pending_rust_lsp_request
+        .as_mut()
+        .unwrap()
+        .started_at = Instant::now() - Duration::from_secs(10);
+    t.step();
+    t.app_mut().status_message = "after timeout".to_owned();
+    let target = location(&t.path("src/main.rs"), 0, 3);
+    respond(&mut t, RUST, &request, Ok(vec![target]));
+    assert_eq!(t.status(), "after timeout");
+}
+
+#[test]
+fn renaming_a_file_updates_the_other_panes_history() {
+    let mut t = rust_app();
+    // Navigate in the right pane: its history now points at main.rs.
+    let from = t.label_rect("main.rs").center();
+    t.drag(from, egui::pos2(1250.0, 400.0));
+    t.steps(2);
+    assert_eq!(t.app().focused_pane, super::super::Pane::Right);
+    let right_text = t.editor_text_rect();
+    let (row_height, char_width) = t.editor_metrics();
+    t.steps(25);
+    t.click_at(egui::pos2(
+        right_text.left() + char_width * 17.3,
+        right_text.top() + 2.0 + row_height * 5.5,
+    ));
+    t.key(egui::Key::F12);
+    let request = t
+        .platform
+        .lsp_requests(RUST)
+        .into_iter()
+        .find(|request| request.kind == LspRequestKind::Definition)
+        .unwrap();
+    let other = t.path("src/other.rs");
+    respond(&mut t, RUST, &request, Ok(vec![location(&other, 0, 7)]));
+    assert_eq!(t.app().right_navigation_history.back.len(), 1);
+
+    // Rename main.rs from the tree (the left pane opens it; the right keeps its history).
+    t.click_at(egui::pos2(500.0, 400.0));
+    t.click_first("main.rs");
+    t.key(egui::Key::F2);
+    t.type_text("entry");
+    t.key(egui::Key::Enter);
+    let renamed = t.path("src/entry.rs");
+    assert_eq!(t.app().right_navigation_history.back[0].path, renamed);
+}

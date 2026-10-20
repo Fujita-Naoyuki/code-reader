@@ -235,3 +235,122 @@ fn history_graph_draws_branches_and_merges() {
         egui::vec2(0.0, -50.0),
     );
 }
+
+#[test]
+fn selection_ignores_non_text_rows_and_spans_empty_lines() {
+    let mut t = TestApp::builder()
+        .file("a.txt", "one\n\nthree\nfour\n")
+        .file("b.txt", "bee\n")
+        .git()
+        .build();
+    t.write("a.txt", "ONE\n\nthree\nFOUR\n");
+    t.write("b.txt", "BEE\n");
+    t.click("Git");
+    t.steps(2);
+    t.click("All Diffs");
+    // Row 0 is the section title, row 1 the first file header: neither starts a selection.
+    t.click_at(row_pos(&t, 0, 200.0));
+    assert!(!t.app().left.has_diff_text_selection());
+    // A drag that ends on the next file's header selects up to the rows in between,
+    // including the empty context line.
+    t.steps(20);
+    let from = row_pos(&t, 2, 120.0);
+    let to = row_pos(&t, 9, 120.0);
+    t.drag(from, to);
+    t.copy_event();
+    let copied = t.platform.clipboard_text().unwrap_or_default();
+    assert!(
+        copied.contains("\n\n") || copied.contains("three"),
+        "{copied:?}"
+    );
+    // Pressing below the last row does nothing.
+    t.steps(20);
+    t.click_at(egui::pos2(row_pos(&t, 0, 200.0).x, 700.0));
+
+    t.click("Side by Side");
+    t.steps(2);
+    t.click_at(row_pos(&t, 1, 200.0));
+    t.click_at(row_pos(&t, 3, 10.0));
+    t.steps(20);
+    let unified = t.label_rect("Unified");
+    let center = (unified.left() + 1480.0) * 0.5;
+    t.click_at(egui::pos2(center, row_pos(&t, 3, 0.0).y));
+    t.steps(20);
+    t.drag(row_pos(&t, 2, 90.0), row_pos(&t, 9, 90.0));
+    t.copy_event();
+}
+
+#[test]
+fn collapsed_files_hide_their_hidden_line_markers_and_messages() {
+    let mut t = diff_app();
+    let mut png = vec![0x89, b'P', b'N', b'G', 0, 0, 0, 0];
+    png.extend(std::iter::repeat_n(0u8, 64));
+    std::fs::write(t.path("blob.bin.txt"), &png).unwrap();
+    t.git(&["add", "blob.bin.txt"]);
+    t.write("no-newline.txt", "x");
+    t.git(&["add", "no-newline.txt"]);
+    t.git(&["commit", "-qm", "base"]);
+    std::fs::write(t.path("blob.bin.txt"), [png.as_slice(), &[1u8]].concat()).unwrap();
+    t.write("no-newline.txt", "y");
+    t.click("Git");
+    t.steps(2);
+    t.click("All Diffs");
+    assert!(
+        t.app()
+            .left
+            .text
+            .as_str()
+            .contains("No newline at end of file")
+    );
+    // Collapse every file header in turn.
+    for row in 0..12 {
+        t.steps(20);
+        t.click_at(row_pos(&t, row, 200.0));
+    }
+    t.click("Side by Side");
+    t.steps(2);
+}
+
+#[test]
+fn light_theme_diff_and_one_sided_scrolling() {
+    let mut t = TestApp::builder()
+        .file("short.txt", "a\n")
+        .git()
+        .light()
+        .build();
+    t.write("short.txt", &format!("{}\n", "b".repeat(400)));
+    t.click("Git");
+    t.steps(2);
+    let plus = t.nth_label_rect("+", 0);
+    t.click_at(egui::pos2(plus.left() - 120.0, plus.center().y));
+    t.click("Side by Side");
+    t.steps(2);
+    let y = t.harness.ctx.content_rect().bottom() - 48.0;
+    let unified = t.label_rect("Unified");
+    let center = (unified.left() + 1480.0) * 0.5;
+    t.steps(20);
+    t.drag(egui::pos2(center + 40.0, y), egui::pos2(center + 200.0, y));
+    assert!(t.app().left.diff_side_right_scroll_x > 0.0);
+    // The old column is short: its scrollbar stays inactive.
+    t.steps(20);
+    t.click_at(egui::pos2(unified.left() + 40.0, y));
+    assert_eq!(t.app().left.diff_side_left_scroll_x, 0.0);
+}
+
+#[test]
+fn history_rows_with_many_long_refs_are_elided() {
+    let mut t = TestApp::builder().file("a.txt", "a\n").git().build();
+    for name in [
+        "feature/a-really-long-branch-name-one",
+        "feature/a-really-long-branch-name-two",
+        "feature/a-really-long-branch-name-three",
+        "feature/a-really-long-branch-name-four",
+    ] {
+        t.git(&["branch", name]);
+    }
+    t.click("Git");
+    t.steps(2);
+    t.click("History");
+    t.steps(3);
+    assert!(t.has_label("1 commits"));
+}

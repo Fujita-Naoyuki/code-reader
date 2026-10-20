@@ -345,3 +345,16 @@ fn search_box_runs_when_enter_arrives_with_the_focus_request() {
     t.step();
     t.assert_status("Workspace search started: needle");
 }
+
+#[test]
+fn workspace_search_box_handles_enter_in_the_frame_it_gets_focus() {
+    let mut t = search_workspace();
+    t.ctrl_shift(egui::Key::F);
+    t.type_text("needle");
+    t.click_at(egui::pos2(1000.0, 500.0));
+    t.keys_in_one_frame(&[
+        (egui::Key::F, super::support::CTRL | egui::Modifiers::SHIFT),
+        (egui::Key::Enter, egui::Modifiers::NONE),
+    ]);
+    t.assert_status("Workspace search started: needle");
+}

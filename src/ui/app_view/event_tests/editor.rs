@@ -6,7 +6,7 @@ use eframe::egui;
 use crate::core::location::Position;
 use crate::core::lsp::LspRequestKind;
 
-use super::support::{TestApp, location};
+use super::support::{CTRL, TestApp, location};
 
 fn editor_app() -> TestApp {
     let mut t = TestApp::builder()
@@ -320,4 +320,44 @@ fn right_pane_actions_apply_to_the_right_editor() {
     t.assert_status_containing("Saved file:");
     t.ctrl(egui::Key::F);
     assert!(t.app().left.source_search.open);
+}
+
+#[test]
+fn find_box_handles_enter_in_the_frame_it_gets_focus() {
+    let mut t = editor_app();
+    t.ctrl(egui::Key::F);
+    t.type_text("alpha");
+    t.click_text(1, 2);
+    // Ctrl+F re-focuses the box and Enter / Shift+Enter arrive in that same frame.
+    t.keys_in_one_frame(&[
+        (egui::Key::F, CTRL),
+        (egui::Key::Enter, egui::Modifiers::NONE),
+    ]);
+    assert!(t.has_label("2/3"));
+    t.click_text(1, 2);
+    t.steps(40);
+    t.keys_in_one_frame(&[
+        (egui::Key::F, CTRL),
+        (egui::Key::Enter, egui::Modifiers::SHIFT),
+    ]);
+    // Ctrl+F restarts at the first match, so Shift+Enter wraps to the last one.
+    assert!(t.has_label("3/3"));
+}
+
+#[cfg(windows)]
+#[test]
+fn renaming_a_locked_file_reports_the_os_error() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let mut t = TestApp::plain();
+    t.click_first("notes.txt");
+    // Another program holds the file open without sharing.
+    let _lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(t.path("notes.txt"))
+        .unwrap();
+    t.key(egui::Key::F2);
+    t.type_text("locked");
+    t.key(egui::Key::Enter);
+    assert!(t.has_label_containing("Failed to rename file:"));
 }

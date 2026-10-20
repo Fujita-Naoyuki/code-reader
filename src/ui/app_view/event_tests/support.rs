@@ -858,6 +858,29 @@ impl TestApp {
         self.step();
     }
 
+    /// Delivers several key events in one single frame (as a fast typist or a key repeat
+    /// burst would), unlike `key()` which spreads press and release over frames.
+    pub fn keys_in_one_frame(&mut self, events: &[(egui::Key, egui::Modifiers)]) {
+        let modifiers = events
+            .iter()
+            .fold(egui::Modifiers::NONE, |all, (_, modifiers)| {
+                all | *modifiers
+            });
+        self.set_modifiers(modifiers);
+        for (key, modifiers) in events {
+            self.harness.input_mut().events.push(egui::Event::Key {
+                key: *key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: *modifiers,
+            });
+        }
+        self.step();
+        self.set_modifiers(egui::Modifiers::NONE);
+        self.step();
+    }
+
     /// Sends text input to whatever widget currently has keyboard focus.
     pub fn type_text(&mut self, text: &str) {
         self.send(egui::Event::Text(text.to_owned()));
