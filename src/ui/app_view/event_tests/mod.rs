@@ -3,6 +3,7 @@
 
 mod support;
 
+mod csv;
 mod editor;
 mod git;
 mod lsp;
