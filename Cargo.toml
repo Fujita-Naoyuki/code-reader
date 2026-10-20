@@ -25,3 +25,7 @@ webbrowser = "1.2.1"
 [profile.release]
 strip = true
 lto = true
+
+[dev-dependencies]
+egui_kittest = { version = "=0.34.2", features = ["eframe"] }
+tempfile = "3"

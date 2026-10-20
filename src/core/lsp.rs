@@ -180,6 +180,73 @@ impl LspClient {
     }
 }
 
+/// In-memory counterpart of an [`LspClient`] for tests.
+///
+/// It receives the commands the client queues and lets the test send back responses and
+/// server events, as a real `rust-analyzer` / `gopls` worker would. Dropping it makes the
+/// client's requests fail with "LSP worker is not running".
+#[cfg(test)]
+pub struct LspTestServer {
+    commands: Receiver<LspCommand>,
+    events: Sender<LspClientEvent>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct LspTestRequest {
+    pub request_id: u64,
+    pub kind: LspRequestKind,
+    pub document: Option<Document>,
+    pub position: Option<Position>,
+}
+
+#[cfg(test)]
+impl LspClient {
+    pub fn in_memory(server_name: &str) -> (Self, LspTestServer) {
+        let (command_sender, command_receiver) = mpsc::channel();
+        let (event_sender, event_receiver) = mpsc::channel();
+        let client = Self {
+            server_name: server_name.to_owned(),
+            command_sender,
+            event_receiver,
+            next_request_id: 0,
+        };
+        let server = LspTestServer {
+            commands: command_receiver,
+            events: event_sender,
+        };
+        (client, server)
+    }
+}
+
+#[cfg(test)]
+impl LspTestServer {
+    /// Drains every request the client queued so far.
+    pub fn take_requests(&self) -> Vec<LspTestRequest> {
+        self.commands
+            .try_iter()
+            .map(|command| LspTestRequest {
+                request_id: command.request_id,
+                kind: command.kind,
+                document: command.document,
+                position: command.position,
+            })
+            .collect()
+    }
+
+    pub fn respond(&self, request: &LspTestRequest, result: Result<Vec<Location>, String>) {
+        self.send(LspClientEvent::Response(LspLocationResponse {
+            request_id: request.request_id,
+            kind: request.kind,
+            result,
+        }));
+    }
+
+    pub fn send(&self, event: LspClientEvent) {
+        let _ = self.events.send(event);
+    }
+}
+
 #[derive(Debug)]
 struct LspCommand {
     request_id: u64,

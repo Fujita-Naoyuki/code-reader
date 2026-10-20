@@ -55,6 +55,7 @@ use crate::features::{
     search::{SearchResult, search_everywhere},
 };
 use crate::languages::LanguageRegistry;
+use crate::platform;
 
 const DEFAULT_TAB_WIDTH: usize = 4;
 const MARKDOWN_SIDE_PANE_DEFAULT_WIDTH: f32 = 180.0;
@@ -224,8 +225,8 @@ impl CodeReaderApp {
         configure_fonts(&creation_context.egui_ctx);
         egui_extras::install_image_loaders(&creation_context.egui_ctx);
 
-        let state_path = state_file_path();
-        let fallback_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let state_path = platform::current().state_file_path();
+        let fallback_root = platform::current().current_dir();
         let app_state =
             load_state(&state_path).unwrap_or_else(|| AppState::new(fallback_root.clone()));
         let current_session = app_state
@@ -473,7 +474,7 @@ impl CodeReaderApp {
     }
 
     fn open_external_url(&mut self, url: &str) {
-        match webbrowser::open(url) {
+        match platform::current().open_url(url) {
             Ok(()) => {
                 self.status_message = format!("Opened external URL: {url}");
             }
@@ -518,7 +519,7 @@ impl CodeReaderApp {
         self.current_session()
             .and_then(|session| session.root_folders.first())
             .cloned()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+            .unwrap_or_else(|| platform::current().current_dir())
     }
 
     fn selected_workspace_path(&self) -> Option<&Path> {
@@ -1217,7 +1218,7 @@ impl CodeReaderApp {
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        self.go_lsp_client = Some(LspClient::start(LspServerConfig::go(roots)));
+        self.go_lsp_client = Some(platform::current().start_lsp(LspServerConfig::go(roots)));
         self.go_lsp_debug.last_status = "starting".to_owned();
     }
 
@@ -1549,7 +1550,8 @@ impl CodeReaderApp {
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        self.rust_lsp_client = Some(LspClient::start(LspServerConfig::rust_analyzer(roots)));
+        self.rust_lsp_client =
+            Some(platform::current().start_lsp(LspServerConfig::rust_analyzer(roots)));
         self.rust_lsp_debug.mark_started();
     }
 
@@ -13153,6 +13155,7 @@ fn git_output(cwd: &Path, args: &[&str]) -> Result<String, String> {
 fn git_command_output(cwd: &Path, args: &[&str]) -> Result<String, String> {
     let mut command = Command::new("git");
     hide_windows_console(&mut command);
+    isolate_git_config_for_tests(&mut command);
     let output = command
         .args(args)
         .current_dir(cwd)
@@ -13180,6 +13183,23 @@ fn git_command_output(cwd: &Path, args: &[&str]) -> Result<String, String> {
             format!("{stdout}\n{stderr}")
         })
     }
+}
+
+/// Tests run real `git` against temporary repositories. Ignore the developer's global and
+/// system configuration (signing, hooks, aliases, credential helpers) so results are stable.
+fn isolate_git_config_for_tests(command: &mut Command) {
+    #[cfg(test)]
+    {
+        command
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env(
+                "GIT_CONFIG_GLOBAL",
+                std::env::temp_dir().join("code-reader-test-gitconfig"),
+            )
+            .env("GIT_TERMINAL_PROMPT", "0");
+    }
+    #[cfg(not(test))]
+    let _ = command;
 }
 
 fn hide_windows_console(command: &mut Command) {
@@ -20329,19 +20349,11 @@ fn raw_escape_pressed(input: &egui::InputState) -> bool {
 }
 
 fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|error| format!("open clipboard: {error}"))?;
-    clipboard
-        .set_text(text.to_owned())
-        .map_err(|error| format!("set clipboard text: {error}"))
+    platform::current().copy_text(text)
 }
 
 fn read_text_from_system_clipboard() -> Result<String, String> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|error| format!("open clipboard: {error}"))?;
-    clipboard
-        .get_text()
-        .map_err(|error| format!("get clipboard text: {error}"))
+    platform::current().read_text()
 }
 
 fn csv_selection_label(selection: CsvSelection) -> String {
@@ -20987,25 +20999,8 @@ fn is_external_rust_path(path: &Path) -> bool {
     display.contains("/.cargo/") || display.contains("/.rustup/")
 }
 
-fn state_file_path() -> PathBuf {
-    if let Some(app_data) = std::env::var_os("APPDATA") {
-        return PathBuf::from(app_data)
-            .join("naoyuki-editor")
-            .join("state.json");
-    }
-
-    if let Some(home) = std::env::var_os("USERPROFILE") {
-        return PathBuf::from(home)
-            .join(".config")
-            .join("naoyuki-editor")
-            .join("state.json");
-    }
-
-    PathBuf::from("state.json")
-}
-
 fn pick_workspace_folder(title: &str) -> Option<PathBuf> {
-    rfd::FileDialog::new().set_title(title).pick_folder()
+    platform::current().pick_folder(title)
 }
 
 fn file_title(path: &Path) -> String {
@@ -21093,6 +21088,9 @@ fn save_state(path: &Path, app_state: &AppState) -> Result<(), Box<dyn std::erro
     fs::write(path, text)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod event_tests;
 
 #[cfg(test)]
 mod tests {

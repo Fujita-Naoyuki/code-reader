@@ -1,0 +1,603 @@
+//! Shared fixtures for user-event tests.
+//!
+//! [`TestApp`] boots the real [`CodeReaderApp`] inside an `egui_kittest` harness, on a
+//! temporary workspace, with a [`FakePlatform`] installed. Tests then drive it the way a
+//! user would: clicking widgets by label, pressing keys, typing text and waiting for
+//! background work (indexing, search, Git) to land.
+
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    rc::Rc,
+    time::{Duration, Instant},
+};
+
+use eframe::egui;
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT, Queryable},
+};
+
+use crate::core::location::{Location, Position, Range};
+use crate::core::lsp::{
+    LspClient, LspClientEvent, LspServerConfig, LspServerEvent, LspServerEventKind, LspTestRequest,
+    LspTestServer,
+};
+use crate::languages::{GoLanguage, LanguageRegistry, RustLanguage};
+use crate::platform::{self, Platform, PlatformGuard};
+
+use super::super::CodeReaderApp;
+
+/// Scriptable stand-in for the OS. Every field can be inspected or changed from a test.
+pub(crate) struct FakePlatform {
+    pub state_path: PathBuf,
+    pub current_dir: PathBuf,
+    /// `None` means the clipboard is empty / unreadable.
+    pub clipboard: RefCell<Option<String>>,
+    pub clipboard_fails: Cell<bool>,
+    /// Answers for the next folder pickers, in order. An empty queue means "canceled".
+    pub folder_picks: RefCell<VecDeque<PathBuf>>,
+    pub picker_titles: RefCell<Vec<String>>,
+    pub opened_urls: RefCell<Vec<String>>,
+    pub open_url_fails: Cell<bool>,
+    pub lsp_servers: RefCell<Vec<FakeLspServer>>,
+}
+
+pub(crate) struct FakeLspServer {
+    pub config: LspServerConfig,
+    pub server: LspTestServer,
+}
+
+impl FakePlatform {
+    fn new(state_path: PathBuf, current_dir: PathBuf) -> Self {
+        Self {
+            state_path,
+            current_dir,
+            clipboard: RefCell::new(None),
+            clipboard_fails: Cell::new(false),
+            folder_picks: RefCell::new(VecDeque::new()),
+            picker_titles: RefCell::new(Vec::new()),
+            opened_urls: RefCell::new(Vec::new()),
+            open_url_fails: Cell::new(false),
+            lsp_servers: RefCell::new(Vec::new()),
+        }
+    }
+
+    pub fn clipboard_text(&self) -> Option<String> {
+        self.clipboard.borrow().clone()
+    }
+
+    pub fn set_clipboard(&self, text: &str) {
+        *self.clipboard.borrow_mut() = Some(text.to_owned());
+    }
+
+    pub fn queue_folder_pick(&self, path: &Path) {
+        self.folder_picks.borrow_mut().push_back(path.to_path_buf());
+    }
+
+    pub fn lsp_server_names(&self) -> Vec<String> {
+        self.lsp_servers
+            .borrow()
+            .iter()
+            .map(|server| server.config.server_name.clone())
+            .collect()
+    }
+
+    /// Drains the requests sent to the most recently started server with `server_name`.
+    pub fn lsp_requests(&self, server_name: &str) -> Vec<LspTestRequest> {
+        self.lsp_servers
+            .borrow()
+            .iter()
+            .rev()
+            .find(|server| server.config.server_name == server_name)
+            .map(|server| server.server.take_requests())
+            .unwrap_or_default()
+    }
+
+    pub fn lsp_send(&self, server_name: &str, event: LspClientEvent) {
+        if let Some(server) = self
+            .lsp_servers
+            .borrow()
+            .iter()
+            .rev()
+            .find(|server| server.config.server_name == server_name)
+        {
+            server.server.send(event);
+        }
+    }
+
+    pub fn lsp_respond(
+        &self,
+        server_name: &str,
+        request: &LspTestRequest,
+        result: Result<Vec<Location>, String>,
+    ) {
+        if let Some(server) = self
+            .lsp_servers
+            .borrow()
+            .iter()
+            .rev()
+            .find(|server| server.config.server_name == server_name)
+        {
+            server.server.respond(request, result);
+        }
+    }
+
+    /// Simulates the LSP worker process dying: later requests fail to queue.
+    pub fn stop_lsp_servers(&self) {
+        self.lsp_servers.borrow_mut().clear();
+    }
+}
+
+impl Platform for FakePlatform {
+    fn state_file_path(&self) -> PathBuf {
+        self.state_path.clone()
+    }
+
+    fn current_dir(&self) -> PathBuf {
+        self.current_dir.clone()
+    }
+
+    fn copy_text(&self, text: &str) -> Result<(), String> {
+        if self.clipboard_fails.get() {
+            return Err("clipboard unavailable".to_owned());
+        }
+        *self.clipboard.borrow_mut() = Some(text.to_owned());
+        Ok(())
+    }
+
+    fn read_text(&self) -> Result<String, String> {
+        if self.clipboard_fails.get() {
+            return Err("clipboard unavailable".to_owned());
+        }
+        self.clipboard
+            .borrow()
+            .clone()
+            .ok_or_else(|| "clipboard is empty".to_owned())
+    }
+
+    fn pick_folder(&self, title: &str) -> Option<PathBuf> {
+        self.picker_titles.borrow_mut().push(title.to_owned());
+        self.folder_picks.borrow_mut().pop_front()
+    }
+
+    fn open_url(&self, url: &str) -> Result<(), String> {
+        if self.open_url_fails.get() {
+            return Err("no browser".to_owned());
+        }
+        self.opened_urls.borrow_mut().push(url.to_owned());
+        Ok(())
+    }
+
+    fn start_lsp(&self, config: LspServerConfig) -> LspClient {
+        let (client, server) = LspClient::in_memory(&config.server_name);
+        self.lsp_servers
+            .borrow_mut()
+            .push(FakeLspServer { config, server });
+        client
+    }
+}
+
+pub(crate) struct TestAppBuilder {
+    files: Vec<(String, Vec<u8>)>,
+    state_json: Option<String>,
+    size: egui::Vec2,
+    git: bool,
+}
+
+impl TestAppBuilder {
+    pub fn file(mut self, relative_path: &str, content: &str) -> Self {
+        self.files
+            .push((relative_path.to_owned(), content.as_bytes().to_vec()));
+        self
+    }
+
+    pub fn bytes(mut self, relative_path: &str, content: &[u8]) -> Self {
+        self.files
+            .push((relative_path.to_owned(), content.to_vec()));
+        self
+    }
+
+    /// Persisted state to start from. `{root}` is replaced with the workspace root and
+    /// `{tmp}` with the temporary directory that holds it (both JSON-escaped).
+    pub fn state(mut self, json: &str) -> Self {
+        self.state_json = Some(json.to_owned());
+        self
+    }
+
+    pub fn size(mut self, width: f32, height: f32) -> Self {
+        self.size = egui::vec2(width, height);
+        self
+    }
+
+    /// Turns the workspace into a Git repository with one initial commit of all files.
+    pub fn git(mut self) -> Self {
+        self.git = true;
+        self
+    }
+
+    pub fn build(self) -> TestApp {
+        let temp_dir = tempfile::Builder::new()
+            .prefix("code-reader-test-")
+            .tempdir()
+            .expect("create temp dir");
+        let tmp = temp_dir.path().to_path_buf();
+        let root = tmp.join("workspace");
+        fs::create_dir_all(&root).expect("create workspace root");
+        for (relative_path, content) in &self.files {
+            let path = root.join(relative_path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create parent dir");
+            }
+            fs::write(&path, content).expect("write workspace file");
+        }
+        if self.git {
+            init_git_repository(&root);
+        }
+
+        let state_path = tmp.join("state").join("state.json");
+        if let Some(json) = &self.state_json {
+            fs::create_dir_all(state_path.parent().unwrap()).unwrap();
+            let json = json
+                .replace("{root}", &json_escape_path(&root))
+                .replace("{tmp}", &json_escape_path(&tmp));
+            fs::write(&state_path, json).unwrap();
+        }
+
+        let platform = Rc::new(FakePlatform::new(state_path, root.clone()));
+        let guard = platform::install(platform.clone());
+        let registry =
+            LanguageRegistry::with_languages(vec![Box::new(RustLanguage), Box::new(GoLanguage)]);
+        let harness = Harness::builder()
+            .with_size(self.size)
+            .with_max_steps(10_000)
+            .with_step_dt(1.0 / 60.0)
+            .build_eframe(move |creation_context| CodeReaderApp::new(creation_context, registry));
+
+        let mut app = TestApp {
+            harness,
+            platform,
+            root,
+            tmp,
+            _guard: guard,
+            _temp_dir: temp_dir,
+        };
+        app.step();
+        app
+    }
+}
+
+pub(crate) struct TestApp {
+    pub harness: Harness<'static, CodeReaderApp>,
+    pub platform: Rc<FakePlatform>,
+    pub root: PathBuf,
+    pub tmp: PathBuf,
+    _guard: PlatformGuard,
+    _temp_dir: tempfile::TempDir,
+}
+
+impl TestApp {
+    pub fn builder() -> TestAppBuilder {
+        TestAppBuilder {
+            files: Vec::new(),
+            state_json: None,
+            size: egui::vec2(1500.0, 820.0),
+            git: false,
+        }
+    }
+
+    /// Workspace with a couple of plain text files and no language servers.
+    pub fn plain() -> Self {
+        Self::builder()
+            .file("notes.txt", "alpha\nbeta\ngamma\n")
+            .file("docs/guide.txt", "guide line\n")
+            .build()
+    }
+
+    pub fn app(&self) -> &CodeReaderApp {
+        self.harness.state()
+    }
+
+    pub fn app_mut(&mut self) -> &mut CodeReaderApp {
+        self.harness.state_mut()
+    }
+
+    pub fn path(&self, relative_path: &str) -> PathBuf {
+        self.root.join(relative_path)
+    }
+
+    pub fn status(&self) -> String {
+        self.app().status_message.clone()
+    }
+
+    pub fn step(&mut self) {
+        self.harness.step();
+    }
+
+    pub fn steps(&mut self, count: usize) {
+        for _ in 0..count {
+            self.harness.step();
+        }
+    }
+
+    /// Runs frames until `condition` holds, failing the test after a few seconds.
+    pub fn wait_until(&mut self, what: &str, condition: impl Fn(&CodeReaderApp) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !condition(self.app()) {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            self.harness.step();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Waits for the initial background symbol indexing to finish.
+    pub fn wait_for_indexing(&mut self) {
+        self.wait_until("symbol indexing", |app| app.symbol_index_receiver.is_none());
+    }
+
+    pub fn has_label(&self, label: &str) -> bool {
+        self.harness.query_by_label(label).is_some()
+    }
+
+    pub fn has_label_containing(&self, text: &str) -> bool {
+        self.harness.query_by_label_contains(text).is_some()
+    }
+
+    pub fn click(&mut self, label: &str) {
+        self.harness.get_by_label(label).click();
+        self.steps(2);
+    }
+
+    /// Clicks the `index`-th widget (in tree order) whose label is exactly `label`.
+    pub fn click_nth(&mut self, label: &str, index: usize) {
+        let nodes = self.harness.query_all_by_label(label).collect::<Vec<_>>();
+        assert!(
+            nodes.len() > index,
+            "expected at least {} widgets labeled {label:?}, found {}",
+            index + 1,
+            nodes.len()
+        );
+        nodes[index].click();
+        self.steps(2);
+    }
+
+    pub fn click_containing(&mut self, text: &str) {
+        self.harness.get_by_label_contains(text).click();
+        self.steps(2);
+    }
+
+    pub fn right_click(&mut self, label: &str) {
+        self.harness.get_by_label(label).click_secondary();
+        self.steps(2);
+    }
+
+    pub fn hover(&mut self, label: &str) {
+        self.harness.get_by_label(label).hover();
+        self.steps(2);
+    }
+
+    pub fn label_rect(&self, label: &str) -> egui::Rect {
+        self.harness.get_by_label(label).rect()
+    }
+
+    pub fn click_at(&mut self, pos: egui::Pos2) {
+        self.click_at_with(pos, egui::Modifiers::NONE);
+    }
+
+    pub fn click_at_with(&mut self, pos: egui::Pos2, modifiers: egui::Modifiers) {
+        self.pointer_button(pos, true, modifiers);
+        self.pointer_button(pos, false, modifiers);
+        self.step();
+    }
+
+    pub fn double_click_at(&mut self, pos: egui::Pos2) {
+        self.click_at(pos);
+        self.click_at(pos);
+    }
+
+    pub fn secondary_click_at(&mut self, pos: egui::Pos2) {
+        self.harness.event(egui::Event::PointerMoved(pos));
+        for pressed in [true, false] {
+            self.harness.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        self.steps(2);
+    }
+
+    pub fn pointer_button(&mut self, pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) {
+        self.harness.event(egui::Event::PointerMoved(pos));
+        self.harness.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+        self.step();
+    }
+
+    pub fn drag(&mut self, from: egui::Pos2, to: egui::Pos2) {
+        self.pointer_button(from, true, egui::Modifiers::NONE);
+        let steps = 6;
+        for index in 1..=steps {
+            let t = index as f32 / steps as f32;
+            self.harness
+                .event(egui::Event::PointerMoved(from.lerp(to, t)));
+            self.step();
+        }
+        self.pointer_button(to, false, egui::Modifiers::NONE);
+    }
+
+    pub fn move_pointer(&mut self, pos: egui::Pos2) {
+        self.harness.event(egui::Event::PointerMoved(pos));
+        self.step();
+    }
+
+    pub fn scroll(&mut self, pos: egui::Pos2, delta: egui::Vec2) {
+        self.harness.event(egui::Event::PointerMoved(pos));
+        self.harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta,
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        self.steps(2);
+    }
+
+    pub fn key(&mut self, key: egui::Key) {
+        self.harness.key_press(key);
+        self.steps(2);
+    }
+
+    pub fn key_with(&mut self, modifiers: egui::Modifiers, key: egui::Key) {
+        self.harness.key_press_modifiers(modifiers, key);
+        self.steps(2);
+    }
+
+    pub fn ctrl(&mut self, key: egui::Key) {
+        self.key_with(egui::Modifiers::COMMAND, key);
+    }
+
+    pub fn ctrl_shift(&mut self, key: egui::Key) {
+        self.key_with(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, key);
+    }
+
+    pub fn alt(&mut self, key: egui::Key) {
+        self.key_with(egui::Modifiers::ALT, key);
+    }
+
+    pub fn shift(&mut self, key: egui::Key) {
+        self.key_with(egui::Modifiers::SHIFT, key);
+    }
+
+    /// Sends text input to whatever widget currently has keyboard focus.
+    pub fn type_text(&mut self, text: &str) {
+        self.harness.event(egui::Event::Text(text.to_owned()));
+        self.steps(2);
+    }
+
+    pub fn paste_event(&mut self, text: &str) {
+        self.harness.event(egui::Event::Paste(text.to_owned()));
+        self.steps(2);
+    }
+
+    pub fn copy_event(&mut self) {
+        self.harness.event(egui::Event::Copy);
+        self.steps(2);
+    }
+
+    pub fn cut_event(&mut self) {
+        self.harness.event(egui::Event::Cut);
+        self.steps(2);
+    }
+
+    /// Focuses the text field labeled/hinted `label` and types `text` into it.
+    pub fn type_into(&mut self, label: &str, text: &str) {
+        let node = self.harness.get_by_label(label);
+        node.focus();
+        node.type_text(text);
+        self.steps(2);
+    }
+
+    pub fn open_file(&mut self, relative_path: &str) {
+        let path = self.path(relative_path);
+        self.app_mut().open_file_in_focused_pane(path);
+        self.steps(2);
+    }
+
+    pub fn set_modifiers(&mut self, modifiers: egui::Modifiers) {
+        self.harness.input_mut().modifiers = modifiers;
+    }
+
+    /// Taps Shift twice quickly (the "Shift x2" Search Everywhere gesture).
+    pub fn press_shift_twice(&mut self) {
+        for _ in 0..2 {
+            self.set_modifiers(egui::Modifiers::SHIFT);
+            self.step();
+            self.set_modifiers(egui::Modifiers::NONE);
+            self.step();
+        }
+    }
+
+    pub fn git(&self, args: &[&str]) -> String {
+        run_git(&self.root, args)
+    }
+
+    pub fn write(&self, relative_path: &str, content: &str) {
+        let path = self.path(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, content).unwrap();
+    }
+
+    pub fn read(&self, relative_path: &str) -> String {
+        fs::read_to_string(self.path(relative_path)).unwrap()
+    }
+
+    pub fn saved_state(&self) -> String {
+        fs::read_to_string(&self.platform.state_path).unwrap_or_default()
+    }
+
+    pub fn node_labels_containing(&self, text: &str) -> Vec<String> {
+        self.harness
+            .query_all_by_label_contains(text)
+            .filter_map(|node| node.accesskit_node().label())
+            .collect()
+    }
+}
+
+pub(crate) fn location(path: &Path, line: u32, character: u32) -> Location {
+    let position = Position::new(line, character);
+    Location::new(path.to_path_buf(), Range::new(position, position))
+}
+
+pub(crate) fn server_event(kind: LspServerEventKind, method: &str) -> LspClientEvent {
+    LspClientEvent::ServerEvent(LspServerEvent {
+        kind,
+        method: method.to_owned(),
+        message: None,
+        diagnostics_count: None,
+    })
+}
+
+pub(crate) fn run_git(cwd: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            std::env::temp_dir().join("code-reader-test-gitconfig"),
+        )
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+pub(crate) fn init_git_repository(root: &Path) {
+    run_git(root, &["init", "-q", "-b", "main"]);
+    run_git(root, &["config", "user.name", "Test User"]);
+    run_git(root, &["config", "user.email", "test@example.com"]);
+    run_git(root, &["config", "commit.gpgsign", "false"]);
+    run_git(root, &["config", "core.autocrlf", "false"]);
+    run_git(root, &["add", "-A"]);
+    run_git(root, &["commit", "-q", "--allow-empty", "-m", "initial"]);
+}
+
+fn json_escape_path(path: &Path) -> String {
+    let json = serde_json::to_string(&path.display().to_string()).unwrap();
+    json[1..json.len() - 1].to_owned()
+}

@@ -5,6 +5,7 @@ mod app;
 mod core;
 mod features;
 mod languages;
+mod platform;
 mod ui;
 
 use std::process::ExitCode;
