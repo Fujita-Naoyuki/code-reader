@@ -3,7 +3,7 @@ use std::{
     env, fs,
     io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError},
     thread,
     time::Duration,
@@ -261,10 +261,18 @@ struct OpenDocument {
     text: String,
 }
 
+/// The byte streams of a running language server. `child` is the server process; it is
+/// `None` for the in-memory servers tests attach through `register_test_process`.
+struct LspProcess {
+    stdin: Box<dyn Write + Send>,
+    stdout: Box<dyn Read + Send>,
+    child: Option<Child>,
+}
+
 struct LspConnection {
     config: LspServerConfig,
-    child: Child,
-    stdin: ChildStdin,
+    child: Option<Child>,
+    stdin: Box<dyn Write + Send>,
     message_receiver: Receiver<Result<Value, String>>,
     event_sender: Sender<LspClientEvent>,
     next_lsp_request_id: i64,
@@ -274,7 +282,9 @@ struct LspConnection {
 impl Drop for LspConnection {
     fn drop(&mut self) {
         let _ = self.shutdown();
-        let _ = self.child.kill();
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+        }
     }
 }
 
@@ -375,32 +385,11 @@ impl LspConnection {
         config: &LspServerConfig,
         event_sender: Sender<LspClientEvent>,
     ) -> Result<Self, String> {
-        let mut command = Command::new(&config.command);
-        hide_windows_console(&mut command);
-        command
-            .args(&config.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        if let Some(root) = config.roots.first() {
-            command.current_dir(root);
-        }
-
-        let mut child = command.spawn().map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                format!("{} is not installed or not on PATH.", config.server_name)
-            } else {
-                format!("Failed to start {}: {error}", config.server_name)
-            }
-        })?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("Failed to open {} stdin.", config.server_name))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| format!("Failed to open {} stdout.", config.server_name))?;
+        let LspProcess {
+            stdin,
+            stdout,
+            child,
+        } = spawn_lsp_process(config)?;
         let (message_sender, message_receiver) = mpsc::channel();
         spawn_lsp_reader(stdout, message_sender);
 
@@ -724,8 +713,82 @@ fn hide_windows_console(command: &mut Command) {
     }
 }
 
+fn spawn_lsp_process(config: &LspServerConfig) -> Result<LspProcess, String> {
+    #[cfg(test)]
+    if let Some(process) = test_process(&config.command) {
+        return process;
+    }
+
+    let mut command = Command::new(&config.command);
+    hide_windows_console(&mut command);
+    command
+        .args(&config.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(root) = config.roots.first() {
+        command.current_dir(root);
+    }
+
+    let mut child = command.spawn().map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            format!("{} is not installed or not on PATH.", config.server_name)
+        } else {
+            format!("Failed to start {}: {error}", config.server_name)
+        }
+    })?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("Failed to open {} stdin.", config.server_name))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("Failed to open {} stdout.", config.server_name))?;
+    Ok(LspProcess {
+        stdin: Box::new(stdin),
+        stdout: Box::new(stdout),
+        child: Some(child),
+    })
+}
+
+/// Factory for an in-memory language server: returns the server's stdin / stdout streams.
+#[cfg(test)]
+pub type LspTestProcessFactory =
+    Box<dyn Fn() -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>), String> + Send + Sync>;
+
+#[cfg(test)]
+static TEST_PROCESSES: std::sync::Mutex<Vec<(String, std::sync::Arc<LspTestProcessFactory>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Makes `LspClient::start` connect to `factory` instead of spawning `command`. Tests use a
+/// unique command name per server so parallel tests do not see each other's servers.
+#[cfg(test)]
+pub fn register_test_process(command: &str, factory: LspTestProcessFactory) {
+    TEST_PROCESSES
+        .lock()
+        .unwrap()
+        .push((command.to_owned(), std::sync::Arc::new(factory)));
+}
+
+#[cfg(test)]
+fn test_process(command: &str) -> Option<Result<LspProcess, String>> {
+    let factory = TEST_PROCESSES
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == command)
+        .map(|(_, factory)| factory.clone())?;
+    Some(factory().map(|(stdin, stdout)| LspProcess {
+        stdin,
+        stdout,
+        child: None,
+    }))
+}
+
 fn spawn_lsp_reader(
-    stdout: ChildStdout,
+    stdout: Box<dyn Read + Send>,
     message_sender: Sender<Result<Value, String>>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
@@ -741,7 +804,7 @@ fn spawn_lsp_reader(
     })
 }
 
-fn read_lsp_message(reader: &mut BufReader<ChildStdout>) -> io::Result<Value> {
+fn read_lsp_message(reader: &mut impl BufRead) -> io::Result<Value> {
     let mut content_length = None;
     loop {
         let mut line = String::new();

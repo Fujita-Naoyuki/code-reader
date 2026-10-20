@@ -31,6 +31,7 @@ use crate::languages::{GoLanguage, LanguageRegistry, RustLanguage};
 use crate::platform::{self, Platform, PlatformGuard};
 
 use super::super::CodeReaderApp;
+use super::scripted_lsp::{Script, ScriptedLsp};
 
 /// Ctrl as egui-winit reports it on Windows: both `ctrl` and the logical `command` are set.
 pub(crate) const CTRL: egui::Modifiers = egui::Modifiers {
@@ -56,6 +57,23 @@ pub(crate) struct FakePlatform {
     pub lsp_servers: RefCell<Vec<FakeLspServer>>,
     /// When set, started language servers die immediately (their worker is gone).
     pub lsp_starts_dead: Cell<bool>,
+    /// How `start_lsp` connects language servers.
+    pub lsp_mode: Cell<LspMode>,
+    /// Scripts for scripted servers, by server name ("rust-analyzer", "gopls").
+    pub lsp_scripts: RefCell<Vec<(String, Script)>>,
+    /// Scripted servers started so far, newest last.
+    pub scripted_servers: RefCell<Vec<(String, ScriptedLsp)>>,
+}
+
+/// How the fake platform provides language servers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LspMode {
+    /// Channel-level fake: tests answer requests directly (no protocol code runs).
+    Channel,
+    /// The app's real LSP worker talks JSON-RPC to an in-process scripted server.
+    Scripted,
+    /// The app's real LSP worker tries to spawn an executable that does not exist.
+    Missing,
 }
 
 pub(crate) struct FakeLspServer {
@@ -76,7 +94,22 @@ impl FakePlatform {
             open_url_fails: Cell::new(false),
             lsp_servers: RefCell::new(Vec::new()),
             lsp_starts_dead: Cell::new(false),
+            lsp_mode: Cell::new(LspMode::Channel),
+            lsp_scripts: RefCell::new(Vec::new()),
+            scripted_servers: RefCell::new(Vec::new()),
         }
+    }
+
+    /// The newest scripted server started for `server_name`.
+    pub fn scripted(&self, server_name: &str) -> std::cell::Ref<'_, ScriptedLsp> {
+        std::cell::Ref::map(self.scripted_servers.borrow(), |servers| {
+            &servers
+                .iter()
+                .rev()
+                .find(|(name, _)| name == server_name)
+                .unwrap_or_else(|| panic!("no scripted {server_name} server started"))
+                .1
+        })
     }
 
     pub fn clipboard_text(&self) -> Option<String> {
@@ -185,7 +218,30 @@ impl Platform for FakePlatform {
         Ok(())
     }
 
-    fn start_lsp(&self, config: LspServerConfig) -> LspClient {
+    fn start_lsp(&self, mut config: LspServerConfig) -> LspClient {
+        match self.lsp_mode.get() {
+            LspMode::Channel => {}
+            LspMode::Scripted => {
+                let script = {
+                    let mut scripts = self.lsp_scripts.borrow_mut();
+                    scripts
+                        .iter()
+                        .position(|(name, _)| name == &config.server_name)
+                        .map(|index| scripts.remove(index).1)
+                        .unwrap_or_default()
+                };
+                let (command, server) = ScriptedLsp::register(&config.server_name, script);
+                config.command = command;
+                self.scripted_servers
+                    .borrow_mut()
+                    .push((config.server_name.clone(), server));
+                return LspClient::start(config);
+            }
+            LspMode::Missing => {
+                config.command = "code-reader-test-missing-language-server".to_owned();
+                return LspClient::start(config);
+            }
+        }
         let (client, server) = LspClient::in_memory(&config.server_name);
         if !self.lsp_starts_dead.get() {
             self.lsp_servers
@@ -203,6 +259,8 @@ pub(crate) struct TestAppBuilder {
     git: bool,
     theme: egui::Theme,
     lsp_starts_dead: bool,
+    lsp_mode: LspMode,
+    lsp_scripts: Vec<(String, Script)>,
 }
 
 impl TestAppBuilder {
@@ -233,6 +291,19 @@ impl TestAppBuilder {
     /// Runs with the light theme (the default follows the dark system theme).
     pub fn light(mut self) -> Self {
         self.theme = egui::Theme::Light;
+        self
+    }
+
+    /// Language servers run the app's real LSP worker against a scripted JSON-RPC server.
+    pub fn scripted_lsp(mut self, server_name: &str, script: Script) -> Self {
+        self.lsp_mode = LspMode::Scripted;
+        self.lsp_scripts.push((server_name.to_owned(), script));
+        self
+    }
+
+    /// Language servers are real processes that are not installed.
+    pub fn missing_lsp(mut self) -> Self {
+        self.lsp_mode = LspMode::Missing;
         self
     }
 
@@ -278,6 +349,8 @@ impl TestAppBuilder {
 
         let platform = Rc::new(FakePlatform::new(state_path, root.clone()));
         platform.lsp_starts_dead.set(self.lsp_starts_dead);
+        platform.lsp_mode.set(self.lsp_mode);
+        *platform.lsp_scripts.borrow_mut() = self.lsp_scripts;
         let guard = platform::install(platform.clone());
         let registry =
             LanguageRegistry::with_languages(vec![Box::new(RustLanguage), Box::new(GoLanguage)]);
@@ -329,6 +402,8 @@ impl TestApp {
             git: false,
             theme: egui::Theme::Dark,
             lsp_starts_dead: false,
+            lsp_mode: LspMode::Channel,
+            lsp_scripts: Vec::new(),
         }
     }
 
