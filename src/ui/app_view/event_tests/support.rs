@@ -31,6 +31,15 @@ use crate::platform::{self, Platform, PlatformGuard};
 
 use super::super::CodeReaderApp;
 
+/// Ctrl as egui-winit reports it on Windows: both `ctrl` and the logical `command` are set.
+pub(crate) const CTRL: egui::Modifiers = egui::Modifiers {
+    alt: false,
+    ctrl: true,
+    shift: false,
+    mac_cmd: false,
+    command: true,
+};
+
 /// Scriptable stand-in for the OS. Every field can be inspected or changed from a test.
 pub(crate) struct FakePlatform {
     pub state_path: PathBuf,
@@ -262,10 +271,13 @@ impl TestAppBuilder {
             platform,
             root,
             tmp,
+            statuses: Vec::new(),
             _guard: guard,
             _temp_dir: temp_dir,
         };
         app.step();
+        app.wait_for_indexing();
+        app.clear_statuses();
         app
     }
 }
@@ -275,6 +287,10 @@ pub(crate) struct TestApp {
     pub platform: Rc<FakePlatform>,
     pub root: PathBuf,
     pub tmp: PathBuf,
+    /// Every distinct status-bar message seen so far, oldest first. Background work
+    /// (indexing, scans) often replaces a message within a frame or two, so tests assert
+    /// on this history instead of only the latest message.
+    pub statuses: Vec<String>,
     _guard: PlatformGuard,
     _temp_dir: tempfile::TempDir,
 }
@@ -297,6 +313,12 @@ impl TestApp {
             .build()
     }
 
+    /// Opens a floating window by setting state directly and lets it settle: egui lays a new
+    /// window out invisibly on its first frame, so clicks need a few frames to land.
+    pub fn settle(&mut self) {
+        self.steps(3);
+    }
+
     pub fn app(&self) -> &CodeReaderApp {
         self.harness.state()
     }
@@ -305,8 +327,10 @@ impl TestApp {
         self.harness.state_mut()
     }
 
+    /// Absolute path of a workspace file; `/` separators are converted for the platform.
     pub fn path(&self, relative_path: &str) -> PathBuf {
-        self.root.join(relative_path)
+        self.root
+            .join(relative_path.replace('/', std::path::MAIN_SEPARATOR_STR))
     }
 
     pub fn status(&self) -> String {
@@ -315,11 +339,51 @@ impl TestApp {
 
     pub fn step(&mut self) {
         self.harness.step();
+        self.record_status();
+    }
+
+    fn record_status(&mut self) {
+        let status = self.harness.state().status_message.clone();
+        if self.statuses.last() != Some(&status) {
+            self.statuses.push(status);
+        }
+    }
+
+    /// True if any status message seen so far equals `message`.
+    pub fn saw_status(&self, message: &str) -> bool {
+        self.statuses.iter().any(|status| status == message)
+    }
+
+    /// True if any status message seen so far contains `text`.
+    pub fn saw_status_containing(&self, text: &str) -> bool {
+        self.statuses.iter().any(|status| status.contains(text))
+    }
+
+    #[track_caller]
+    pub fn assert_status(&self, message: &str) {
+        assert!(
+            self.saw_status(message),
+            "status {message:?} not seen; history: {:#?}",
+            self.statuses
+        );
+    }
+
+    #[track_caller]
+    pub fn assert_status_containing(&self, text: &str) {
+        assert!(
+            self.saw_status_containing(text),
+            "no status containing {text:?}; history: {:#?}",
+            self.statuses
+        );
+    }
+
+    pub fn clear_statuses(&mut self) {
+        self.statuses.clear();
     }
 
     pub fn steps(&mut self, count: usize) {
         for _ in 0..count {
-            self.harness.step();
+            self.step();
         }
     }
 
@@ -327,8 +391,26 @@ impl TestApp {
     pub fn wait_until(&mut self, what: &str, condition: impl Fn(&CodeReaderApp) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !condition(self.app()) {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            self.harness.step();
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {what}; statuses: {:#?}",
+                self.statuses
+            );
+            self.step();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Runs frames until a status message containing `text` has been shown.
+    pub fn wait_for_status(&mut self, text: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !self.saw_status_containing(text) {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for status {text:?}; statuses: {:#?}",
+                self.statuses
+            );
+            self.step();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -346,41 +428,73 @@ impl TestApp {
         self.harness.query_by_label_contains(text).is_some()
     }
 
+    pub fn count_label(&self, label: &str) -> usize {
+        self.harness.query_all_by_label(label).count()
+    }
+
+    pub fn nth_label_rect(&self, label: &str, index: usize) -> egui::Rect {
+        self.harness
+            .query_all_by_label(label)
+            .nth(index)
+            .unwrap_or_else(|| panic!("no widget #{index} labeled {label:?}"))
+            .rect()
+    }
+
+    // Input helpers queue exactly one egui event per frame, so the status history above
+    // sees every intermediate message (kittest would otherwise run several frames inside
+    // one `step()` call).
+
+    fn send(&mut self, event: egui::Event) {
+        self.harness.event(event);
+        self.step();
+    }
+
     pub fn click(&mut self, label: &str) {
-        self.harness.get_by_label(label).click();
-        self.steps(2);
+        let rect = self.harness.get_by_label(label).rect();
+        self.click_at(rect.center());
+    }
+
+    /// Clicks the first widget labeled `label` in tree order. The sidebar is laid out before
+    /// the editors and floating windows, so this picks a file-tree entry over an editor
+    /// title with the same text, or a sidebar button over a dialog title.
+    pub fn click_first(&mut self, label: &str) {
+        self.click_nth(label, 0);
     }
 
     /// Clicks the `index`-th widget (in tree order) whose label is exactly `label`.
     pub fn click_nth(&mut self, label: &str, index: usize) {
-        let nodes = self.harness.query_all_by_label(label).collect::<Vec<_>>();
+        let count = self.count_label(label);
         assert!(
-            nodes.len() > index,
-            "expected at least {} widgets labeled {label:?}, found {}",
+            count > index,
+            "expected at least {} widgets labeled {label:?}, found {count}",
             index + 1,
-            nodes.len()
         );
-        nodes[index].click();
-        self.steps(2);
+        let rect = self.nth_label_rect(label, index);
+        self.click_at(rect.center());
     }
 
     pub fn click_containing(&mut self, text: &str) {
-        self.harness.get_by_label_contains(text).click();
-        self.steps(2);
+        let rect = self.harness.get_by_label_contains(text).rect();
+        self.click_at(rect.center());
     }
 
     pub fn right_click(&mut self, label: &str) {
-        self.harness.get_by_label(label).click_secondary();
-        self.steps(2);
+        let rect = self.harness.get_by_label(label).rect();
+        self.secondary_click_at(rect.center());
     }
 
     pub fn hover(&mut self, label: &str) {
-        self.harness.get_by_label(label).hover();
-        self.steps(2);
+        let rect = self.harness.get_by_label(label).rect();
+        self.move_pointer(rect.center());
+        self.step();
     }
 
     pub fn label_rect(&self, label: &str) -> egui::Rect {
         self.harness.get_by_label(label).rect()
+    }
+
+    pub fn label_containing_rect(&self, text: &str) -> egui::Rect {
+        self.harness.get_by_label_contains(text).rect()
     }
 
     pub fn click_at(&mut self, pos: egui::Pos2) {
@@ -388,38 +502,42 @@ impl TestApp {
     }
 
     pub fn click_at_with(&mut self, pos: egui::Pos2, modifiers: egui::Modifiers) {
+        self.set_modifiers(modifiers);
         self.pointer_button(pos, true, modifiers);
         self.pointer_button(pos, false, modifiers);
+        self.set_modifiers(egui::Modifiers::NONE);
         self.step();
     }
 
     pub fn double_click_at(&mut self, pos: egui::Pos2) {
-        self.click_at(pos);
-        self.click_at(pos);
+        self.pointer_button(pos, true, egui::Modifiers::NONE);
+        self.pointer_button(pos, false, egui::Modifiers::NONE);
+        self.pointer_button(pos, true, egui::Modifiers::NONE);
+        self.pointer_button(pos, false, egui::Modifiers::NONE);
+        self.step();
     }
 
     pub fn secondary_click_at(&mut self, pos: egui::Pos2) {
-        self.harness.event(egui::Event::PointerMoved(pos));
+        self.send(egui::Event::PointerMoved(pos));
         for pressed in [true, false] {
-            self.harness.event(egui::Event::PointerButton {
+            self.send(egui::Event::PointerButton {
                 pos,
                 button: egui::PointerButton::Secondary,
                 pressed,
                 modifiers: egui::Modifiers::NONE,
             });
         }
-        self.steps(2);
+        self.step();
     }
 
     pub fn pointer_button(&mut self, pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers) {
-        self.harness.event(egui::Event::PointerMoved(pos));
-        self.harness.event(egui::Event::PointerButton {
+        self.send(egui::Event::PointerMoved(pos));
+        self.send(egui::Event::PointerButton {
             pos,
             button: egui::PointerButton::Primary,
             pressed,
             modifiers,
         });
-        self.step();
     }
 
     pub fn drag(&mut self, from: egui::Pos2, to: egui::Pos2) {
@@ -427,45 +545,51 @@ impl TestApp {
         let steps = 6;
         for index in 1..=steps {
             let t = index as f32 / steps as f32;
-            self.harness
-                .event(egui::Event::PointerMoved(from.lerp(to, t)));
-            self.step();
+            self.send(egui::Event::PointerMoved(from.lerp(to, t)));
         }
         self.pointer_button(to, false, egui::Modifiers::NONE);
     }
 
     pub fn move_pointer(&mut self, pos: egui::Pos2) {
-        self.harness.event(egui::Event::PointerMoved(pos));
-        self.step();
+        self.send(egui::Event::PointerMoved(pos));
     }
 
     pub fn scroll(&mut self, pos: egui::Pos2, delta: egui::Vec2) {
-        self.harness.event(egui::Event::PointerMoved(pos));
-        self.harness.event(egui::Event::MouseWheel {
+        self.send(egui::Event::PointerMoved(pos));
+        self.send(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
             delta,
             modifiers: egui::Modifiers::NONE,
             phase: egui::TouchPhase::Move,
         });
-        self.steps(2);
+        self.step();
     }
 
     pub fn key(&mut self, key: egui::Key) {
-        self.harness.key_press(key);
-        self.steps(2);
+        self.key_with(egui::Modifiers::NONE, key);
     }
 
     pub fn key_with(&mut self, modifiers: egui::Modifiers, key: egui::Key) {
-        self.harness.key_press_modifiers(modifiers, key);
-        self.steps(2);
+        self.set_modifiers(modifiers);
+        for pressed in [true, false] {
+            self.send(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers,
+            });
+        }
+        self.set_modifiers(egui::Modifiers::NONE);
+        self.step();
     }
 
     pub fn ctrl(&mut self, key: egui::Key) {
-        self.key_with(egui::Modifiers::COMMAND, key);
+        self.key_with(CTRL, key);
     }
 
     pub fn ctrl_shift(&mut self, key: egui::Key) {
-        self.key_with(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, key);
+        self.key_with(CTRL | egui::Modifiers::SHIFT, key);
     }
 
     pub fn alt(&mut self, key: egui::Key) {
@@ -478,31 +602,23 @@ impl TestApp {
 
     /// Sends text input to whatever widget currently has keyboard focus.
     pub fn type_text(&mut self, text: &str) {
-        self.harness.event(egui::Event::Text(text.to_owned()));
-        self.steps(2);
+        self.send(egui::Event::Text(text.to_owned()));
+        self.step();
     }
 
     pub fn paste_event(&mut self, text: &str) {
-        self.harness.event(egui::Event::Paste(text.to_owned()));
-        self.steps(2);
+        self.send(egui::Event::Paste(text.to_owned()));
+        self.step();
     }
 
     pub fn copy_event(&mut self) {
-        self.harness.event(egui::Event::Copy);
-        self.steps(2);
+        self.send(egui::Event::Copy);
+        self.step();
     }
 
     pub fn cut_event(&mut self) {
-        self.harness.event(egui::Event::Cut);
-        self.steps(2);
-    }
-
-    /// Focuses the text field labeled/hinted `label` and types `text` into it.
-    pub fn type_into(&mut self, label: &str, text: &str) {
-        let node = self.harness.get_by_label(label);
-        node.focus();
-        node.type_text(text);
-        self.steps(2);
+        self.send(egui::Event::Cut);
+        self.step();
     }
 
     pub fn open_file(&mut self, relative_path: &str) {
@@ -543,13 +659,6 @@ impl TestApp {
 
     pub fn saved_state(&self) -> String {
         fs::read_to_string(&self.platform.state_path).unwrap_or_default()
-    }
-
-    pub fn node_labels_containing(&self, text: &str) -> Vec<String> {
-        self.harness
-            .query_all_by_label_contains(text)
-            .filter_map(|node| node.accesskit_node().label())
-            .collect()
     }
 }
 

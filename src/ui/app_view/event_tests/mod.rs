@@ -3,4 +3,7 @@
 
 mod support;
 
+mod search;
+mod sessions;
 mod smoke;
+mod workspace;
