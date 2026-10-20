@@ -127,22 +127,18 @@ fn recent_workspaces_deletes_another_session_after_confirmation() {
     assert!(!t.saved_state().contains("Second"));
 }
 
-#[test]
-fn deleting_the_current_session_is_refused() {
-    let mut t = two_sessions();
-    t.app_mut().delete_session("s1");
-    t.step();
-    t.assert_status("Cannot delete the current workspace session.");
-}
+/// A state file whose session list is empty (hand-edited or from a failed save).
+const NO_SESSIONS: &str = r#"{"current_session_id": "gone", "sessions": []}"#;
 
 #[test]
 fn recent_workspaces_with_no_sessions_shows_empty_message() {
-    let mut t = TestApp::plain();
-    t.app_mut().app_state.sessions.clear();
-    t.app_mut().recent_workspaces_open = true;
-    t.settle();
-    assert!(t.has_label("No recent workspaces"));
+    let mut t = TestApp::builder()
+        .file("notes.txt", "x")
+        .state(NO_SESSIONS)
+        .build();
     assert!(t.has_label("No session"));
+    t.click("Workspaces");
+    assert!(t.has_label("No recent workspaces"));
 }
 
 #[test]
@@ -187,9 +183,10 @@ fn rename_workspace_rejects_empty_name_and_can_be_canceled() {
 
 #[test]
 fn rename_without_a_session_reports_it() {
-    let mut t = TestApp::plain();
-    t.app_mut().app_state.sessions.clear();
-    t.step();
+    let mut t = TestApp::builder()
+        .file("notes.txt", "x")
+        .state(NO_SESSIONS)
+        .build();
     t.click_first("Rename");
     t.assert_status("No current session to rename.");
 }

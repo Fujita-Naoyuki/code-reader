@@ -299,6 +299,9 @@ impl TestAppBuilder {
         };
         app.step();
         app.wait_for_indexing();
+        // The periodic external-change scan runs on a background thread every second, which
+        // would make tests timing-dependent. Tests that need it call `scan_workspace()`.
+        app.postpone_workspace_scan();
         app.clear_statuses();
         app
     }
@@ -443,6 +446,21 @@ impl TestApp {
             self.step();
             std::thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    /// Pushes the next periodic external-change scan far into the future.
+    pub fn postpone_workspace_scan(&mut self) {
+        self.app_mut().next_workspace_change_poll = Instant::now() + Duration::from_secs(3600);
+    }
+
+    /// Runs the external-change scan now and waits until its result has been applied.
+    pub fn scan_workspace(&mut self) {
+        self.app_mut().next_workspace_change_poll = Instant::now();
+        self.step();
+        self.wait_until("workspace scan", |app| {
+            app.workspace_change_receiver.is_none()
+        });
+        self.postpone_workspace_scan();
     }
 
     /// Waits for the initial background symbol indexing to finish.

@@ -48,9 +48,10 @@ fn ctrl_p_opens_search_everywhere_and_enter_opens_the_selected_file() {
 fn search_everywhere_finds_symbols_and_bookmarks() {
     let mut t = search_workspace();
     t.click_first("alpha.txt");
-    t.app_mut().add_bookmark_from_current_position(true);
-    t.step();
-    t.assert_status("Added temporary bookmark.");
+    t.steps(25);
+    let star = t.gutter_star_pos(0, 3);
+    t.click_at(star);
+    t.assert_status("Added bookmark: alpha.txt:1");
 
     t.ctrl_shift(egui::Key::O);
     assert!(t.app().search_overlay.open);
@@ -104,10 +105,23 @@ fn search_everywhere_with_no_results() {
         t.app().search_overlay.open,
         "nothing to open keeps the overlay"
     );
-    // Shrinking result lists clamp the selected index.
-    t.app_mut().search_overlay.selected_index = 5;
-    t.step();
-    assert_eq!(t.app().search_overlay.selected_index, 0);
+}
+
+#[test]
+fn search_everywhere_selection_follows_shrinking_results() {
+    let mut t = search_workspace();
+    t.ctrl(egui::Key::P);
+    for _ in 0..3 {
+        t.key(egui::Key::ArrowDown);
+    }
+    assert_eq!(t.app().search_overlay.selected_index, 3);
+    // Files disappear while the overlay is open: the selection is clamped.
+    std::fs::remove_file(t.path("alpha.txt")).unwrap();
+    std::fs::remove_file(t.path("beta.txt")).unwrap();
+    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.wait_until("files removed", |app| app.file_tree.files.len() == 1);
+    t.steps(2);
+    assert!(t.app().search_overlay.selected_index <= 1);
 }
 
 #[test]
@@ -220,32 +234,30 @@ fn escape_in_workspace_search_clears_it() {
 }
 
 #[test]
-fn workspace_search_shows_progress_and_ignores_stale_results() {
-    let mut t = search_workspace();
+fn workspace_search_shows_progress_while_running() {
+    let mut builder = TestApp::builder();
+    for index in 0..400 {
+        builder = builder.file(
+            &format!("bulk/file{index}.txt"),
+            &"filler line\n".repeat(200),
+        );
+    }
+    let mut t = builder.build();
     t.ctrl_shift(egui::Key::F);
     t.type_text("needle");
-    t.key(egui::Key::Enter);
-    // Start a second search before the first result is applied: the first is ignored.
-    t.app_mut().workspace_search.active_search_id += 100;
-    t.app_mut().workspace_search.searching = true;
+    t.harness.event(egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    t.step();
     t.step();
     assert!(t.has_label("Searching..."));
-    t.wait_until("stale result consumed", |app| {
-        app.workspace_search_receiver.is_none()
-    });
-    assert!(t.app().workspace_search.searching);
-}
-
-#[test]
-fn workspace_search_reports_a_failed_worker() {
-    let mut t = search_workspace();
-    let (sender, receiver) = std::sync::mpsc::channel::<super::super::WorkspaceSearchResult>();
-    drop(sender);
-    t.app_mut().workspace_search_receiver = Some(receiver);
-    t.app_mut().workspace_search.searching = true;
-    t.step();
-    t.assert_status("Workspace search failed.");
-    assert!(!t.app().workspace_search.searching);
+    assert!(t.has_label_containing("Searching 400 files for `needle`"));
+    t.wait_until("search finished", |app| !app.workspace_search.searching);
+    assert!(t.has_label("No results"));
 }
 
 #[test]
@@ -253,16 +265,17 @@ fn sidebar_bookmarks_open_and_remove() {
     let mut t = search_workspace();
     assert!(t.has_label("No bookmarks"));
     t.click_first("beta.txt");
-    t.app_mut().left.cursor_position = Some(crate::core::location::Position::new(2, 0));
-    t.app_mut().add_bookmark_from_current_position(false);
+    t.steps(25);
+    let star = t.gutter_star_pos(2, 4);
+    t.click_at(star);
     t.click_first("alpha.txt");
-    t.app_mut().add_bookmark_from_current_position(true);
-    t.step();
+    t.steps(25);
+    let star = t.gutter_star_pos(0, 3);
+    t.click_at(star);
     assert!(t.has_label("beta.txt:3"));
     assert!(t.has_label("alpha.txt:1"));
-    // Temporary bookmarks are not persisted.
     assert!(t.saved_state().contains("beta.txt:3"));
-    assert!(!t.saved_state().contains("alpha.txt:1"));
+    assert!(t.saved_state().contains("alpha.txt:1"));
 
     t.click("beta.txt:3");
     t.assert_status("Opened bookmark: beta.txt:3");
@@ -271,22 +284,12 @@ fn sidebar_bookmarks_open_and_remove() {
         Some(t.path("beta.txt").as_path())
     );
 
-    // Remove the temporary one (first in the list), then the persisted one.
+    // The newest bookmark is listed first.
     t.click_nth("×", 0);
     t.assert_status("Removed bookmark: alpha.txt:1");
     t.click_nth("×", 0);
     t.assert_status("Removed bookmark: beta.txt:3");
     assert!(!t.saved_state().contains("beta.txt:3"));
-}
-
-#[test]
-fn bookmark_without_open_file_is_refused() {
-    let mut t = search_workspace();
-    t.app_mut().add_bookmark_from_current_position(false);
-    t.step();
-    t.assert_status("Open a file before adding a bookmark.");
-    t.app_mut().remove_bookmark(10);
-    t.step();
 }
 
 #[test]

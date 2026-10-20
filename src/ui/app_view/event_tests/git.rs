@@ -278,11 +278,11 @@ fn detached_head_cannot_be_published() {
     open_git(&mut t);
     let short = t.git(&["rev-parse", "--short", "HEAD"]);
     assert!(t.has_label(&format!("{short} ▾")));
-    // The menu disables "Publish Branch"; the action itself also refuses.
-    let repository = t.app().git_repositories[0].clone();
-    t.app_mut().push_git_repository(&repository);
-    t.step();
-    t.assert_status("Git publish failed: workspace | current HEAD is not on a named branch");
+    // The menu disables "Publish Branch" for a detached HEAD.
+    t.click("...");
+    t.app_mut().status_message = "marker".to_owned();
+    t.click("Publish Branch");
+    assert_eq!(t.status(), "marker");
 }
 
 #[test]
@@ -348,9 +348,14 @@ fn switch_branch_window() {
     t.git(&["commit", "-qam", "main side"]);
     t.git(&["switch", "-q", "develop"]);
     t.write("tracked.txt", "dirty\n");
-    let repository = t.app().git_repositories[0].clone();
-    t.app_mut().switch_git_branch(&repository, "main");
-    t.step();
+    open_git(&mut t);
+    t.click("develop ▾");
+    // "develop" is current (first row); "main" is the second row.
+    let header = t.label_rect("current: develop");
+    t.click_at(egui::pos2(
+        header.left() - 100.0,
+        header.bottom() + 24.0 + 24.0,
+    ));
     t.assert_status_containing("Git branch switch failed: workspace");
 }
 
@@ -358,16 +363,29 @@ fn switch_branch_window() {
 fn branch_windows_close_when_repository_disappears() {
     let mut t = repo();
     open_git(&mut t);
-    t.app_mut().git_switch_branch_root = Some(t.tmp.join("gone"));
-    t.app_mut().git_create_branch_root = Some(t.tmp.join("gone"));
-    t.step();
+    t.click("main ▾");
+    assert!(t.app().git_switch_branch_root.is_some());
+    // The repository goes away; the next workspace scan reloads Git and closes the window.
+    std::fs::remove_dir_all(t.path(".git")).unwrap();
+    t.write("trigger.txt", "x");
+    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.wait_until("repository gone", |app| app.git_repositories.is_empty());
     assert!(t.app().git_switch_branch_root.is_none());
-    assert!(t.app().git_create_branch_root.is_none());
+    t.steps(2);
+    assert!(!t.has_label("Switch Branch"));
+}
 
-    t.app_mut().git_switch_branch_root = Some(t.tmp.join("gone"));
-    t.app_mut().git_create_branch_root = Some(t.tmp.join("gone"));
-    t.app_mut().refresh_git_view();
-    assert!(t.app().git_switch_branch_root.is_none());
+#[test]
+fn create_branch_window_closes_when_repository_disappears() {
+    let mut t = repo();
+    open_git(&mut t);
+    t.click("...");
+    t.click("Create Branch...");
+    assert!(t.app().git_create_branch_root.is_some());
+    std::fs::remove_dir_all(t.path(".git")).unwrap();
+    t.write("trigger.txt", "x");
+    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.wait_until("repository gone", |app| app.git_repositories.is_empty());
     assert!(t.app().git_create_branch_root.is_none());
 }
 
@@ -459,22 +477,21 @@ fn untracked_file_diff_and_all_diffs() {
 }
 
 #[test]
-fn all_diffs_is_disabled_without_changes_and_reports_errors() {
+fn all_diffs_and_history_report_a_vanished_repository() {
     let mut t = repo();
+    t.write("tracked.txt", "changed\n");
     open_git(&mut t);
-    let repository = t.app().git_repositories[0].clone();
-    t.app_mut().open_git_all_diff(&repository);
-    t.step();
-    assert_eq!(t.app().left.text.as_str(), "No diffs.");
-
-    let mut broken = repository.clone();
-    broken.root = t.tmp.join("not-a-repo");
-    std::fs::create_dir_all(&broken.root).unwrap();
-    t.app_mut().open_git_all_diff(&broken);
-    t.step();
+    // Let the periodic workspace scan pick up the edit now, then keep it from reloading
+    // Git while the test runs, so the stale repository entry stays on screen.
+    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.wait_for_status("Detected 1 external file changes");
+    t.app_mut().next_workspace_change_poll =
+        std::time::Instant::now() + std::time::Duration::from_secs(3600);
+    // The sidebar still shows the repository when it disappears.
+    std::fs::remove_dir_all(t.path(".git")).unwrap();
+    t.click("All Diffs");
     t.assert_status_containing("Open all diffs failed: workspace");
-    t.app_mut().open_git_history(&broken);
-    t.step();
+    t.click("History");
     t.assert_status_containing("Open Git graph failed: workspace");
 }
 
@@ -529,30 +546,20 @@ fn history_commit_details_and_commit_diff() {
 }
 
 #[test]
-fn commit_details_report_errors() {
+fn commit_details_show_refs_and_report_diff_errors() {
     let mut t = repo();
+    add_origin(&t, true);
+    t.git(&["tag", "v1"]);
     open_git(&mut t);
-    let commit = super::super::GitCommitNode {
-        hash: "0000000000000000000000000000000000000000".to_owned(),
-        short_hash: "00000000".to_owned(),
-        parents: Vec::new(),
-        author: "nobody".to_owned(),
-        date: "2020-01-01".to_owned(),
-        refs: vec![
-            "origin/main".to_owned(),
-            "tag: v1".to_owned(),
-            "main".to_owned(),
-        ],
-        subject: "Missing".to_owned(),
-    };
-    let root = t.root.clone();
-    t.app_mut()
-        .open_git_commit_details("workspace".to_owned(), root, commit);
-    t.settle();
+    t.click("History");
+    let header = t.label_rect("1 commits");
+    t.click_at(egui::pos2(header.left() + 300.0, header.bottom() + 52.0));
     assert!(t.has_label("Refs"));
     assert!(t.has_label("origin/main"));
+    assert!(t.has_label("tag: v1"));
+    std::fs::remove_dir_all(t.path(".git")).unwrap();
     t.click("Open Diff");
-    t.assert_status_containing("Open commit diff failed: 00000000");
+    t.assert_status_containing("Open commit diff failed:");
 }
 
 #[test]

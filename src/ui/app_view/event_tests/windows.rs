@@ -2,9 +2,7 @@
 
 use eframe::egui;
 
-use super::super::{
-    CsvSelection, GitDiscardRequest, MarkdownFocusTarget, MarkdownMode, Pane, SidebarView,
-};
+use super::super::{CsvSelection, MarkdownFocusTarget, MarkdownMode, Pane};
 use super::support::{CTRL, TestApp};
 
 #[test]
@@ -21,15 +19,29 @@ fn f1_and_help_button_open_help_and_escape_closes_it() {
     assert!(t.app().shortcuts_help_open);
 }
 
-/// Opens Help in a given UI state and returns the context title shown at its top.
-fn help_title(t: &mut TestApp) -> String {
-    t.app_mut().shortcuts_help_open = true;
+/// Presses F1 and checks the context title at the top of the Help window.
+#[track_caller]
+fn assert_help_context(t: &mut TestApp, title: &str) {
+    t.key(egui::Key::F1);
     t.settle();
-    let title = t.app().shortcut_context_title().to_owned();
-    assert!(t.has_label(&title));
-    t.app_mut().shortcuts_help_open = false;
-    t.step();
-    title
+    assert_eq!(t.app().shortcut_context_title(), title);
+    assert!(t.has_label(title), "Help shows {title:?}");
+    let _ = t.app().context_shortcuts();
+}
+
+/// Closes the Help window (Escape goes to the topmost window that handles it).
+fn close_help(t: &mut TestApp) {
+    while t.app().shortcuts_help_open {
+        t.key(egui::Key::Escape);
+    }
+}
+
+fn status_keys(t: &TestApp) -> Vec<&'static str> {
+    t.app()
+        .status_bar_shortcuts()
+        .iter()
+        .map(|shortcut| shortcut.keys)
+        .collect()
 }
 
 #[test]
@@ -38,103 +50,122 @@ fn help_and_status_bar_follow_the_current_context() {
         .file("notes.txt", "alpha\n")
         .file("doc.md", "# Title\n\ntext\n\n## Sub\n")
         .file("table.csv", "a,b\n1,2\n")
+        .git()
         .build();
+    t.write("notes.txt", "changed\n");
 
-    assert_eq!(help_title(&mut t), "Source");
+    assert_help_context(&mut t, "Source");
+    close_help(&mut t);
 
-    t.app_mut().search_overlay.open = true;
-    assert_eq!(help_title(&mut t), "Search Everywhere");
-    assert!(t.has_label_containing("Enter Open | Up/Down Select"));
-    t.app_mut().close_search_overlay();
+    t.ctrl(egui::Key::P);
+    assert_help_context(&mut t, "Search Everywhere");
+    assert_eq!(status_keys(&t)[0], "Enter");
+    t.key(egui::Key::Escape);
+    close_help(&mut t);
 
-    t.app_mut().recent_workspaces_open = true;
-    assert_eq!(help_title(&mut t), "Recent Workspaces");
-    t.app_mut().recent_workspaces_open = false;
+    t.click("Workspaces");
+    assert_help_context(&mut t, "Recent Workspaces");
+    assert_eq!(status_keys(&t), vec!["Esc"]);
+    t.key(egui::Key::Escape);
+    close_help(&mut t);
 
-    let root = t.root.clone();
-    t.app_mut().git_create_branch_root = Some(root.clone());
-    assert_eq!(t.app().shortcut_context_title(), "Create Branch");
-    assert_eq!(t.app().status_bar_shortcuts()[0].keys, "Enter");
-    t.app_mut().git_create_branch_root = None;
+    t.click("Git");
+    t.steps(2);
+    t.click("...");
+    t.click("Create Branch...");
+    assert_help_context(&mut t, "Create Branch");
+    assert_eq!(status_keys(&t)[0], "Enter");
+    t.key(egui::Key::Escape);
+    close_help(&mut t);
 
-    t.app_mut().git_switch_branch_root = Some(root.clone());
-    assert_eq!(t.app().shortcut_context_title(), "Switch Branch");
-    t.app_mut().git_switch_branch_root = None;
+    t.click("main ▾");
+    assert_help_context(&mut t, "Switch Branch");
+    t.key(egui::Key::Escape);
+    close_help(&mut t);
 
-    t.app_mut().pending_git_discard = Some(GitDiscardRequest {
-        repository_root: root.clone(),
-        repository_name: "repo".to_owned(),
-        path: "x".to_owned(),
-        untracked: false,
-    });
-    assert_eq!(t.app().shortcut_context_title(), "Discard Changes");
-    assert_eq!(t.app().context_shortcuts()[0].label, "Confirm");
-    t.app_mut().pending_git_discard = None;
+    t.click("↶");
+    assert_help_context(&mut t, "Discard Changes");
+    // DISCREPANCY(D15): Help and the status bar offer "Enter: Confirm" for Switch Branch
+    // and Discard Changes, but those windows do not handle Enter at all.
+    assert_eq!(t.app().context_shortcuts()[0].keys, "Enter");
+    t.key(egui::Key::Enter);
+    assert!(t.app().pending_git_discard.is_some());
+    t.key(egui::Key::Escape);
+    close_help(&mut t);
 
-    t.app_mut().start_session_rename();
-    assert_eq!(help_title(&mut t), "Rename Workspace");
-    t.app_mut().cancel_session_rename();
+    t.click("Workspace");
+    t.click_first("Rename");
+    assert_help_context(&mut t, "Rename Workspace");
+    t.key(egui::Key::Escape);
+    close_help(&mut t);
 
-    t.app_mut().open_workspace_search();
-    assert_eq!(help_title(&mut t), "Workspace Search");
-    assert_eq!(t.app().status_bar_shortcuts()[1].label, "Clear");
-    t.app_mut().close_workspace_search();
-    t.app_mut().sidebar_view = SidebarView::Workspace;
+    t.ctrl_shift(egui::Key::F);
+    assert_help_context(&mut t, "Workspace Search");
+    assert_eq!(status_keys(&t)[1], "Esc");
+    close_help(&mut t);
+    t.click("Clear");
+    t.click("Workspace");
 
-    t.step();
     t.click_first("notes.txt");
-    assert_eq!(help_title(&mut t), "Workspace Files");
-    assert_eq!(t.app().status_bar_shortcuts()[0].keys, "F2");
-    t.app_mut().workspace_sidebar_active = false;
+    assert_help_context(&mut t, "Workspace Files");
+    assert_eq!(status_keys(&t)[0], "F2");
+    close_help(&mut t);
 
-    t.app_mut().open_source_search();
-    assert_eq!(help_title(&mut t), "Source Search");
-    t.app_mut().focused_editor_mut().close_source_search();
-    assert_eq!(help_title(&mut t), "Source");
+    t.click_text(0, 0);
+    t.ctrl(egui::Key::F);
+    assert_help_context(&mut t, "Source Search");
+    close_help(&mut t);
+    t.click("Close");
 
-    t.open_file("doc.md");
-    t.app_mut().workspace_sidebar_active = false;
-    assert_eq!(help_title(&mut t), "Markdown Preview");
-    for (target, title) in [
-        (MarkdownFocusTarget::Pages, "Markdown Pages"),
-        (MarkdownFocusTarget::Outline, "Markdown Outline"),
-        (MarkdownFocusTarget::Body, "Markdown Preview"),
-    ] {
-        t.app_mut().left.markdown_focus_target = target;
-        assert_eq!(t.app().shortcut_context_title(), title);
-        let _ = t.app().status_bar_shortcuts();
-        let _ = t.app().context_shortcuts();
+    t.click_first("doc.md");
+    t.click_at(egui::pos2(900.0, 500.0));
+    assert_help_context(&mut t, "Markdown Preview");
+    assert_eq!(status_keys(&t)[0], "Ctrl+PgUp/PgDn");
+    close_help(&mut t);
+    t.alt(egui::Key::Num2);
+    assert_help_context(&mut t, "Markdown Source");
+    assert_eq!(status_keys(&t)[0], "Alt+1/2/3");
+    close_help(&mut t);
+    t.alt(egui::Key::Num3);
+    assert_help_context(&mut t, "Markdown Both");
+    close_help(&mut t);
+    t.alt(egui::Key::Num1);
+    t.ctrl(egui::Key::F);
+    assert_help_context(&mut t, "Markdown Search");
+    close_help(&mut t);
+    t.click("Close");
+
+    // "Markdown Pages" / "Markdown Outline" need a focus target users cannot reach (D11);
+    // their entries are checked by driving the focus target directly.
+    for mode in [MarkdownMode::Preview, MarkdownMode::Both] {
+        t.app_mut().left.markdown_mode = mode;
+        for (target, title) in [
+            (MarkdownFocusTarget::Pages, "Markdown Pages"),
+            (MarkdownFocusTarget::Outline, "Markdown Outline"),
+        ] {
+            t.app_mut().left.markdown_focus_target = target;
+            assert_eq!(t.app().shortcut_context_title(), title);
+            let _ = t.app().status_bar_shortcuts();
+            let _ = t.app().context_shortcuts();
+        }
     }
-    t.app_mut().left.markdown_mode = MarkdownMode::Both;
-    for (target, title) in [
-        (MarkdownFocusTarget::Pages, "Markdown Pages"),
-        (MarkdownFocusTarget::Outline, "Markdown Outline"),
-        (MarkdownFocusTarget::Body, "Markdown Both"),
-    ] {
-        t.app_mut().left.markdown_focus_target = target;
-        assert_eq!(t.app().shortcut_context_title(), title);
-        let _ = t.app().status_bar_shortcuts();
-        let _ = t.app().context_shortcuts();
-    }
-    t.app_mut().left.markdown_mode = MarkdownMode::Markdown;
-    assert_eq!(help_title(&mut t), "Markdown Source");
-    let _ = t.app().status_bar_shortcuts();
-    t.app_mut().left.markdown_mode = MarkdownMode::Preview;
     t.app_mut().left.markdown_focus_target = MarkdownFocusTarget::Body;
-    assert!(t.app_mut().open_markdown_search());
-    assert_eq!(help_title(&mut t), "Markdown Search");
-    t.app_mut().left.markdown_search.open = false;
+    t.app_mut().left.markdown_mode = MarkdownMode::Preview;
 
-    t.open_file("table.csv");
-    t.app_mut().workspace_sidebar_active = false;
-    assert_eq!(help_title(&mut t), "CSV Grid");
-    assert_eq!(t.app().status_bar_shortcuts()[0].keys, "Tab");
-    t.app_mut().left.csv_selection = Some(CsvSelection::Rows { start: 0, end: 0 });
-    assert_eq!(t.app().status_bar_shortcuts()[0].keys, "Ctrl+C");
-    t.app_mut().left.csv_selection = None;
-
-    let pane = t.app().focused_pane;
-    assert_eq!(pane, Pane::Left);
+    t.click_first("table.csv");
+    t.click_at(egui::pos2(1200.0, 600.0));
+    assert_help_context(&mut t, "CSV Grid");
+    assert_eq!(status_keys(&t)[0], "Tab");
+    close_help(&mut t);
+    // Selecting a row switches the hints to row/column actions.
+    let field = t.text_field_rects()[0];
+    t.click_at(egui::pos2(field.left() - 40.0, field.center().y));
+    assert_eq!(status_keys(&t)[0], "Ctrl+C");
+    assert!(matches!(
+        t.app().left.csv_selection,
+        Some(CsvSelection::Rows { .. })
+    ));
+    assert_eq!(t.app().focused_pane, Pane::Left);
 }
 
 #[test]
@@ -196,7 +227,10 @@ fn ctrl_shift_a_copies_the_ai_command() {
     t.ctrl_shift(egui::Key::A);
     t.assert_status("AI command copy failed: clipboard unavailable");
 
-    t.app_mut().app_state.cli_agent.executable.clear();
+    t.platform.clipboard_fails.set(false);
+    t.click("AI Cmd");
+    t.fill_text_field(1, "");
+    t.key(egui::Key::Escape);
     t.steps(40);
     t.ctrl_shift(egui::Key::A);
     t.assert_status("AI command unavailable: AI command executable is empty.");
@@ -228,14 +262,25 @@ fn report_copies_diagnostics() {
         .build();
     t.click("src");
     t.click_first("main.rs");
-    let location = super::support::location(&t.path("src/main.rs"), 0, 3);
-    t.app_mut()
-        .definition_candidates
-        .push(super::super::DefinitionCandidate {
-            label: "candidate".to_owned(),
-            location,
-            preview: None,
-        });
+    // Two definition candidates from rust-analyzer end up in the report.
+    t.click_text(0, 3);
+    t.key(egui::Key::F12);
+    let request = t
+        .platform
+        .lsp_requests("rust-analyzer")
+        .into_iter()
+        .find(|request| request.kind == crate::core::lsp::LspRequestKind::Definition)
+        .unwrap();
+    let main = t.path("src/main.rs");
+    t.platform.lsp_respond(
+        "rust-analyzer",
+        &request,
+        Ok(vec![
+            super::support::location(&main, 0, 3),
+            super::support::location(&main, 0, 0),
+        ]),
+    );
+    t.steps(3);
     t.click("Report");
     t.assert_status("Copied diagnostics report.");
     let report = t.platform.clipboard_text().unwrap();
@@ -243,7 +288,8 @@ fn report_copies_diagnostics() {
     assert!(report.contains("App details:"));
     assert!(report.contains("Editor details:"));
     assert!(report.contains("Symbol index: total="));
-    assert!(report.contains("candidate ->"));
+    assert!(report.contains("Definition locations: 2"));
+    assert!(report.contains(" -> "));
     assert!(report.contains("rust_lsp=true"));
 
     t.platform.clipboard_fails.set(true);
@@ -253,9 +299,10 @@ fn report_copies_diagnostics() {
 
 #[test]
 fn report_without_session_or_command() {
-    let mut t = TestApp::plain();
-    t.app_mut().app_state.sessions.clear();
-    t.step();
+    let mut t = TestApp::builder()
+        .file("notes.txt", "x")
+        .state(r#"{"current_session_id": "gone", "sessions": []}"#)
+        .build();
     t.click("Report");
     let report = t.platform.clipboard_text().unwrap();
     assert!(report.contains("session=none"));

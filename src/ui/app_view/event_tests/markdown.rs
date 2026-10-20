@@ -484,8 +484,7 @@ fn empty_and_heading_only_documents() {
     t.steps(2);
     assert!(t.has_label("Empty Markdown document"));
     assert!(t.has_label("No pages"));
-    t.app_mut().left.markdown_show_outline = true;
-    t.steps(2);
+    t.click_text_label("Outline");
     assert!(t.has_label("No outline"));
     t.ctrl(egui::Key::PageDown);
 

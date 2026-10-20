@@ -104,10 +104,9 @@ fn undo_redo_and_edits_at_document_edges() {
     t.key(egui::Key::Backspace);
     assert_eq!(text(&t), big_text(), "backspace at start does nothing");
 
-    t.ctrl(egui::Key::End);
-    t.key(egui::Key::End);
-    let last = (LINES) as u32;
-    t.app_mut().left.cursor_position = Some(Position::new(last, 0));
+    // Ctrl+A puts the cursor at the very end; ArrowRight collapses the selection there.
+    t.key_with(CTRL, egui::Key::A);
+    t.key(egui::Key::ArrowRight);
     t.key(egui::Key::Delete);
     assert_eq!(text(&t), big_text(), "delete at end does nothing");
 }
@@ -433,8 +432,16 @@ fn rust_large_files_are_highlighted_in_the_background() {
 
 #[test]
 fn read_only_large_files_ignore_edits() {
-    let mut t = virtual_app("big.txt");
-    t.app_mut().left.read_only = true;
+    // Large files inside a library folder (here under .cargo) open read-only.
+    let mut t = TestApp::plain();
+    let library = t.tmp.join(".cargo").join("registry").join("big");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(library.join("big.txt"), big_text()).unwrap();
+    t.platform.queue_folder_pick(&library);
+    t.click_nth("Add", 0);
+    t.click_first("big.txt");
+    t.steps(2);
+    assert!(t.app().left.read_only);
     t.click_virtual(0, 0);
     t.type_text("nope");
     t.key(egui::Key::Backspace);
@@ -447,8 +454,12 @@ fn read_only_large_files_ignore_edits() {
 #[test]
 fn unfocused_right_pane_virtual_editor_drops_preedit() {
     let mut t = virtual_app("big.txt");
+    t.click_virtual(0, 0);
+    t.harness
+        .event(egui::Event::Ime(egui::ImeEvent::Preedit("x".to_owned())));
+    t.step();
+    assert_eq!(t.app().left.virtual_ime_preedit.as_deref(), Some("x"));
     t.click("Right Pane");
-    t.app_mut().left.virtual_ime_preedit = Some("x".to_owned());
     // Focus the right pane: the left one is no longer focused.
     let right = t.nth_label_rect("No file open", 0);
     t.click_at(right.center() + egui::vec2(0.0, 60.0));
@@ -459,7 +470,7 @@ fn unfocused_right_pane_virtual_editor_drops_preedit() {
 fn edits_without_a_cursor_and_no_op_replacements() {
     let mut t = virtual_app("big.txt");
     // Nothing clicked yet: Backspace / Delete have no cursor to work from.
-    t.app_mut().left.cursor_position = None;
+    assert!(t.app().left.cursor_position.is_none());
     t.key(egui::Key::Backspace);
     t.key(egui::Key::Delete);
     assert_eq!(text(&t), big_text());
@@ -472,10 +483,8 @@ fn edits_without_a_cursor_and_no_op_replacements() {
     assert!(t.app().left.virtual_undo_stack.is_empty());
 
     // An IME update together with a key that edits nothing still repaints.
-    t.key(egui::Key::End);
-    t.ctrl(egui::Key::End);
-    let last_line = LINES as u32;
-    t.app_mut().left.cursor_position = Some(Position::new(last_line, 0));
+    t.key_with(CTRL, egui::Key::A);
+    t.key(egui::Key::ArrowRight);
     t.harness
         .event(egui::Event::Ime(egui::ImeEvent::Preedit("a".to_owned())));
     t.harness.event(egui::Event::Key {

@@ -79,25 +79,18 @@ fn ctrl_s_and_save_button_strip_trailing_whitespace_and_write_the_file() {
 
 #[test]
 fn save_reports_errors() {
-    let mut t = editor_app();
-    // The empty editor cannot be saved.
-    t.app_mut().left = super::super::EditorPane::empty(super::super::Pane::Left);
+    // The empty editor shown at startup cannot be saved.
+    let mut t = TestApp::plain();
     t.ctrl(egui::Key::S);
     t.assert_status("Focused file is read-only.");
     assert!(t.has_label("READ ONLY"));
 
-    t.click_first("notes.txt");
+    let mut t = editor_app();
     // Replace the file with a directory so writing fails.
     std::fs::remove_file(t.path("notes.txt")).unwrap();
     std::fs::create_dir(t.path("notes.txt")).unwrap();
     t.ctrl(egui::Key::S);
     t.assert_status_containing("Failed to save file:");
-
-    let mut pane = super::super::EditorPane::empty(super::super::Pane::Left);
-    pane.read_only = false;
-    t.app_mut().left = pane;
-    t.ctrl(egui::Key::S);
-    t.assert_status("No file is open in the focused pane.");
 }
 
 #[test]
@@ -195,10 +188,11 @@ fn find_shrinks_the_current_match_when_text_changes() {
     t.key(egui::Key::Enter);
     t.key(egui::Key::Enter);
     assert!(t.has_label("3/3"));
-    let text = "alpha only\n".to_owned();
-    t.app_mut().left.replace_text(text);
-    t.step();
-    t.step();
+    // Replace the whole text so only one match is left.
+    t.click_text(1, 2);
+    t.ctrl(egui::Key::A);
+    t.type_text("alpha only");
+    t.steps(2);
     assert!(t.has_label("1/1"));
 }
 

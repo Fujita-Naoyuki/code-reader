@@ -209,9 +209,8 @@ fn navigating_past_the_edge_adds_rows_and_columns_to_the_file() {
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::Enter);
     assert_eq!(t.app().left.selected_csv_cell.unwrap().row, 4);
-    t.app_mut().left.selected_csv_cell = Some(CsvCellPosition { row: 4, column: 3 });
-    t.steps(2);
     t.key(egui::Key::End);
+    assert_eq!(t.app().left.selected_csv_cell.unwrap().column, 3);
     t.key(egui::Key::ArrowRight);
     assert_eq!(t.app().left.selected_csv_cell.unwrap().column, 4);
 }
@@ -329,14 +328,21 @@ fn read_only_and_unparsable_csv() {
     t.click_first("empty.csv");
     t.steps(2);
     assert!(!t.has_label("Empty CSV"), "an empty file is one empty cell");
+}
 
-    t.click_first("empty.csv");
-    t.app_mut().left.read_only = true;
-    t.app_mut().left.csv_selection = Some(CsvSelection::Rows { start: 0, end: 0 });
-    // Click into the editor so Delete is not taken as "delete the selected file".
-    t.click_at(egui::pos2(1000.0, 600.0));
-    t.app_mut().left.csv_selection = Some(CsvSelection::Rows { start: 0, end: 0 });
+#[test]
+fn csv_files_in_library_folders_are_read_only() {
+    let mut t = TestApp::plain();
+    let library = t.tmp.join(".cargo").join("registry").join("data");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(library.join("ro.csv"), "a,b\n1,2\n").unwrap();
+    t.platform.queue_folder_pick(&library);
+    t.click_nth("Add", 0);
+    t.click_first("ro.csv");
     t.steps(2);
+    assert!(t.app().left.read_only);
+    let g = grid(&t);
+    t.click_at(g.row_header(0));
     t.paste_event("x");
     t.assert_status("CSV paste failed: Focused file is read-only.");
     t.key(egui::Key::Delete);

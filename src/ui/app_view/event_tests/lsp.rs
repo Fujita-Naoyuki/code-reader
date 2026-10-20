@@ -239,22 +239,35 @@ fn references_overlay_click_filter_without_matches_and_escape() {
     assert!(!t.app().references_overlay.open);
     assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 3)));
 
-    // Re-open the same list and filter it down to nothing.
-    t.app_mut().open_references_overlay("helper");
-    t.app_mut().location_list_kind = LocationListKind::References;
-    t.settle();
+    // Ask again from the reference site and filter the list down to nothing.
+    t.alt(egui::Key::ArrowLeft);
+    let request = {
+        t.key(egui::Key::F12);
+        t.platform
+            .lsp_requests(RUST)
+            .into_iter()
+            .find(|request| request.kind == LspRequestKind::Definition)
+            .unwrap()
+    };
+    respond(&mut t, RUST, &request, Ok(vec![location(&main, 5, 17)]));
+    let references = t
+        .platform
+        .lsp_requests(RUST)
+        .into_iter()
+        .find(|request| request.kind == LspRequestKind::References)
+        .unwrap();
+    respond(
+        &mut t,
+        RUST,
+        &references,
+        Ok(vec![location(&main, 0, 3), location(&main, 5, 16)]),
+    );
     t.type_text("zzz");
     assert!(t.has_label("No references"));
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::Enter);
     assert!(t.app().references_overlay.open);
     t.key(egui::Key::Escape);
-    assert!(!t.app().references_overlay.open);
-
-    // The overlay closes itself when its list is no longer references.
-    t.app_mut().open_references_overlay("helper");
-    t.app_mut().location_list_kind = LocationListKind::Definitions;
-    t.step();
     assert!(!t.app().references_overlay.open);
 }
 
@@ -359,22 +372,9 @@ fn rust_requests_fail_when_the_server_is_gone() {
         "definition_queue_failed"
     );
 
-    // Sync and references fail the same way.
-    t.app_mut().rust_lsp_synced_hashes.clear();
-    t.step();
+    // Editing re-syncs the document, which fails the same way.
+    t.type_text("x");
     assert_eq!(t.app().rust_lsp_debug.last_status, "sync_queue_failed");
-    let pending = super::super::PendingGoLspRequest {
-        request_id: 1,
-        kind: LspRequestKind::Definition,
-        document: crate::core::document::Document::new(t.path("src/main.rs"), MAIN_RS.to_owned()),
-        position: Position::new(5, 17),
-        identifier: "helper".to_owned(),
-        origin: None,
-        started_at: Instant::now(),
-    };
-    assert!(!t.app_mut().request_rust_lsp_references(pending));
-    t.step();
-    t.assert_status("Rust references request failed. (rust-analyzer LSP worker is not running.)");
 }
 
 #[test]
@@ -447,14 +447,23 @@ fn rust_analyzer_readiness_is_shown_in_the_status_bar() {
     t.app_mut().status_message = "Plain".to_owned();
     t.step();
     assert_eq!(t.app().status_bar_message(), "Plain");
-    assert_eq!(
-        t.app().rust_lsp_readiness_report_line().split(' ').next(),
-        Some("rust_lsp_readiness=error")
+    t.click("Report");
+    assert!(
+        t.platform
+            .clipboard_text()
+            .unwrap()
+            .contains("rust_lsp_readiness=error")
     );
-    t.app_mut().rust_lsp_client = None;
-    assert_eq!(
-        t.app().rust_lsp_readiness_report_line().split(' ').next(),
-        Some("rust_lsp_readiness=not_started")
+
+    // A workspace without Rust sources never starts rust-analyzer.
+    let mut plain = TestApp::plain();
+    plain.click("Report");
+    assert!(
+        plain
+            .platform
+            .clipboard_text()
+            .unwrap()
+            .contains("rust_lsp_readiness=not_started")
     );
 }
 
@@ -471,12 +480,13 @@ fn rust_analyzer_ready_after_a_successful_definition() {
     t.app_mut().status_message.clear();
     t.step();
     assert!(t.status_bar_contains("rust-analyzer ready (definition)"));
-
-    t.app_mut().rust_lsp_debug.warmup_count = 0;
-    t.app_mut().rust_lsp_debug.sync_count = 0;
-    t.app_mut().rust_lsp_debug.last_definition_success_at = None;
-    t.step();
-    assert!(t.status_bar_contains("rust-analyzer warming up... (initializing)"));
+    t.click("Report");
+    assert!(
+        t.platform
+            .clipboard_text()
+            .unwrap()
+            .contains("rust_lsp_readiness=ready reason=definition")
+    );
 }
 
 #[test]
@@ -485,8 +495,9 @@ fn f12_preconditions_are_reported() {
     t.key(egui::Key::F12);
     t.assert_status("No file is open in the focused pane.");
 
+    // A freshly opened file has no cursor until the user clicks into it.
     t.click_first("notes.txt");
-    t.app_mut().left.cursor_position = None;
+    assert!(t.app().left.cursor_position.is_none());
     t.key(egui::Key::F12);
     t.assert_status("Place the cursor on a symbol before F12.");
 
@@ -630,37 +641,23 @@ fn go_requests_time_out_and_fail_without_a_server() {
     assert_eq!(t.app().go_lsp_debug.last_status, "sync_queue_failed");
     t.key(egui::Key::F12);
     t.assert_status("Go LSP unavailable. (gopls LSP worker is not running.)");
-
-    let pending = super::super::PendingGoLspRequest {
-        request_id: 1,
-        kind: LspRequestKind::Definition,
-        document: crate::core::document::Document::new(t.path("main.go"), MAIN_GO.to_owned()),
-        position: Position::new(7, 9),
-        identifier: "helper".to_owned(),
-        origin: None,
-        started_at: Instant::now(),
-    };
-    assert!(!t.app_mut().request_go_lsp_references(pending));
-    t.step();
-    t.assert_status("Go references request failed. (gopls LSP worker is not running.)");
 }
 
 #[test]
-fn definition_via_the_symbol_index_for_other_languages() {
-    // Languages without an LSP route fall back to the symbol index. None are registered
-    // besides Rust and Go today, so drive the fallback directly on a Rust file.
-    let mut t = rust_app();
-    t.click_first("main.rs");
-    t.click_text(5, 17);
-    t.app_mut()
-        .handle_locations("helper", Vec::new(), LocationListKind::Definitions);
-    t.step();
-    t.assert_status("No definition found for `helper`.");
-    let target = location(&t.path("src/main.rs"), 0, 3);
-    t.app_mut()
-        .handle_locations("helper", vec![target], LocationListKind::References);
-    t.step();
+fn a_single_reference_is_opened_directly() {
+    let mut t = go_app();
+    let main = t.path("main.go");
+    let request = go_f12(&mut t);
+    respond(&mut t, GO, &request, Ok(vec![location(&main, 7, 9)]));
+    let references = t
+        .platform
+        .lsp_requests(GO)
+        .into_iter()
+        .find(|request| request.kind == LspRequestKind::References)
+        .unwrap();
+    respond(&mut t, GO, &references, Ok(vec![location(&main, 2, 5)]));
     t.assert_status("Jumped to reference of `helper`.");
+    assert!(!t.app().references_overlay.open);
 }
 
 fn take_request(

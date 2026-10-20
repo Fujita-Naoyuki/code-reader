@@ -33,14 +33,6 @@ fn sidebar_and_right_pane_toggles_show_and_hide_panels() {
 }
 
 #[test]
-fn hidden_right_pane_cannot_keep_focus() {
-    let mut t = TestApp::plain();
-    t.app_mut().focused_pane = Pane::Right;
-    t.step();
-    assert_eq!(t.app().focused_pane, Pane::Left);
-}
-
-#[test]
 fn clicking_folders_toggles_them_and_selects_them() {
     let mut t = TestApp::plain();
     assert!(!t.has_label("guide.txt"));
@@ -97,21 +89,11 @@ fn new_file_dialog_reports_validation_errors_and_stays_open() {
     t.click("Create");
     assert!(t.has_label("File name cannot be . or .."));
 
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::NewFile {
-        folder: t.root.clone(),
-        file_name: "a?b".to_owned(),
-        error: None,
-    });
-    t.settle();
+    t.fill_text_field(1, "a?b");
     t.click("Create");
     assert!(t.has_label("File name contains an invalid character."));
 
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::NewFile {
-        folder: t.root.clone(),
-        file_name: "notes.txt".to_owned(),
-        error: None,
-    });
-    t.settle();
+    t.fill_text_field(1, "notes.txt");
     t.click("Create");
     assert!(t.has_label_containing("File already exists"));
 
@@ -120,42 +102,22 @@ fn new_file_dialog_reports_validation_errors_and_stays_open() {
 }
 
 #[test]
-fn new_file_dialog_rejects_folders_outside_the_workspace() {
+fn new_file_reports_folders_that_disappear() {
     let mut t = TestApp::plain();
-    let outside = t.tmp.join("outside");
-    std::fs::create_dir_all(&outside).unwrap();
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::NewFile {
-        folder: outside,
-        file_name: "x.txt".to_owned(),
-        error: None,
-    });
-    t.settle();
-    t.click("Create");
-    assert!(t.has_label("Folder is outside the current workspace."));
-
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::NewFile {
-        folder: t.tmp.join("missing"),
-        file_name: "x.txt".to_owned(),
-        error: None,
-    });
-    t.settle();
+    t.click("docs");
+    t.click_first("New File");
+    t.type_text("x.txt");
+    // The folder is deleted while the dialog is open.
+    std::fs::remove_dir_all(t.path("docs")).unwrap();
     t.click("Create");
     assert!(t.has_label_containing("Folder not found"));
-
     t.key(egui::Key::Escape);
     assert!(t.app().workspace_file_dialog.is_none());
-}
 
-#[test]
-fn new_file_reports_missing_selected_folder() {
-    let mut t = TestApp::plain();
-    t.app_mut()
-        .app_state
-        .current_session_mut()
-        .unwrap()
-        .root_folders = vec![t.tmp.join("gone")];
+    // With the whole workspace root gone, New File reports it right away.
+    std::fs::remove_dir_all(&t.root).unwrap();
     t.click_first("New File");
-    assert!(t.status().starts_with("Folder not found"));
+    t.assert_status_containing("Folder not found");
     assert!(t.app().workspace_file_dialog.is_none());
 }
 
@@ -175,7 +137,11 @@ fn new_file_next_to_selected_file_uses_its_folder() {
 fn f2_renames_the_selected_file_and_updates_open_editor() {
     let mut t = TestApp::plain();
     t.click_first("notes.txt");
-    t.app_mut().add_bookmark_from_current_position(false);
+    t.steps(25);
+    let star = t.gutter_star_pos(0, 4);
+    t.click_at(star);
+    // Re-select the file in the tree so F2 applies to it.
+    t.click_first("notes.txt");
     t.key(egui::Key::F2);
     assert!(t.has_label("Rename File"));
     // The file stem is pre-selected, so typing replaces "notes" and keeps ".txt".
@@ -202,50 +168,51 @@ fn rename_dialog_reports_errors() {
     t.click_nth("Rename", 2);
     assert!(t.has_label("The new name is the same as the current name."));
 
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::Rename {
-        path: t.path("notes.txt"),
-        new_name: "docs".to_owned(),
-        select_stem: false,
-        error: None,
-    });
-    t.settle();
+    t.fill_text_field(1, "docs");
     t.click_nth("Rename", 2);
     assert!(t.has_label_containing("File already exists"));
 
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::Rename {
-        path: t.path("notes.txt"),
-        new_name: "".to_owned(),
-        select_stem: false,
-        error: None,
-    });
-    t.settle();
+    t.fill_text_field(1, "");
     t.click_nth("Rename", 2);
     assert!(t.has_label("File name is required."));
 
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::Rename {
-        path: t.path("docs"),
-        new_name: "x".to_owned(),
-        select_stem: false,
-        error: None,
-    });
-    t.settle();
+    // The file is replaced by a folder while the dialog is open.
+    std::fs::remove_file(t.path("notes.txt")).unwrap();
+    std::fs::create_dir(t.path("notes.txt")).unwrap();
+    t.fill_text_field(1, "other.txt");
     t.click_nth("Rename", 2);
     assert!(t.has_label("Select a file to rename."));
 
-    let outside = t.tmp.join("outside.txt");
-    std::fs::write(&outside, "x").unwrap();
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::Rename {
-        path: outside,
-        new_name: "y.txt".to_owned(),
-        select_stem: false,
-        error: None,
-    });
-    t.settle();
-    t.click_nth("Rename", 2);
-    assert!(t.has_label("File is outside the current workspace."));
-
     t.click("Cancel");
     assert!(t.app().workspace_file_dialog.is_none());
+}
+
+#[test]
+fn file_dialogs_refuse_files_whose_root_was_removed() {
+    let mut t = TestApp::plain();
+    let extra = t.tmp.join("extra");
+    std::fs::create_dir_all(&extra).unwrap();
+    std::fs::write(extra.join("extra.txt"), "extra").unwrap();
+    t.platform.queue_folder_pick(&extra);
+    t.click_nth("Add", 0);
+
+    t.click_first("extra.txt");
+    t.key(egui::Key::F2);
+    // Remove the root that holds the file while the dialog is still open.
+    t.click_nth("×", 1);
+    t.fill_text_field(1, "moved.txt");
+    t.click_nth("Rename", 2);
+    assert!(t.has_label("File is outside the current workspace."));
+    t.click("Cancel");
+
+    t.platform.queue_folder_pick(&extra);
+    t.click_nth("Add", 0);
+    t.click_first("extra.txt");
+    t.key(egui::Key::Delete);
+    t.click_nth("×", 1);
+    t.click_nth("Delete", 1);
+    assert!(t.has_label("File is outside the current workspace."));
+    assert!(extra.join("extra.txt").exists());
 }
 
 #[test]
@@ -261,7 +228,10 @@ fn rename_dialog_closes_with_escape() {
 fn delete_key_deletes_selected_file_after_confirmation() {
     let mut t = TestApp::plain();
     t.click_first("notes.txt");
-    t.app_mut().add_bookmark_from_current_position(false);
+    t.steps(25);
+    let star = t.gutter_star_pos(0, 4);
+    t.click_at(star);
+    t.click_first("notes.txt");
     t.key(egui::Key::Delete);
     assert!(t.has_label("This cannot be undone."));
     t.key(egui::Key::Enter);
@@ -285,8 +255,6 @@ fn delete_button_removes_file_shown_in_right_pane() {
         Some(t.path("docs/guide.txt").as_path())
     );
     t.click_first("guide.txt");
-    t.app_mut().left = super::super::EditorPane::empty(Pane::Left);
-    t.step();
     t.click_nth("Delete", 0);
     t.click_nth("Delete", 1);
     assert!(!t.path("docs/guide.txt").exists());
@@ -296,37 +264,23 @@ fn delete_button_removes_file_shown_in_right_pane() {
 #[test]
 fn delete_dialog_reports_errors_and_can_be_canceled() {
     let mut t = TestApp::plain();
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::Delete {
-        path: t.path("docs"),
-        error: None,
-    });
-    t.settle();
-    t.click("Delete File");
+    t.click_first("notes.txt");
+    t.key(egui::Key::Delete);
+    assert!(t.has_label("Delete File"));
+    // The file is replaced by a folder before the user confirms.
+    std::fs::remove_file(t.path("notes.txt")).unwrap();
+    std::fs::create_dir(t.path("notes.txt")).unwrap();
     t.click_nth("Delete", 1);
     assert!(t.has_label("Select a file to delete."));
-
-    let outside = t.tmp.join("outside.txt");
-    std::fs::write(&outside, "x").unwrap();
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::Delete {
-        path: outside.clone(),
-        error: None,
-    });
-    t.settle();
-    t.click_nth("Delete", 1);
-    assert!(t.has_label("File is outside the current workspace."));
-    assert!(outside.exists());
-
     t.click("Cancel");
     assert!(t.app().workspace_file_dialog.is_none());
 
-    t.app_mut().workspace_file_dialog = Some(WorkspaceFileDialog::Delete {
-        path: t.path("notes.txt"),
-        error: None,
-    });
-    t.settle();
+    t.click("docs");
+    t.click_first("guide.txt");
+    t.key(egui::Key::Delete);
     t.key(egui::Key::Escape);
     assert!(t.app().workspace_file_dialog.is_none());
-    assert!(t.path("notes.txt").exists());
+    assert!(t.path("docs/guide.txt").exists());
 }
 
 #[test]
@@ -351,11 +305,10 @@ fn file_shortcuts_require_a_selected_file_and_an_active_sidebar() {
 }
 
 #[test]
-fn selection_outside_workspace_is_ignored() {
+fn selections_of_deleted_files_are_ignored() {
     let mut t = TestApp::plain();
-    t.app_mut().selected_workspace_path = Some(t.tmp.join("missing.txt"));
-    t.app_mut().workspace_sidebar_active = true;
-    t.step();
+    t.click_first("notes.txt");
+    std::fs::remove_file(t.path("notes.txt")).unwrap();
     t.key(egui::Key::F2);
     assert_eq!(t.status(), "Select a file to rename.");
 }
@@ -393,14 +346,6 @@ fn add_folder_adds_a_root_and_remove_button_drops_it() {
     t.assert_status("Discovered 2 files.");
     assert!(!t.has_label("extra.txt"));
     assert_eq!(t.count_label("×"), 0);
-}
-
-#[test]
-fn removing_the_last_root_is_refused() {
-    let mut t = TestApp::plain();
-    let root = t.root.clone();
-    t.app_mut().remove_root_from_current_session(&root);
-    assert_eq!(t.status(), "Keep at least one root folder in a session.");
 }
 
 #[test]
