@@ -3,10 +3,12 @@
 
 mod support;
 
+mod editor;
 mod git;
 mod lsp;
 mod search;
 mod sessions;
 mod smoke;
+mod virtual_editor;
 mod windows;
 mod workspace;

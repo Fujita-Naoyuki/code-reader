@@ -553,6 +553,59 @@ impl TestApp {
         self.click_at(pos);
     }
 
+    /// Geometry of the focused virtual (large-file) editor. It is painted rather than built
+    /// from widgets, so it is read from the click diagnostics the editor records; a
+    /// harmless click on the pane title produces such a record when none exists yet.
+    pub fn virtual_geometry(&mut self) -> VirtualGeometry {
+        if self
+            .app()
+            .focused_editor()
+            .virtual_click_debug
+            .events
+            .is_empty()
+        {
+            let title = self.app().focused_editor().title.clone();
+            let count = self.count_label(&title);
+            let rect = self.nth_label_rect(&title, count - 1);
+            self.click_at(rect.center());
+        }
+        let editor = self.app().focused_editor();
+        let event = editor
+            .virtual_click_debug
+            .events
+            .last()
+            .expect("virtual editor click diagnostics");
+        let space_width = self
+            .harness
+            .ctx
+            .fonts_mut(|fonts| fonts.glyph_width(&egui::FontId::monospace(14.0), ' '));
+        VirtualGeometry {
+            viewport: event.viewport_rect,
+            full_rect: event.response_rect,
+            // text_left = gutter edge + 8; the clip rect starts at gutter edge + 1.
+            text_left: event.text_clip_rect.left() + 7.0 - editor.scroll_x,
+            scroll_y: editor.scroll_y,
+            row_height: event.row_height,
+            char_width: space_width,
+        }
+    }
+
+    /// Screen position of `(line, column)` in the focused virtual editor.
+    pub fn virtual_pos(&mut self, line: u32, column: u32) -> egui::Pos2 {
+        let g = self.virtual_geometry();
+        egui::pos2(
+            g.text_left + (column as f32 + 0.3) * g.char_width,
+            g.viewport.top() + line as f32 * g.row_height - g.scroll_y + g.row_height * 0.5,
+        )
+    }
+
+    /// Clicks the focused virtual editor so the cursor lands at `(line, column)`.
+    pub fn click_virtual(&mut self, line: u32, column: u32) {
+        self.steps(25);
+        let pos = self.virtual_pos(line, column);
+        self.click_at(pos);
+    }
+
     /// Clicks the `index`-th text field, selects its content and replaces it with `text`.
     pub fn fill_text_field(&mut self, index: usize, text: &str) {
         let rects = self.text_field_rects();
@@ -676,6 +729,28 @@ impl TestApp {
         self.key_with(egui::Modifiers::SHIFT, key);
     }
 
+    /// Presses `keys` one after another while Shift is held down the whole time, as a user
+    /// extending a selection does (Shift goes down once, so it is not a Shift double-tap).
+    pub fn shift_held(&mut self, keys: &[egui::Key]) {
+        // Keep consecutive calls out of the Shift double-tap window (DISCREPANCY D03).
+        self.steps(30);
+        self.set_modifiers(egui::Modifiers::SHIFT);
+        self.step();
+        for key in keys {
+            for pressed in [true, false] {
+                self.send(egui::Event::Key {
+                    key: *key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::SHIFT,
+                });
+            }
+        }
+        self.set_modifiers(egui::Modifiers::NONE);
+        self.step();
+    }
+
     /// Sends text input to whatever widget currently has keyboard focus.
     pub fn type_text(&mut self, text: &str) {
         self.send(egui::Event::Text(text.to_owned()));
@@ -736,6 +811,18 @@ impl TestApp {
     pub fn saved_state(&self) -> String {
         fs::read_to_string(&self.platform.state_path).unwrap_or_default()
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct VirtualGeometry {
+    /// Text area (scrollbar gutters excluded).
+    pub viewport: egui::Rect,
+    /// Whole editor area including the scrollbars.
+    pub full_rect: egui::Rect,
+    pub text_left: f32,
+    pub scroll_y: f32,
+    pub row_height: f32,
+    pub char_width: f32,
 }
 
 pub(crate) fn location(path: &Path, line: u32, character: u32) -> Location {
