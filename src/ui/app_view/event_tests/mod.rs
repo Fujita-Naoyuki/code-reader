@@ -4,6 +4,7 @@
 mod support;
 
 mod csv;
+mod diff;
 mod editor;
 mod git;
 mod lsp;
