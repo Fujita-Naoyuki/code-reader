@@ -397,3 +397,76 @@ fn ctrl_shift_z_undoes_in_the_grid() {
     t.assert_status("No CSV edit to undo.");
     assert!(text(&t).contains("apple,1,red"));
 }
+
+#[test]
+fn crlf_files_and_escaped_quotes_parse() {
+    let mut t = TestApp::builder()
+        .file("crlf.csv", "a,\"say \"\"hi\"\"\"\r\n1,2\r\n")
+        .build();
+    t.click_first("crlf.csv");
+    t.steps(2);
+    let g = grid(&t);
+    t.click_at(g.row_header(0));
+    t.copy_event();
+    assert_eq!(
+        t.platform.clipboard_text().as_deref(),
+        Some("a,\"say \"\"hi\"\"\"")
+    );
+    // Pasting a wider row grows it.
+    t.paste_event("w,x,y,z");
+    t.assert_status("Pasted CSV into 4 cells.");
+    // Dragging upwards over the row headers selects the range in either direction.
+    t.drag(g.row_header(1), g.row_header(0));
+    assert!(t.has_label("Selected rows 1-2"));
+}
+
+#[test]
+fn copy_when_the_grid_no_longer_parses() {
+    let mut t = csv_app();
+    let g = grid(&t);
+    t.click_at(g.row_header(1));
+    // Break the text from Source mode; the row selection survives the switch back.
+    t.click("Source");
+    t.click_text(0, 0);
+    t.ctrl(egui::Key::End);
+    // Paste a lone quote at the end (typing one would be auto-paired).
+    t.paste_event("\"");
+    assert!(super::super::parse_csv(&text(&t)).is_err());
+    t.click("Grid");
+    t.copy_event();
+    t.assert_status("No CSV row or column selection to copy.");
+}
+
+#[test]
+fn csv_selection_in_the_right_pane_while_the_left_is_focused() {
+    let mut t = TestApp::builder()
+        .file("left.txt", "left\n")
+        .file("right.csv", "a,b\n1,2\n")
+        .build();
+    t.click_first("left.txt");
+    let from = t.label_rect("right.csv").center();
+    t.drag(from, egui::pos2(1250.0, 400.0));
+    t.steps(2);
+    let g = grid(&t);
+    t.click_at(g.row_header(1));
+    // Focus the left pane by clicking into its text.
+    t.click_at(egui::pos2(500.0, 300.0));
+    assert_eq!(t.app().focused_pane, super::super::Pane::Left);
+    t.paste_event("9,9");
+    t.assert_status("Pasted CSV into 2 cells.");
+    assert_eq!(t.app().focused_pane, super::super::Pane::Right);
+    t.click_at(egui::pos2(500.0, 300.0));
+    t.key(egui::Key::Delete);
+    t.assert_status("Deleted CSV row 2.");
+}
+
+#[test]
+fn csv_edit_history_is_capped() {
+    let mut t = csv_app();
+    let g = grid(&t);
+    for index in 0..260 {
+        t.click_at(g.row_header(index % 2));
+        t.paste_event(&format!("{index}"));
+    }
+    assert_eq!(t.app().left.csv_undo_stack.len(), 256);
+}

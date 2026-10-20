@@ -527,3 +527,71 @@ fn session_restores_open_files_and_positions() {
     assert_eq!(t.app().recent_files.len(), 2);
     t.step();
 }
+
+#[test]
+fn files_under_external_library_folders_open_read_only() {
+    let mut t = TestApp::plain();
+    let registry = t.tmp.join(".cargo").join("registry").join("dep");
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::write(registry.join("lib.rs"), "pub fn dep() {}\n").unwrap();
+    let gomod = t.tmp.join("go").join("pkg").join("mod").join("dep");
+    std::fs::create_dir_all(&gomod).unwrap();
+    std::fs::write(gomod.join("dep.go"), "package dep\n\nfunc Dep() {}\n").unwrap();
+    t.platform.queue_folder_pick(&registry);
+    t.click_nth("Add", 0);
+    t.platform.queue_folder_pick(&gomod);
+    t.click_nth("Add", 0);
+    t.click_first("lib.rs");
+    assert!(t.app().left.read_only);
+    t.click_first("dep.go");
+    assert!(t.app().left.read_only);
+    t.click("Report");
+    assert!(
+        t.platform
+            .clipboard_text()
+            .unwrap()
+            .contains("by_source workspace=")
+    );
+}
+
+#[test]
+fn inconsistent_state_without_a_current_session() {
+    let state = r#"{
+        "current_session_id": "missing",
+        "sessions": [{
+            "id": "other",
+            "display_name": "Other",
+            "root_folders": ["{root}"],
+            "bookmarks": [],
+            "open_files": {"left": null, "right": null},
+            "pane_positions": {"left": {"line": 0, "character": 0}, "right": {"line": 0, "character": 0}},
+            "last_updated_unix": 1
+        }]
+    }"#;
+    let mut t = TestApp::builder()
+        .file("notes.txt", "x\n")
+        .state(state)
+        .build();
+    assert!(t.has_label("No session"));
+    // Actions that need the current session degrade gracefully.
+    let extra = t.tmp.join("extra");
+    std::fs::create_dir_all(&extra).unwrap();
+    t.platform.queue_folder_pick(&extra);
+    t.click_nth("Add", 0);
+    t.assert_status(&format!("Added folder: {}", extra.display()));
+    // The folder is reported as added, but there is no session to hold it: the tree is
+    // rebuilt from no roots at all (a corrupt state file is not repaired).
+    assert!(t.app().file_tree.files.is_empty());
+    t.click_first("New File");
+    t.type_text("new.txt");
+    t.key(egui::Key::Enter);
+    assert!(t.has_label("Folder is outside the current workspace."));
+    t.key(egui::Key::Escape);
+    // With an empty tree the file can only be reopened programmatically.
+    t.open_file("notes.txt");
+    t.steps(25);
+    let star = t.gutter_star_pos(0, 1);
+    t.click_at(star);
+    t.assert_status("Added bookmark: notes.txt:1");
+    assert!(t.app().current_session().is_none());
+}

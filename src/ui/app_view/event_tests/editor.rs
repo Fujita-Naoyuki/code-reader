@@ -280,3 +280,50 @@ fn opening_another_file_discards_unsaved_edits_without_warning() {
     assert!(!t.read("notes.txt").contains("unsaved"));
     assert!(!t.has_label_containing("unsaved changes"));
 }
+
+#[test]
+fn assistance_skips_selections_and_pairs_square_brackets() {
+    let mut t = TestApp::builder()
+        .file("code.txt", "call(arg]\nopen [ here\n")
+        .build();
+    t.click_first("code.txt");
+    // With a selection, typing replaces it without auto-pairing.
+    t.click_text(0, 0);
+    t.shift_held(&[egui::Key::ArrowRight, egui::Key::ArrowRight]);
+    t.type_text("(");
+    assert!(t.app().left.text.as_str().starts_with("(ll("));
+    t.click_text(1, 0);
+    t.type_text("[");
+    assert!(t.app().left.text.as_str().contains("[]open"));
+    // Cursor next to unbalanced brackets: no matching pair is highlighted.
+    t.click_text(0, 8);
+    t.click_text(1, 7);
+    t.steps(2);
+}
+
+#[test]
+fn right_pane_actions_apply_to_the_right_editor() {
+    let mut t = TestApp::plain();
+    t.click_first("notes.txt");
+    t.click_first("docs");
+    let from = t.label_rect("guide.txt").center();
+    t.drag(from, egui::pos2(1250.0, 400.0));
+    t.steps(2);
+    assert_eq!(t.app().focused_pane, super::super::Pane::Right);
+    // Edit and save through the right pane's own Save button.
+    t.click_at(egui::pos2(1000.0, 120.0));
+    t.click_at(egui::pos2(1000.0, 120.0));
+    t.type_text("R");
+    assert!(t.app().right.text.as_str().contains('R'));
+    t.click_nth("Save", 1);
+    t.assert_status_containing("Saved file:");
+    assert!(t.read("docs/guide.txt").contains('R'));
+
+    // Clicking the left column moves focus back; its Save works too.
+    t.click_at(egui::pos2(500.0, 400.0));
+    assert_eq!(t.app().focused_pane, super::super::Pane::Left);
+    t.click_nth("Save", 0);
+    t.assert_status_containing("Saved file:");
+    t.ctrl(egui::Key::F);
+    assert!(t.app().left.source_search.open);
+}

@@ -288,3 +288,57 @@ fn bookmark_without_open_file_is_refused() {
     t.app_mut().remove_bookmark(10);
     t.step();
 }
+
+#[test]
+fn workspace_search_skips_unreadable_files_and_caps_results() {
+    let many = "hit\n".repeat(2100);
+    let long_line = format!("hit {}\n", "y".repeat(300));
+    let mut t = TestApp::builder()
+        .bytes("binary.txt", &[0xff, 0xfe, 0x00, b'h', b'i', b't'])
+        .file("many.txt", &many)
+        .file("other.txt", "hit once\n")
+        .file("wide.txt", &long_line)
+        .build();
+    t.ctrl_shift(egui::Key::F);
+    t.type_text("hit");
+    t.key(egui::Key::Enter);
+    t.wait_until("search finished", |app| !app.workspace_search.searching);
+    let total = t.app().workspace_search.match_count();
+    assert_eq!(total, 2000, "results stop at the cap");
+    assert!(
+        t.app()
+            .workspace_search
+            .results
+            .iter()
+            .all(|result| !result.path.ends_with("binary.txt"))
+    );
+}
+
+#[test]
+fn search_box_runs_when_enter_arrives_with_the_focus_request() {
+    let mut t = search_workspace();
+    t.ctrl_shift(egui::Key::F);
+    t.type_text("needle");
+    t.click_at(egui::pos2(1000.0, 500.0));
+    // Ctrl+Shift+F and Enter in the same frame: the box regains focus and searches.
+    let modifiers = super::support::CTRL | egui::Modifiers::SHIFT;
+    t.set_modifiers(modifiers);
+    t.harness.event(egui::Event::Key {
+        key: egui::Key::F,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    });
+    t.harness.event(egui::Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    t.step();
+    t.set_modifiers(egui::Modifiers::NONE);
+    t.step();
+    t.assert_status("Workspace search started: needle");
+}

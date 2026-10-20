@@ -9,6 +9,7 @@ mod editor;
 mod git;
 mod lsp;
 mod markdown;
+mod markdown_rendering;
 mod search;
 mod sessions;
 mod smoke;

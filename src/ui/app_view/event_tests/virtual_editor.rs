@@ -454,3 +454,171 @@ fn unfocused_right_pane_virtual_editor_drops_preedit() {
     t.click_at(right.center() + egui::vec2(0.0, 60.0));
     assert!(t.app().left.virtual_ime_preedit.is_none());
 }
+
+#[test]
+fn edits_without_a_cursor_and_no_op_replacements() {
+    let mut t = virtual_app("big.txt");
+    // Nothing clicked yet: Backspace / Delete have no cursor to work from.
+    t.app_mut().left.cursor_position = None;
+    t.key(egui::Key::Backspace);
+    t.key(egui::Key::Delete);
+    assert_eq!(text(&t), big_text());
+
+    // Pasting the same text over a selection changes nothing.
+    t.click_virtual(0, 0);
+    t.shift_held(&[egui::Key::ArrowRight, egui::Key::ArrowRight]);
+    t.paste_event("fn");
+    assert_eq!(text(&t), big_text());
+    assert!(t.app().left.virtual_undo_stack.is_empty());
+
+    // An IME update together with a key that edits nothing still repaints.
+    t.key(egui::Key::End);
+    t.ctrl(egui::Key::End);
+    let last_line = LINES as u32;
+    t.app_mut().left.cursor_position = Some(Position::new(last_line, 0));
+    t.harness
+        .event(egui::Event::Ime(egui::ImeEvent::Preedit("a".to_owned())));
+    t.harness.event(egui::Event::Key {
+        key: egui::Key::Delete,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    t.step();
+    assert_eq!(text(&t), big_text());
+}
+
+#[test]
+fn word_selection_at_line_edges_and_multibyte_backspace() {
+    let mut t = virtual_app("big.txt");
+    t.steps(25);
+    // First word of a line.
+    let start = t.virtual_pos(0, 0);
+    t.double_click_at(start);
+    let selection = t
+        .app()
+        .left
+        .virtual_selection
+        .unwrap()
+        .normalized()
+        .unwrap();
+    assert_eq!(selection.start, Position::new(0, 0));
+    // Last word of a line.
+    t.steps(25);
+    let end = t.virtual_pos(3, 13);
+    t.double_click_at(end);
+    let selection = t
+        .app()
+        .left
+        .virtual_selection
+        .unwrap()
+        .normalized()
+        .unwrap();
+    assert_eq!(selection.end, Position::new(3, 14));
+    // Past the end of a line there is no word.
+    t.steps(25);
+    let past = t.virtual_pos(2, 30);
+    t.double_click_at(past);
+    assert!(!t.app().left.has_virtual_text_selection());
+
+    t.click_virtual(0, 0);
+    t.type_text("日本");
+    t.key(egui::Key::Backspace);
+    assert!(text(&t).starts_with("日fn"));
+}
+
+#[test]
+fn cursor_moves_scroll_the_view_back_into_place() {
+    let mut text = big_text();
+    text.insert_str(0, "\tTabbed line\n");
+    let mut t = TestApp::builder().file("tabs.txt", &text).build();
+    t.click_first("tabs.txt");
+    t.steps(2);
+    // Clicking after a tab accounts for its width.
+    t.click_virtual(0, 6);
+    assert_eq!(t.app().left.cursor_position.unwrap().line, 0);
+
+    // Scroll the cursor out of view, then move it: the view follows.
+    let pos = t.virtual_pos(5, 5);
+    t.scroll(pos, egui::vec2(0.0, -3000.0));
+    // Let the smoothed wheel remainder settle first (see D09).
+    t.steps(90);
+    assert!(t.app().left.scroll_y > 1000.0);
+    t.key(egui::Key::ArrowUp);
+    assert!(t.app().left.scroll_y < 100.0);
+
+    // ArrowRight at the very end of the document stays there.
+    t.key_with(super::support::CTRL, egui::Key::A);
+    t.key(egui::Key::ArrowRight);
+    t.key(egui::Key::ArrowRight);
+    assert_eq!(
+        t.app().left.cursor_position.unwrap().line as usize,
+        LINES + 1
+    );
+}
+
+#[test]
+fn long_scrolling_prunes_the_layout_caches() {
+    let mut t = virtual_app("big.txt");
+    t.click_virtual(0, 0);
+    for _ in 0..160 {
+        t.harness.key_press(egui::Key::PageDown);
+        t.step();
+    }
+    t.steps(200);
+    let cache = t.app().left.virtual_line_layout_cache.as_ref().unwrap();
+    assert!(cache.entries.len() <= 4096);
+}
+
+#[test]
+fn theme_changes_rebuild_cached_layouts() {
+    let mut t = virtual_app("big.txt");
+    t.steps(2);
+    t.harness.ctx.set_theme(egui::Theme::Light);
+    t.steps(3);
+    t.harness.ctx.set_theme(egui::Theme::Dark);
+    t.steps(3);
+    assert!(t.app().left.virtual_line_layout_cache.is_some());
+}
+
+#[test]
+fn edit_history_is_capped() {
+    let mut t = virtual_app("big.txt");
+    t.click_virtual(0, 0);
+    for _ in 0..520 {
+        t.harness.event(egui::Event::Text("x".to_owned()));
+        t.step();
+    }
+    assert_eq!(t.app().left.virtual_undo_stack.len(), 512);
+}
+
+#[test]
+fn text_with_ctrl_modifier_is_not_inserted() {
+    let mut t = virtual_app("big.txt");
+    t.click_virtual(0, 0);
+    // AltGr arrives as Ctrl+Alt on Windows; the large-file editor drops such text.
+    t.set_modifiers(egui::Modifiers {
+        alt: true,
+        ctrl: true,
+        shift: false,
+        mac_cmd: false,
+        command: true,
+    });
+    t.harness.event(egui::Event::Text("@".to_owned()));
+    t.step();
+    t.set_modifiers(egui::Modifiers::NONE);
+    t.step();
+    assert!(!text(&t).contains('@'));
+}
+
+#[test]
+fn report_includes_virtual_click_diagnostics() {
+    let mut t = virtual_app("big.txt");
+    t.click_virtual(1, 3);
+    t.click("Report");
+    let report = t.platform.clipboard_text().unwrap();
+    assert!(report.contains("virtual_click_accept: event#"), "{report}");
+    assert!(report.contains("virtual_click_event#"));
+    assert!(report.contains("Left cursor=2:4"));
+}

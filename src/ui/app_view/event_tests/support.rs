@@ -619,6 +619,19 @@ impl TestApp {
         )
     }
 
+    /// Position of the bookmark star for `line` in the gutter left of the editor text. The
+    /// gutter width grows with the number of digits in `line_count`.
+    pub fn gutter_star_pos(&self, line: u32, line_count: usize) -> egui::Pos2 {
+        let text = self.editor_text_rect();
+        let (row_height, _) = self.editor_metrics();
+        let digits = line_count.max(1).to_string().len() as f32;
+        let gutter_width = (digits * row_height.ceil() * 0.6 + 22.0 + 18.0).max(56.0);
+        egui::pos2(
+            text.left() - 8.0 - gutter_width + 9.0,
+            text.top() + 2.0 + row_height * (line as f32 + 0.5),
+        )
+    }
+
     /// Clicks in the editor so the cursor lands at `(line, column)`.
     pub fn click_text(&mut self, line: u32, column: u32) {
         // Let egui's double-click window pass so repeated clicks do not select a word.
@@ -713,6 +726,8 @@ impl TestApp {
     }
 
     pub fn double_click_at(&mut self, pos: egui::Pos2) {
+        // Stay clear of earlier clicks so egui does not count a triple click.
+        self.steps(45);
         self.pointer_button(pos, true, egui::Modifiers::NONE);
         self.pointer_button(pos, false, egui::Modifiers::NONE);
         self.pointer_button(pos, true, egui::Modifiers::NONE);

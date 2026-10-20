@@ -262,3 +262,44 @@ fn report_without_session_or_command() {
     assert!(report.contains("ai_command_error=No workspace folder is available."));
     assert!(report.contains("  none"));
 }
+
+#[test]
+fn report_describes_both_editors_in_detail() {
+    let mut t = TestApp::builder()
+        .file("doc.md", "# Doc\n\nneedle\n")
+        .file("data.csv", "a,b\n1,2\n")
+        .file("notes.txt", "needle here\n")
+        .build();
+    t.click_first("doc.md");
+    t.ctrl(egui::Key::F);
+    t.type_text("needle");
+    let from = t.label_rect("data.csv").center();
+    t.drag(from, egui::pos2(1250.0, 400.0));
+    t.steps(2);
+    t.click("Report");
+    let report = t.platform.clipboard_text().unwrap();
+    assert!(report.contains("Left markdown_mode=Preview"), "{report}");
+    assert!(report.contains("Left markdown_search=1/1 query=needle"));
+    assert!(report.contains("Right csv_mode=Grid"));
+    assert!(report.contains("Right csv_cell=R1C1"));
+
+    t.click_first("notes.txt");
+    t.ctrl(egui::Key::F);
+    t.type_text("needle");
+    t.click("Report");
+    let report = t.platform.clipboard_text().unwrap();
+    assert!(
+        report.contains("source_search=1/1 query=needle"),
+        "{report}"
+    );
+    assert!(report.contains("definition_target=") || report.contains("cursor="));
+}
+
+#[test]
+fn ai_cmd_edits_report_save_failures() {
+    let mut t = TestApp::plain();
+    std::fs::create_dir_all(&t.platform.state_path).unwrap();
+    t.click("AI Cmd");
+    t.fill_text_field(1, "codex");
+    t.assert_status_containing("Failed to save state:");
+}
