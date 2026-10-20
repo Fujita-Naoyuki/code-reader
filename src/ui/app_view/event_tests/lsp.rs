@@ -929,3 +929,25 @@ fn renaming_a_file_updates_the_other_panes_history() {
     let renamed = t.path("src/entry.rs");
     assert_eq!(t.app().right_navigation_history.back[0].path, renamed);
 }
+
+#[test]
+fn f12_on_whitespace_sends_an_unknown_identifier() {
+    let mut t = rust_app();
+    t.click_first("main.rs");
+    t.click_text(5, 1);
+    t.key(egui::Key::F12);
+    t.assert_status("Resolving `<unknown>` with rust-analyzer...");
+}
+
+#[test]
+fn go_types_are_highlighted() {
+    let mut t = TestApp::builder()
+        .file("types.go", "package main\n\ntype Point struct {\n    X int\n}\n\nfunc (p Point) Norm() int { return p.X }\n")
+        .build();
+    t.click_first("types.go");
+    t.wait_until("highlight", |app| app.left.syntax_highlight_cache.is_some());
+    t.ctrl(egui::Key::P);
+    t.type_text("Norm");
+    let results = t.app_mut().search_overlay_results(&[]);
+    assert!(results.iter().any(|result| result.label == "Point::Norm"));
+}

@@ -322,3 +322,61 @@ fn gopls_round_trip_with_multibyte_text() {
             < 18
     );
 }
+
+#[test]
+fn misconfigured_server_commands_are_reported() {
+    // An executable that is not a language server: it prints something and exits.
+    let mut t = TestApp::builder()
+        .file("src/main.rs", MAIN_RS)
+        .real_lsp_command("git")
+        .build();
+    t.click("src");
+    t.click_first("main.rs");
+    press_f12_on_helper(&mut t);
+    wait(&mut t, "Rust LSP failed for `helper`.");
+
+    // A folder instead of an executable cannot be started at all.
+    let folder = t.tmp.display().to_string();
+    let mut t = TestApp::builder()
+        .file("src/main.rs", MAIN_RS)
+        .real_lsp_command(&folder)
+        .build();
+    t.click("src");
+    t.click_first("main.rs");
+    press_f12_on_helper(&mut t);
+    wait(&mut t, "Failed to start rust-analyzer:");
+}
+
+#[test]
+fn notifications_that_arrive_before_an_answer_are_processed_first() {
+    let mut t = rust_app(Script {
+        before_location_response: vec![
+            json!({"jsonrpc": "2.0", "method": "window/logMessage",
+                   "params": {"type": 3, "message": "computing"}}),
+            json!({"jsonrpc": "2.0", "id": 77, "method": "workspace/configuration",
+                   "params": {"items": [{}]}}),
+        ],
+        ..Script::default()
+    });
+    let main = t.path("src/main.rs");
+    t.platform.scripted(RUST).script.lock().unwrap().definition =
+        json!([lsp_location(&main, 0, 3)]);
+    press_f12_on_helper(&mut t);
+    wait(&mut t, "Jumped to definition of `helper`.");
+    assert_eq!(
+        t.app().rust_lsp_debug.last_server_message.as_deref(),
+        None,
+        "the request after the log message carries no message"
+    );
+}
+
+#[test]
+fn writes_fail_once_the_server_has_exited() {
+    // The server exits right after `initialized`, so opening the document cannot be sent.
+    let mut t = rust_app(Script {
+        hang_up_on: Some("initialized".to_owned()),
+        ..Script::default()
+    });
+    press_f12_on_helper(&mut t);
+    wait(&mut t, "Rust LSP failed for `helper`.");
+}

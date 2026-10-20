@@ -358,3 +358,63 @@ fn workspace_search_box_handles_enter_in_the_frame_it_gets_focus() {
     ]);
     t.assert_status("Workspace search started: needle");
 }
+
+#[test]
+fn search_everywhere_lists_rust_items_of_every_kind() {
+    let source = "mod direct;\nmod nested;\nmod missing;\nmod inline { pub fn inner() {} }\n\
+        pub enum Color { Red }\npub trait Shape { fn area(&self) -> f32; }\n\
+        pub type Alias = u32;\npub union Bits { a: u32, b: f32 }\n\
+        struct Point { x: i32 } impl Point { fn norm(&self) -> i32 { self.x } }\n\
+        struct A; struct B;\n";
+    let mut t = TestApp::builder()
+        .file("src/lib.rs", source)
+        .file("src/direct.rs", "pub fn d() {}\n")
+        .file("src/nested/mod.rs", "pub fn n() {}\n")
+        .file("README", "no extension but a known name\n")
+        .file("notes", "no extension: not shown\n")
+        .build();
+    assert!(!t.has_label("notes"));
+    t.ctrl(egui::Key::P);
+    for (query, label) in [
+        ("Color", "Color"),
+        ("Shape", "Shape"),
+        ("area", "Shape::area"),
+        ("Alias", "Alias"),
+        ("Bits", "Bits"),
+        ("norm", "Point::norm"),
+        ("direct", "direct"),
+        ("nested", "nested"),
+    ] {
+        t.ctrl(egui::Key::A);
+        t.type_text(query);
+        let results = t.app_mut().search_overlay_results(&[]);
+        assert!(
+            results.iter().any(|result| result.label == label),
+            "{query}: {:?}",
+            results
+                .iter()
+                .map(|result| result.label.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+    // Jump to a module declared in its own file.
+    t.ctrl(egui::Key::A);
+    t.type_text("direct");
+    t.key(egui::Key::Enter);
+    t.assert_status_containing("Opened");
+}
+
+#[test]
+fn deleted_recent_files_drop_out_of_search_everywhere() {
+    let mut t = search_workspace();
+    t.click_first("alpha.txt");
+    std::fs::remove_file(t.path("alpha.txt")).unwrap();
+    t.ctrl(egui::Key::P);
+    t.type_text("alpha");
+    let results = t.app_mut().search_overlay_results(&[]);
+    assert!(
+        results
+            .iter()
+            .all(|result| result.kind != crate::features::search::SearchResultKind::History)
+    );
+}

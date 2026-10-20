@@ -63,6 +63,8 @@ pub(crate) struct FakePlatform {
     pub lsp_scripts: RefCell<Vec<(String, Script)>>,
     /// Scripted servers started so far, newest last.
     pub scripted_servers: RefCell<Vec<(String, ScriptedLsp)>>,
+    /// Command spawned in `LspMode::Real`.
+    pub lsp_real_command: RefCell<String>,
 }
 
 /// How the fake platform provides language servers.
@@ -72,8 +74,9 @@ pub(crate) enum LspMode {
     Channel,
     /// The app's real LSP worker talks JSON-RPC to an in-process scripted server.
     Scripted,
-    /// The app's real LSP worker tries to spawn an executable that does not exist.
-    Missing,
+    /// The app's real LSP worker spawns `FakePlatform::lsp_real_command` (an executable
+    /// that does not exist, or one that is not a language server).
+    Real,
 }
 
 pub(crate) struct FakeLspServer {
@@ -97,6 +100,7 @@ impl FakePlatform {
             lsp_mode: Cell::new(LspMode::Channel),
             lsp_scripts: RefCell::new(Vec::new()),
             scripted_servers: RefCell::new(Vec::new()),
+            lsp_real_command: RefCell::new(String::new()),
         }
     }
 
@@ -237,8 +241,8 @@ impl Platform for FakePlatform {
                     .push((config.server_name.clone(), server));
                 return LspClient::start(config);
             }
-            LspMode::Missing => {
-                config.command = "code-reader-test-missing-language-server".to_owned();
+            LspMode::Real => {
+                config.command = self.lsp_real_command.borrow().clone();
                 return LspClient::start(config);
             }
         }
@@ -261,6 +265,7 @@ pub(crate) struct TestAppBuilder {
     lsp_starts_dead: bool,
     lsp_mode: LspMode,
     lsp_scripts: Vec<(String, Script)>,
+    lsp_real_command: String,
 }
 
 impl TestAppBuilder {
@@ -302,8 +307,15 @@ impl TestAppBuilder {
     }
 
     /// Language servers are real processes that are not installed.
-    pub fn missing_lsp(mut self) -> Self {
-        self.lsp_mode = LspMode::Missing;
+    pub fn missing_lsp(self) -> Self {
+        self.real_lsp_command("code-reader-test-missing-language-server")
+    }
+
+    /// Language servers are started by spawning `command` for real (for example something
+    /// that exists but is not a language server).
+    pub fn real_lsp_command(mut self, command: &str) -> Self {
+        self.lsp_mode = LspMode::Real;
+        self.lsp_real_command = command.to_owned();
         self
     }
 
@@ -350,6 +362,7 @@ impl TestAppBuilder {
         let platform = Rc::new(FakePlatform::new(state_path, root.clone()));
         platform.lsp_starts_dead.set(self.lsp_starts_dead);
         platform.lsp_mode.set(self.lsp_mode);
+        *platform.lsp_real_command.borrow_mut() = self.lsp_real_command;
         *platform.lsp_scripts.borrow_mut() = self.lsp_scripts;
         let guard = platform::install(platform.clone());
         let registry =
@@ -404,6 +417,7 @@ impl TestApp {
             lsp_starts_dead: false,
             lsp_mode: LspMode::Channel,
             lsp_scripts: Vec::new(),
+            lsp_real_command: String::new(),
         }
     }
 

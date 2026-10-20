@@ -337,3 +337,27 @@ fn markdown_source_mode_tolerates_unfinished_links() {
     t.steps(2);
     assert_eq!(t.app().left.markdown_mode, MarkdownMode::Markdown);
 }
+
+#[test]
+fn shortcut_reference_links_and_odd_heading_slugs() {
+    let source = "# Odd Headings\n\nSee [collapsed][] and [shortcut] links.\n\n\
+        [collapsed]: https://example.com/c\n[shortcut]: https://example.com/s\n\n\
+        ### Ends with punctuation !\n\nx\n\n### !!!\n\ny\n\n\
+        [to punctuation](#ends-with-punctuation) [to section](#section)\n";
+    let mut t = TestApp::builder().file("odd.md", source).build();
+    t.click_first("odd.md");
+    t.steps(2);
+    t.click_text_label("collapsed");
+    t.assert_status("Reference links are not resolved yet: collapsed");
+    t.click_text_label("to punctuation");
+    assert_eq!(
+        t.app().left.markdown_active_heading_id.as_deref(),
+        Some("h3-ends-with-punctuation")
+    );
+    t.alt(egui::Key::ArrowLeft);
+    t.click_text_label("to section");
+    assert_eq!(
+        t.app().left.markdown_active_heading_id.as_deref(),
+        Some("h3-section")
+    );
+}

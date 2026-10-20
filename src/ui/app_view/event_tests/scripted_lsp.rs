@@ -30,6 +30,8 @@ pub(crate) struct Script {
     pub after_initialize: Vec<Value>,
     /// Raw bytes written after the `initialize` response (to send malformed frames).
     pub raw_after_initialize: Vec<u8>,
+    /// Messages pushed to the client right before answering a location request.
+    pub before_location_response: Vec<Value>,
     /// Hang up (close both streams) when this method arrives.
     pub hang_up_on: Option<String>,
     /// Make the "process" fail to start.
@@ -122,6 +124,7 @@ fn serve(
         let method = message.get("method").and_then(Value::as_str).unwrap_or("");
         let id = message.get("id").cloned();
         if script.lock().unwrap().hang_up_on.as_deref() == Some(method) {
+            // Exiting drops the input pipe too, so later writes from the client fail.
             writer.lock().unwrap().take();
             return;
         }
@@ -150,15 +153,22 @@ fn serve(
                 }
             }
             ("textDocument/definition" | "textDocument/references", Some(id)) => {
-                let (error, result) = {
+                let (error, result, before) = {
                     let script = script.lock().unwrap();
                     let result = if method == "textDocument/definition" {
                         script.definition.clone()
                     } else {
                         script.references.clone()
                     };
-                    (script.location_error.clone(), result)
+                    (
+                        script.location_error.clone(),
+                        result,
+                        script.before_location_response.clone(),
+                    )
                 };
+                for message in before {
+                    write_message(&writer, &message);
+                }
                 match error {
                     Some(error) => respond_error(&writer, id, error),
                     None => respond(&writer, id, result),
