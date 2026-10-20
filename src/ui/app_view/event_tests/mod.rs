@@ -4,6 +4,7 @@
 mod support;
 
 mod git;
+mod lsp;
 mod search;
 mod sessions;
 mod smoke;

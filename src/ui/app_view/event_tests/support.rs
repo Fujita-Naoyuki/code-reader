@@ -378,6 +378,12 @@ impl TestApp {
         );
     }
 
+    /// The status bar text (status message plus rust-analyzer readiness) is painted, not a
+    /// widget, so read it from the app.
+    pub fn status_bar_contains(&self, text: &str) -> bool {
+        self.app().status_bar_message().contains(text)
+    }
+
     pub fn clear_statuses(&mut self) {
         self.statuses.clear();
     }
@@ -508,6 +514,43 @@ impl TestApp {
             }))
             .map(|node| node.rect())
             .collect()
+    }
+
+    /// Rect of the main editor text area (the largest multi-line text field on screen).
+    pub fn editor_text_rect(&self) -> egui::Rect {
+        self.harness
+            .query_all(
+                By::new().predicate(|node| node.role() == accesskit::Role::MultilineTextInput),
+            )
+            .map(|node| node.rect())
+            .max_by(|a, b| a.area().total_cmp(&b.area()))
+            .expect("an editor text area")
+    }
+
+    /// Monospace editor metrics: (row height, character width).
+    pub fn editor_metrics(&self) -> (f32, f32) {
+        let font = egui::FontId::monospace(14.0);
+        self.harness
+            .ctx
+            .fonts_mut(|fonts| (fonts.row_height(&font), fonts.glyph_width(&font, 'x')))
+    }
+
+    /// Screen position of `(line, column)` in the editor text area (0-based, no scroll).
+    pub fn editor_text_pos(&self, line: u32, column: u32) -> egui::Pos2 {
+        let rect = self.editor_text_rect();
+        let (row_height, char_width) = self.editor_metrics();
+        egui::pos2(
+            rect.left() + column as f32 * char_width + char_width * 0.3,
+            rect.top() + 2.0 + line as f32 * row_height + row_height * 0.5,
+        )
+    }
+
+    /// Clicks in the editor so the cursor lands at `(line, column)`.
+    pub fn click_text(&mut self, line: u32, column: u32) {
+        // Let egui's double-click window pass so repeated clicks do not select a word.
+        self.steps(25);
+        let pos = self.editor_text_pos(line, column);
+        self.click_at(pos);
     }
 
     /// Clicks the `index`-th text field, selects its content and replaces it with `text`.
