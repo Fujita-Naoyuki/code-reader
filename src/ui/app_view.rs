@@ -6421,6 +6421,7 @@ impl eframe::App for CodeReaderApp {
         self.show_git_discard_window(ui);
         self.show_git_commit_details_window(ui);
         self.show_shortcuts_help_window(ui);
+        register_focused_test_node(ui.ctx());
 
         let scroll_after_y = self.editor(focused_pane_at_start).scroll_y;
         self.record_app_perf_sample(
@@ -11946,7 +11947,6 @@ impl EditorPane {
         let viewport_size = egui::vec2(viewport_size.x.max(1.0), viewport_size.y.max(1.0));
         let (viewport_rect, response) =
             ui.allocate_exact_size(viewport_size, egui::Sense::click_and_drag());
-        register_virtual_editor_test_node(ui, text_edit_id, viewport_rect);
         let scrollbar_layout = virtual_scrollbar_layout(viewport_rect, total_width, total_height);
         let content_rect = scrollbar_layout.content_rect;
         let max_scroll_y = (total_height - content_rect.height()).max(0.0);
@@ -19106,23 +19106,18 @@ fn virtual_editor_drag_selection(
     Some((anchor, head))
 }
 
-/// The virtual editor parks keyboard focus on `text_edit_id`, which is not a real widget.
-/// AccessKit rejects a focused id without a node, and tests always run with AccessKit
-/// enabled (egui_kittest reads the UI through it), so give the id a node under test.
+/// Some editors park keyboard focus on ids that are not real widgets (the virtual source
+/// editor's `text_edit_id`, the Markdown pane focus ids). AccessKit rejects a focused id
+/// without a node, and tests always run with AccessKit on because egui_kittest reads the UI
+/// through it, so give such an id an empty node in test builds.
 /// See DISCREPANCY(D07): with an accessibility client attached the app hits the same issue.
-fn register_virtual_editor_test_node(ui: &egui::Ui, text_edit_id: egui::Id, rect: egui::Rect) {
+fn register_focused_test_node(context: &egui::Context) {
     #[cfg(test)]
-    ui.ctx().accesskit_node_builder(text_edit_id, |node| {
-        node.set_role(egui::accesskit::Role::MultilineTextInput);
-        node.set_bounds(egui::accesskit::Rect {
-            x0: rect.min.x.into(),
-            y0: rect.min.y.into(),
-            x1: rect.max.x.into(),
-            y1: rect.max.y.into(),
-        });
-    });
+    if let Some(focused) = context.memory(|memory| memory.focused()) {
+        context.accesskit_node_builder(focused, |_| {});
+    }
     #[cfg(not(test))]
-    let _ = (ui, text_edit_id, rect);
+    let _ = context;
 }
 
 fn virtual_editor_can_handle_key(ui: &egui::Ui, text_edit_id: egui::Id) -> bool {

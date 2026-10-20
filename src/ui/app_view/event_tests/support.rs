@@ -19,7 +19,7 @@ use eframe::egui;
 use egui::accesskit;
 use egui_kittest::{
     Harness,
-    kittest::{By, Queryable},
+    kittest::{By, NodeT, Queryable},
 };
 
 use crate::core::location::{Location, Position, Range};
@@ -460,8 +460,8 @@ impl TestApp {
     }
 
     pub fn click(&mut self, label: &str) {
-        let rect = self.harness.get_by_label(label).rect();
-        self.click_at(rect.center());
+        assert_eq!(self.count_label(label), 1, "expected exactly one {label:?}");
+        self.click_nth(label, 0);
     }
 
     /// Clicks the first widget labeled `label` in tree order. The sidebar is laid out before
@@ -471,7 +471,8 @@ impl TestApp {
         self.click_nth(label, 0);
     }
 
-    /// Clicks the `index`-th widget (in tree order) whose label is exactly `label`.
+    /// Clicks the `index`-th widget (in tree order) whose label is exactly `label`,
+    /// scrolling it into view first.
     pub fn click_nth(&mut self, label: &str, index: usize) {
         let count = self.count_label(label);
         assert!(
@@ -479,11 +480,61 @@ impl TestApp {
             "expected at least {} widgets labeled {label:?}, found {count}",
             index + 1,
         );
+        self.scroll_into_view(label, index);
         let rect = self.nth_label_rect(label, index);
         self.click_at(rect.center());
     }
 
+    /// Asks egui (through AccessKit) to scroll the `index`-th widget labeled `label` into
+    /// view, if it is outside the visible area.
+    pub fn scroll_into_view(&mut self, label: &str, index: usize) {
+        // Keep clear of the top bar and the status bar, which cover the panels' edges.
+        let visible = self
+            .harness
+            .ctx
+            .content_rect()
+            .shrink2(egui::vec2(0.0, 40.0));
+        let rect = self.nth_label_rect(label, index);
+        if visible.contains_rect(rect) {
+            return;
+        }
+        if let Some(node) = self.harness.query_all_by_label(label).nth(index) {
+            node.scroll_to_me();
+        }
+        self.steps(3);
+    }
+
+    /// Clicks a text-like widget (label, link, selectable label) by its exact text; when the
+    /// text appears several times the first one in tree order is used.
+    pub fn click_text_label(&mut self, label: &str) {
+        self.click_first(label);
+    }
+
+    /// Re-focuses the rendered Markdown search box with Ctrl+F and replaces its query.
+    pub fn fill_markdown_search(&mut self, text: &str) {
+        self.ctrl(egui::Key::F);
+        self.ctrl(egui::Key::A);
+        self.type_text(text);
+    }
+
+    /// Debug helper: every node label on screen.
+    pub fn all_labels(&self) -> Vec<String> {
+        self.harness
+            .query_all(By::new().predicate(|_| true))
+            .filter_map(|node| node.accesskit_node().label())
+            .collect()
+    }
+
     pub fn click_containing(&mut self, text: &str) {
+        let visible = self
+            .harness
+            .ctx
+            .content_rect()
+            .shrink2(egui::vec2(0.0, 40.0));
+        if !visible.contains_rect(self.harness.get_by_label_contains(text).rect()) {
+            self.harness.get_by_label_contains(text).scroll_to_me();
+            self.steps(3);
+        }
         let rect = self.harness.get_by_label_contains(text).rect();
         self.click_at(rect.center());
     }
