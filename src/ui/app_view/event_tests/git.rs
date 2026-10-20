@@ -63,8 +63,15 @@ fn git_view_lists_repository_and_changes() {
     assert!(t.has_label("Changed Files"));
     assert_eq!(t.count_label("+"), 2);
 
-    // The workspace tree marks changed files.
+    // The workspace tree marks changed files once the new file is discovered.
     t.click("Workspace");
+    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.wait_until("new.txt discovered", |app| {
+        app.file_tree
+            .files
+            .iter()
+            .any(|path| path.ends_with("new.txt"))
+    });
     t.steps(2);
     assert!(t.has_label("M"));
     assert!(t.has_label("?"));
