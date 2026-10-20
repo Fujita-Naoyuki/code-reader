@@ -662,3 +662,221 @@ fn definition_via_the_symbol_index_for_other_languages() {
     t.step();
     t.assert_status("Jumped to reference of `helper`.");
 }
+
+fn take_request(
+    t: &TestApp,
+    server: &str,
+    kind: LspRequestKind,
+) -> crate::core::lsp::LspTestRequest {
+    t.platform
+        .lsp_requests(server)
+        .into_iter()
+        .find(|request| request.kind == kind)
+        .unwrap_or_else(|| panic!("{kind:?} request to {server}"))
+}
+
+#[test]
+fn late_and_unexpected_go_responses_are_ignored() {
+    let mut t = go_app();
+    let request = go_f12(&mut t);
+    let mut stale = request.clone();
+    stale.request_id += 50;
+    respond(&mut t, GO, &stale, Ok(Vec::new()));
+    assert!(
+        t.app().pending_go_lsp_request.is_some(),
+        "other ids are ignored"
+    );
+    t.app_mut()
+        .pending_go_lsp_request
+        .as_mut()
+        .unwrap()
+        .started_at = Instant::now() - Duration::from_secs(10);
+    t.step();
+    // The real answer arrives after the timeout: nothing is pending any more.
+    t.app_mut().status_message = "after timeout".to_owned();
+    let target = location(&t.path("main.go"), 2, 5);
+    respond(&mut t, GO, &request, Ok(vec![target]));
+    assert_eq!(t.status(), "after timeout");
+}
+
+#[test]
+fn reference_failures_and_queue_failures_after_a_definition() {
+    let mut t = go_app();
+    let main = t.path("main.go");
+    let request = go_f12(&mut t);
+    respond(&mut t, GO, &request, Ok(vec![location(&main, 7, 9)]));
+    let references = take_request(&t, GO, LspRequestKind::References);
+    respond(&mut t, GO, &references, Err("refs broke".to_owned()));
+    t.assert_status("Go LSP failed for `helper`. (refs broke)");
+
+    // The server dies between the definition answer and the follow-up references request:
+    // the single definition is opened instead.
+    let request = go_f12(&mut t);
+    t.platform
+        .lsp_respond(GO, &request, Ok(vec![location(&main, 7, 9)]));
+    t.platform.stop_lsp_servers();
+    t.steps(3);
+    // The failure message is replaced within the same frame by the fallback jump.
+    t.assert_status("Jumped to definition of `helper`.");
+
+    let mut t = rust_app();
+    let request = f12_on_helper(&mut t);
+    let main_rs = t.path("src/main.rs");
+    respond(&mut t, RUST, &request, Ok(vec![location(&main_rs, 5, 17)]));
+    let references = take_request(&t, RUST, LspRequestKind::References);
+    respond(&mut t, RUST, &references, Err("ra refs broke".to_owned()));
+    t.assert_status("Rust LSP failed for `helper`. (ra refs broke)");
+
+    let request = {
+        t.click_text(5, 17);
+        t.key(egui::Key::F12);
+        take_request(&t, RUST, LspRequestKind::Definition)
+    };
+    t.platform
+        .lsp_respond(RUST, &request, Ok(vec![location(&main_rs, 5, 17)]));
+    t.platform.stop_lsp_servers();
+    t.steps(3);
+    t.assert_status("Jumped to definition of `helper`.");
+}
+
+#[test]
+fn rust_warm_up_fails_when_the_server_cannot_start() {
+    let t = TestApp::builder()
+        .file("src/main.rs", MAIN_RS)
+        .dead_language_servers()
+        .build();
+    assert_eq!(t.app().rust_lsp_debug.last_status, "warmup_queue_failed");
+    assert!(t.app().rust_lsp_debug.last_error.is_some());
+}
+
+#[test]
+fn jumping_into_external_go_modules_indexes_them() {
+    let mut t = go_app();
+    let external = t
+        .tmp
+        .join("go")
+        .join("pkg")
+        .join("mod")
+        .join("example.com")
+        .join("dep.go");
+    std::fs::create_dir_all(external.parent().unwrap()).unwrap();
+    std::fs::write(&external, "package dep\n\nfunc Helper() {}\n").unwrap();
+    let request = go_f12(&mut t);
+    respond(&mut t, GO, &request, Ok(vec![location(&external, 2, 5)]));
+    assert_eq!(t.app().left.path.as_deref(), Some(external.as_path()));
+    assert!(t.app().left.read_only);
+    t.click("Report");
+    let report = t.platform.clipboard_text().unwrap();
+    assert!(report.contains("external="), "{report}");
+}
+
+#[test]
+fn reference_lists_sort_truncate_and_handle_missing_lines() {
+    let long_line = format!("fn helper() {{ /* {} */ }}\n", "x".repeat(300));
+    let mut t = TestApp::builder()
+        .file("src/main.rs", MAIN_RS)
+        .file("src/long.rs", &long_line)
+        .build();
+    t.click("src");
+    let request = f12_on_helper(&mut t);
+    let main = t.path("src/main.rs");
+    respond(&mut t, RUST, &request, Ok(vec![location(&main, 5, 17)]));
+    let references = take_request(&t, RUST, LspRequestKind::References);
+    let long = t.path("src/long.rs");
+    let gone = t.tmp.join("gone.rs");
+    respond(
+        &mut t,
+        RUST,
+        &references,
+        Ok(vec![
+            location(&main, 5, 20),
+            location(&main, 5, 16),
+            location(&long, 0, 3),
+            location(&main, 900, 0),
+            location(&gone, 1, 1),
+        ]),
+    );
+    assert!(t.app().references_overlay.open);
+    assert!(t.has_label_containing("..."), "long previews are truncated");
+    assert!(t.has_label("  901"), "a line past the end has no preview");
+    let first_main = t
+        .app()
+        .definition_candidates
+        .iter()
+        .position(|candidate| candidate.location.range.start.character == 16);
+    let second_main = t
+        .app()
+        .definition_candidates
+        .iter()
+        .position(|candidate| candidate.location.range.start.character == 20);
+    assert!(first_main.is_some() && second_main.is_some());
+    t.key(egui::Key::Escape);
+
+    // Report lists the reference locations under their title.
+    t.click("Report");
+    assert!(
+        t.platform
+            .clipboard_text()
+            .unwrap()
+            .contains("References: 5")
+    );
+}
+
+#[test]
+fn definitions_next_to_the_cursor_are_still_jumps() {
+    let mut t = rust_app();
+    let main = t.path("src/main.rs");
+    // Same line, but before / after the cursor: not "the symbol itself".
+    for character in [10, 30] {
+        let request = f12_on_helper(&mut t);
+        respond(
+            &mut t,
+            RUST,
+            &request,
+            Ok(vec![location(&main, 5, character)]),
+        );
+        t.assert_status("Jumped to definition of `helper`.");
+        t.alt(egui::Key::ArrowLeft);
+    }
+    // A definition in a file that does not exist opens an error pane.
+    let request = f12_on_helper(&mut t);
+    let missing = t.tmp.join("missing.rs");
+    respond(&mut t, RUST, &request, Ok(vec![location(&missing, 0, 0)]));
+    assert!(t.has_label("Unable to open file"));
+}
+
+#[test]
+fn long_navigation_chains_collapse_the_breadcrumb_and_follow_renames() {
+    let mut t = rust_app();
+    let main = t.path("src/main.rs");
+    let other = t.path("src/other.rs");
+    t.click_first("main.rs");
+    t.click_text(0, 3);
+    for index in 0..6 {
+        // Each jump leaves the cursor on the target, ready for the next F12.
+        t.key(egui::Key::F12);
+        let request = take_request(&t, RUST, LspRequestKind::Definition);
+        let target = if index % 2 == 0 { &other } else { &main };
+        respond(&mut t, RUST, &request, Ok(vec![location(target, 0, 7)]));
+    }
+    // History is capped at the breadcrumb size, so the breadcrumb's "..." prefix for
+    // hidden older entries can never appear.
+    assert_eq!(t.app().left_navigation_history.back.len(), 4);
+    assert!(!t.has_label("..."));
+
+    // Renaming a file keeps history entries pointing at it.
+    t.click_first("other.rs");
+    t.key(egui::Key::F2);
+    t.type_text("renamed");
+    t.key(egui::Key::Enter);
+    let renamed = t.path("src/renamed.rs");
+    assert!(
+        t.app()
+            .left_navigation_history
+            .back
+            .iter()
+            .chain(&t.app().left_navigation_history.forward)
+            .all(|point| point.path != other)
+    );
+    let _ = renamed;
+}

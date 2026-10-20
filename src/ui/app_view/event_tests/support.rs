@@ -54,6 +54,8 @@ pub(crate) struct FakePlatform {
     pub opened_urls: RefCell<Vec<String>>,
     pub open_url_fails: Cell<bool>,
     pub lsp_servers: RefCell<Vec<FakeLspServer>>,
+    /// When set, started language servers die immediately (their worker is gone).
+    pub lsp_starts_dead: Cell<bool>,
 }
 
 pub(crate) struct FakeLspServer {
@@ -73,6 +75,7 @@ impl FakePlatform {
             opened_urls: RefCell::new(Vec::new()),
             open_url_fails: Cell::new(false),
             lsp_servers: RefCell::new(Vec::new()),
+            lsp_starts_dead: Cell::new(false),
         }
     }
 
@@ -184,9 +187,11 @@ impl Platform for FakePlatform {
 
     fn start_lsp(&self, config: LspServerConfig) -> LspClient {
         let (client, server) = LspClient::in_memory(&config.server_name);
-        self.lsp_servers
-            .borrow_mut()
-            .push(FakeLspServer { config, server });
+        if !self.lsp_starts_dead.get() {
+            self.lsp_servers
+                .borrow_mut()
+                .push(FakeLspServer { config, server });
+        }
         client
     }
 }
@@ -196,6 +201,8 @@ pub(crate) struct TestAppBuilder {
     state_json: Option<String>,
     size: egui::Vec2,
     git: bool,
+    theme: egui::Theme,
+    lsp_starts_dead: bool,
 }
 
 impl TestAppBuilder {
@@ -220,6 +227,18 @@ impl TestAppBuilder {
 
     pub fn size(mut self, width: f32, height: f32) -> Self {
         self.size = egui::vec2(width, height);
+        self
+    }
+
+    /// Runs with the light theme (the default follows the dark system theme).
+    pub fn light(mut self) -> Self {
+        self.theme = egui::Theme::Light;
+        self
+    }
+
+    /// Language servers started by the app die immediately.
+    pub fn dead_language_servers(mut self) -> Self {
+        self.lsp_starts_dead = true;
         self
     }
 
@@ -258,6 +277,7 @@ impl TestAppBuilder {
         }
 
         let platform = Rc::new(FakePlatform::new(state_path, root.clone()));
+        platform.lsp_starts_dead.set(self.lsp_starts_dead);
         let guard = platform::install(platform.clone());
         let registry =
             LanguageRegistry::with_languages(vec![Box::new(RustLanguage), Box::new(GoLanguage)]);
@@ -265,6 +285,7 @@ impl TestAppBuilder {
             .with_size(self.size)
             .with_max_steps(10_000)
             .with_step_dt(1.0 / 60.0)
+            .with_theme(self.theme)
             .build_eframe(move |creation_context| CodeReaderApp::new(creation_context, registry));
 
         let mut app = TestApp {
@@ -303,6 +324,8 @@ impl TestApp {
             state_json: None,
             size: egui::vec2(1500.0, 820.0),
             git: false,
+            theme: egui::Theme::Dark,
+            lsp_starts_dead: false,
         }
     }
 

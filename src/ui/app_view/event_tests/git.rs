@@ -594,3 +594,204 @@ fn files_with_spaces_or_japanese_names_cannot_be_staged() {
     t.steps(2);
     assert!(!t.has_label("?"));
 }
+
+#[test]
+fn repository_errors_and_locked_index_are_reported() {
+    let mut t = repo();
+    t.write("tracked.txt", "changed\n");
+    t.git(&["add", "tracked.txt"]);
+    t.write("other.txt", "other changed\n");
+    open_git(&mut t);
+    // Another git process holds the index lock: every index update fails.
+    std::fs::write(t.path(".git/index.lock"), "").unwrap();
+    t.click("+ Stage All");
+    t.assert_status_containing("Git stage all failed: workspace");
+    t.click("- Unstage All");
+    t.assert_status_containing("Git unstage all failed: workspace");
+    t.click("-");
+    t.assert_status_containing("Git unstage failed: workspace | tracked.txt");
+    std::fs::remove_file(t.path(".git/index.lock")).unwrap();
+
+    // A corrupt index makes `git status` fail; the error is shown under the repository.
+    std::fs::write(t.path(".git/index"), "garbage").unwrap();
+    open_git(&mut t);
+    assert!(t.app().git_repositories[0].error.is_some());
+    assert!(t.has_label_containing("index"));
+}
+
+#[test]
+fn git_warnings_are_shown_as_command_output() {
+    let mut t = repo();
+    t.git(&["config", "core.autocrlf", "true"]);
+    t.write("tracked.txt", "lf\nline\n");
+    t.write("new.txt", "lf\n");
+    open_git(&mut t);
+    t.click_nth("+", 0);
+    t.assert_status_containing("Git stage completed: workspace | warning:");
+    t.click("+ Stage All");
+    t.assert_status_containing("Git stage all completed: workspace | warning:");
+    t.click_nth("-", 0);
+    t.click("- Unstage All");
+    t.assert_status_containing("Git unstage all completed: workspace");
+}
+
+#[test]
+fn fetch_reports_new_remote_commits() {
+    let mut t = repo();
+    let remote = add_origin(&t, true);
+    let other = t.tmp.join("other-clone");
+    run_git(
+        &t.tmp,
+        &[
+            "clone",
+            "-q",
+            remote.to_str().unwrap(),
+            other.to_str().unwrap(),
+        ],
+    );
+    run_git(&other, &["config", "user.name", "Other"]);
+    run_git(&other, &["config", "user.email", "other@example.com"]);
+    std::fs::write(other.join("remote.txt"), "remote\n").unwrap();
+    run_git(&other, &["add", "remote.txt"]);
+    run_git(&other, &["commit", "-qm", "remote work"]);
+    run_git(&other, &["push", "-q"]);
+    open_git(&mut t);
+    t.click("...");
+    t.click("Fetch");
+    t.assert_status_containing("Git fetch completed: workspace | From ");
+    assert!(t.has_label("1↓ 0↑"));
+}
+
+#[test]
+fn tree_markers_for_added_deleted_and_nested_changes() {
+    let mut t = TestApp::builder()
+        .file("doomed.txt", "x\n")
+        .file("dir/inner/deep.txt", "deep\n")
+        .git()
+        .build();
+    t.write("brand.txt", "new\n");
+    t.git(&["add", "brand.txt"]);
+    std::fs::remove_file(t.path("doomed.txt")).unwrap();
+    t.write("dir/inner/deep.txt", "changed\n");
+    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.wait_until("brand.txt discovered", |app| {
+        app.file_tree
+            .files
+            .iter()
+            .any(|path| path.ends_with("brand.txt"))
+    });
+    t.steps(3);
+    assert!(t.has_label("A"), "staged new file");
+    assert!(t.has_label("•"), "folder containing a change");
+}
+
+#[test]
+fn history_of_a_detached_head_and_an_octopus_merge() {
+    let mut t = TestApp::builder().file("a.txt", "a\n").git().build();
+    for branch in ["one", "two"] {
+        t.git(&["switch", "-q", "-c", branch, "main"]);
+        t.write(&format!("{branch}.txt"), "x\n");
+        t.git(&["add", "-A"]);
+        t.git(&["commit", "-qm", &format!("{branch} work")]);
+    }
+    t.git(&["switch", "-q", "main"]);
+    let long_subject = format!("octopus {}", "very long subject ".repeat(20));
+    t.git(&["merge", "-q", "one", "two", "-m", &long_subject]);
+    let head = t.git(&["rev-parse", "HEAD"]);
+    t.git(&["checkout", "-q", "--detach", &head]);
+    open_git(&mut t);
+    t.click("History");
+    assert!(t.has_label("4 commits"));
+    t.steps(3);
+}
+
+#[test]
+fn staged_diff_without_changes_and_binary_files() {
+    let mut t = repo();
+    t.write("tracked.txt", "changed\n");
+    t.git(&["add", "tracked.txt"]);
+    let mut png = vec![0x89, b'P', b'N', b'G', 0, 0, 0, 0];
+    png.extend(std::iter::repeat_n(0u8, 64));
+    std::fs::write(t.path("blob.bin.txt"), &png).unwrap();
+    t.git(&["add", "blob.bin.txt"]);
+    open_git(&mut t);
+    let minus = t.nth_label_rect("-", 0);
+    t.click_at(egui::pos2(minus.left() - 120.0, minus.center().y));
+    // Staged changes vanish behind the view's back: reloading shows "No diff".
+    t.git(&["reset", "-q"]);
+    t.click("Full File");
+    let text = t.app().left.text.as_str().to_owned();
+    assert!(text.starts_with("No diff for "), "{text}");
+    t.click_nth("Changes", 1);
+    t.click_nth("Changes", 1);
+
+    t.git(&["add", "-A"]);
+    open_git(&mut t);
+    t.click("All Diffs");
+    assert!(t.app().left.text.as_str().contains("Binary files"));
+    t.click("Side by Side");
+    t.steps(2);
+}
+
+#[test]
+fn switch_branch_window_without_local_branches_and_help_in_git_views() {
+    let mut t = TestApp::builder().file("a.txt", "a").build();
+    run_git(&t.root, &["init", "-q", "-b", "main"]);
+    open_git(&mut t);
+    t.click("main ▾");
+    assert!(t.has_label("No local branches"));
+    t.key(egui::Key::Escape);
+
+    let mut t = repo();
+    t.write("tracked.txt", "x\n");
+    open_git(&mut t);
+    t.click("All Diffs");
+    t.key(egui::Key::F1);
+    assert!(t.has_label("Diff View"));
+    t.key(egui::Key::Escape);
+    t.click("History");
+    t.key(egui::Key::F1);
+    assert!(t.has_label("Git History"));
+}
+
+#[test]
+fn git_view_reloads_after_switching_sessions() {
+    let state = r#"{
+        "current_session_id": "s1",
+        "sessions": [
+            {"id": "s1", "display_name": "One", "root_folders": ["{root}"], "bookmarks": [],
+             "open_files": {"left": null, "right": null},
+             "pane_positions": {"left": {"line": 0, "character": 0}, "right": {"line": 0, "character": 0}},
+             "last_updated_unix": 2},
+            {"id": "s2", "display_name": "Two", "root_folders": ["{root}"], "bookmarks": [],
+             "open_files": {"left": null, "right": null},
+             "pane_positions": {"left": {"line": 0, "character": 0}, "right": {"line": 0, "character": 0}},
+             "last_updated_unix": 1}
+        ]
+    }"#;
+    let mut t = TestApp::builder()
+        .file("a.txt", "a\n")
+        .state(state)
+        .git()
+        .build();
+    open_git(&mut t);
+    t.click("Workspaces");
+    let header = t.label_rect("2 workspaces");
+    t.click_at(egui::pos2(header.left() + 60.0, header.bottom() + 52.0));
+    t.assert_status("Switched session.");
+    t.steps(2);
+    t.assert_status("Git: 1 repositories.");
+}
+
+#[test]
+fn two_roots_in_one_repository_show_it_once() {
+    let mut t = TestApp::builder()
+        .file("a.txt", "a\n")
+        .file("sub/b.txt", "b\n")
+        .git()
+        .build();
+    t.platform.queue_folder_pick(&t.path("sub"));
+    t.click_nth("Add", 0);
+    open_git(&mut t);
+    assert_eq!(t.app().git_repositories.len(), 1);
+}
