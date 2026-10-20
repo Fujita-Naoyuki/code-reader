@@ -3,7 +3,9 @@
 
 mod support;
 
+mod git;
 mod search;
 mod sessions;
 mod smoke;
+mod windows;
 mod workspace;

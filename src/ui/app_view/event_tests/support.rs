@@ -16,9 +16,10 @@ use std::{
 };
 
 use eframe::egui;
+use egui::accesskit;
 use egui_kittest::{
     Harness,
-    kittest::{NodeT, Queryable},
+    kittest::{By, Queryable},
 };
 
 use crate::core::location::{Location, Position, Range};
@@ -421,11 +422,14 @@ impl TestApp {
     }
 
     pub fn has_label(&self, label: &str) -> bool {
-        self.harness.query_by_label(label).is_some()
+        self.harness.query_all_by_label(label).next().is_some()
     }
 
     pub fn has_label_containing(&self, text: &str) -> bool {
-        self.harness.query_by_label_contains(text).is_some()
+        self.harness
+            .query_all_by_label_contains(text)
+            .next()
+            .is_some()
     }
 
     pub fn count_label(&self, label: &str) -> usize {
@@ -493,6 +497,34 @@ impl TestApp {
         self.harness.get_by_label(label).rect()
     }
 
+    /// Rects of every text field on screen, in tree order.
+    pub fn text_field_rects(&self) -> Vec<egui::Rect> {
+        self.harness
+            .query_all(By::new().predicate(|node| {
+                matches!(
+                    node.role(),
+                    accesskit::Role::TextInput | accesskit::Role::MultilineTextInput
+                )
+            }))
+            .map(|node| node.rect())
+            .collect()
+    }
+
+    /// Clicks the `index`-th text field, selects its content and replaces it with `text`.
+    pub fn fill_text_field(&mut self, index: usize, text: &str) {
+        let rects = self.text_field_rects();
+        let rect = *rects
+            .get(index)
+            .unwrap_or_else(|| panic!("no text field #{index}; found {}", rects.len()));
+        self.click_at(rect.center());
+        self.ctrl(egui::Key::A);
+        if text.is_empty() {
+            self.key(egui::Key::Backspace);
+        } else {
+            self.type_text(text);
+        }
+    }
+
     pub fn label_containing_rect(&self, text: &str) -> egui::Rect {
         self.harness.get_by_label_contains(text).rect()
     }
@@ -506,7 +538,8 @@ impl TestApp {
         self.pointer_button(pos, true, modifiers);
         self.pointer_button(pos, false, modifiers);
         self.set_modifiers(egui::Modifiers::NONE);
-        self.step();
+        // A click often opens a window; egui lays new windows out invisibly first.
+        self.steps(2);
     }
 
     pub fn double_click_at(&mut self, pos: egui::Pos2) {
