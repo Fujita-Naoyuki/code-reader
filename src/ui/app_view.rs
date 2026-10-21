@@ -18141,13 +18141,14 @@ fn markdown_source_spans(source: &str) -> Vec<MarkdownSourceSpan> {
         }
 
         if let Some(hash_count) = markdown_heading_marker_len(trimmed) {
-            spans.push(MarkdownSourceSpan {
-                range: content_start..content_end,
-                kind: MarkdownSourceSpanKind::Heading,
-            });
+            // Marker and text are separate spans: the layout drops overlapping ones.
             spans.push(MarkdownSourceSpan {
                 range: content_start..content_start + hash_count,
                 kind: MarkdownSourceSpanKind::ListMarker,
+            });
+            spans.push(MarkdownSourceSpan {
+                range: content_start + hash_count..content_end,
+                kind: MarkdownSourceSpanKind::Heading,
             });
         } else {
             if trimmed.starts_with('>') {
@@ -23222,6 +23223,24 @@ mod tests {
 
         assert_eq!(&source[pair.0..=pair.0], "(");
         assert_eq!(&source[pair.1..=pair.1], ")");
+    }
+
+    #[test]
+    fn markdown_source_heading_spans_do_not_overlap_the_marker() {
+        let spans = markdown_source_spans("## Title\n");
+        assert_eq!(
+            spans,
+            vec![
+                MarkdownSourceSpan {
+                    range: 0..2,
+                    kind: MarkdownSourceSpanKind::ListMarker,
+                },
+                MarkdownSourceSpan {
+                    range: 2..8,
+                    kind: MarkdownSourceSpanKind::Heading,
+                },
+            ]
+        );
     }
 
     #[test]
