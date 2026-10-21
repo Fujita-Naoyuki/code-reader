@@ -294,16 +294,16 @@ fn report_copies_diagnostics() {
 }
 
 #[test]
-fn report_without_session_or_command() {
+fn report_after_a_state_without_sessions_is_repaired() {
     let mut t = TestApp::builder()
         .file("notes.txt", "x")
         .state(r#"{"current_session_id": "gone", "sessions": []}"#)
         .build();
     t.click("Report");
     let report = t.platform.clipboard_text().unwrap();
-    assert!(report.contains("session=none"));
-    assert!(report.contains("ai_command_error=No workspace folder is available."));
-    assert!(report.contains("  none"));
+    // The missing session is replaced by a Default one on start (R02).
+    assert!(report.contains("session=Default"), "{report}");
+    assert!(!report.contains("session=none"));
 }
 
 #[test]
