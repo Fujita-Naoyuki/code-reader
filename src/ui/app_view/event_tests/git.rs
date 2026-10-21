@@ -543,6 +543,13 @@ fn history_commit_details_and_commit_diff() {
     t.click_at(second_row);
     t.key(egui::Key::Escape);
     assert!(t.app().git_commit_details.is_none());
+
+    // The repository disappears while the history is on screen: the details window shows
+    // the error instead of the changed files.
+    std::fs::remove_dir_all(t.path(".git")).unwrap();
+    t.click_at(second_row);
+    assert!(t.has_label("Commit Details"));
+    assert!(t.app().git_commit_details.as_ref().unwrap().error.is_some());
 }
 
 #[test]

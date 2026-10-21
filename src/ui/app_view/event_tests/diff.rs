@@ -125,6 +125,20 @@ fn unified_selection_copies_text() {
 
     // Clicking outside the text column (the line-number gutter) does not start a selection.
     t.click_at(row_pos(&t, 3, 10.0));
+
+    // Dragging upwards selects the same kind of range.
+    t.platform.clipboard_fails.set(false);
+    t.steps(20);
+    t.drag(row_pos(&t, 4, 400.0), row_pos(&t, 2, 120.0));
+    t.copy_event();
+    assert!(t.platform.clipboard_text().unwrap().contains('\n'));
+
+    // ...also in the side-by-side layout.
+    t.click("Side by Side");
+    t.steps(20);
+    t.drag(row_pos(&t, 5, 200.0), row_pos(&t, 3, 90.0));
+    t.copy_event();
+    t.assert_status_containing("Copied diff selection:");
 }
 
 #[test]

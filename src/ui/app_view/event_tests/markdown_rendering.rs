@@ -12,6 +12,8 @@ const INLINE_DOC: &str = r#"# Inline Page
 Plain **strong** *emphasis* ~~deleted~~ and `code` with a hard break\
 on the next line.
 
+> A quoted note.
+
 | Left | Center | Right |
 |:-----|:------:|------:|
 | [cell link](https://example.com/c) | ![cell image](pic.png) | [ref cell][refc] |

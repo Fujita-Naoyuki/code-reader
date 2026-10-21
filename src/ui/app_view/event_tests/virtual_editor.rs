@@ -485,9 +485,10 @@ fn edits_without_a_cursor_and_no_op_replacements() {
     // An IME update together with a key that edits nothing still repaints.
     t.key_with(CTRL, egui::Key::A);
     t.key(egui::Key::ArrowRight);
-    t.harness
-        .event(egui::Event::Ime(egui::ImeEvent::Preedit("a".to_owned())));
-    t.harness.event(egui::Event::Key {
+    // Both events arrive in the same frame.
+    let events = &mut t.harness.input_mut().events;
+    events.push(egui::Event::Ime(egui::ImeEvent::Preedit("a".to_owned())));
+    events.push(egui::Event::Key {
         key: egui::Key::Delete,
         physical_key: None,
         pressed: true,
@@ -496,6 +497,7 @@ fn edits_without_a_cursor_and_no_op_replacements() {
     });
     t.step();
     assert_eq!(text(&t), big_text());
+    assert_eq!(t.app().left.virtual_ime_preedit.as_deref(), Some("a"));
 }
 
 #[test]
