@@ -131,14 +131,16 @@ fn recent_workspaces_deletes_another_session_after_confirmation() {
 const NO_SESSIONS: &str = r#"{"current_session_id": "gone", "sessions": []}"#;
 
 #[test]
-fn recent_workspaces_with_no_sessions_shows_empty_message() {
+fn state_without_sessions_starts_a_default_session() {
     let mut t = TestApp::builder()
         .file("notes.txt", "x")
         .state(NO_SESSIONS)
         .build();
-    assert!(t.has_label("No session"));
+    let session = t.app().current_session().unwrap();
+    assert_eq!(session.display_name, "Default");
+    assert!(t.has_label("notes.txt"));
     t.click("Workspaces");
-    assert!(t.has_label("No recent workspaces"));
+    assert!(!t.has_label("No recent workspaces"));
 }
 
 #[test]
@@ -179,16 +181,6 @@ fn rename_workspace_rejects_empty_name_and_can_be_canceled() {
     t.click_first("Rename");
     t.key(egui::Key::Escape);
     assert!(!t.app().editing_session_name);
-}
-
-#[test]
-fn rename_without_a_session_reports_it() {
-    let mut t = TestApp::builder()
-        .file("notes.txt", "x")
-        .state(NO_SESSIONS)
-        .build();
-    t.click_first("Rename");
-    t.assert_status("No current session to rename.");
 }
 
 #[test]

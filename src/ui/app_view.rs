@@ -234,8 +234,12 @@ impl CodeReaderApp {
 
         let state_path = platform::current().state_file_path();
         let fallback_root = platform::current().current_dir();
-        let app_state =
+        let mut app_state =
             load_state(&state_path).unwrap_or_else(|| AppState::new(fallback_root.clone()));
+        if app_state.repair_current_session(fallback_root.clone()) {
+            // The state file named a session that does not exist; keep the repair.
+            let _ = save_state(&state_path, &app_state);
+        }
         let current_session = app_state
             .current_session()
             .cloned()

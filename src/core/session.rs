@@ -26,6 +26,28 @@ impl AppState {
         }
     }
 
+    /// Makes `current_session_id` point at an existing session: the most recently updated
+    /// one, or a new "Default" session on `fallback_root` when there is none. Returns
+    /// whether anything changed (the caller should then save the state).
+    pub fn repair_current_session(&mut self, fallback_root: PathBuf) -> bool {
+        if self.current_session().is_some() {
+            return false;
+        }
+        match self
+            .sessions
+            .iter()
+            .max_by_key(|session| session.last_updated_unix)
+        {
+            Some(session) => self.current_session_id = session.id.clone(),
+            None => {
+                let session = WorkspaceSession::new("Default", vec![fallback_root]);
+                self.current_session_id = session.id.clone();
+                self.sessions.push(session);
+            }
+        }
+        true
+    }
+
     pub fn current_session(&self) -> Option<&WorkspaceSession> {
         self.sessions
             .iter()
@@ -186,6 +208,29 @@ fn now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repair_current_session_picks_the_latest_or_creates_one() {
+        let mut state = AppState::new(PathBuf::from("a"));
+        assert!(!state.repair_current_session(PathBuf::from("x")));
+
+        let mut older = WorkspaceSession::new("Older", vec![PathBuf::from("b")]);
+        older.id = "older".to_owned();
+        older.last_updated_unix = 0;
+        state.sessions.push(older);
+        state.sessions[0].last_updated_unix = 10;
+        let latest_id = state.sessions[0].id.clone();
+        state.current_session_id = "missing".to_owned();
+        assert!(state.repair_current_session(PathBuf::from("x")));
+        assert_eq!(state.current_session_id, latest_id);
+
+        state.sessions.clear();
+        state.current_session_id = "missing".to_owned();
+        assert!(state.repair_current_session(PathBuf::from("x")));
+        let session = state.current_session().unwrap();
+        assert_eq!(session.display_name, "Default");
+        assert_eq!(session.root_folders, vec![PathBuf::from("x")]);
+    }
 
     #[test]
     fn new_workspace_session_starts_without_bookmarks() {

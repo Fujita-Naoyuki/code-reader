@@ -497,7 +497,7 @@ fn files_under_external_library_folders_open_read_only() {
 }
 
 #[test]
-fn inconsistent_state_without_a_current_session() {
+fn inconsistent_state_falls_back_to_an_existing_session() {
     let state = r#"{
         "current_session_id": "missing",
         "sessions": [{
@@ -514,26 +514,20 @@ fn inconsistent_state_without_a_current_session() {
         .file("notes.txt", "x\n")
         .state(state)
         .build();
-    assert!(t.has_label("No session"));
-    // Actions that need the current session degrade gracefully.
+    // The dangling id is repaired on start and saved.
+    assert_eq!(t.app().current_session().unwrap().id, "other");
+    assert!(t.has_label("notes.txt"));
+    assert!(
+        t.saved_state()
+            .contains("\"current_session_id\": \"other\"")
+    );
+
     let extra = t.tmp.join("extra");
     std::fs::create_dir_all(&extra).unwrap();
+    std::fs::write(extra.join("extra.txt"), "e\n").unwrap();
     t.platform.queue_folder_pick(&extra);
     t.click_nth("Add", 0);
     t.assert_status(&format!("Added folder: {}", extra.display()));
-    // The folder is reported as added, but there is no session to hold it: the tree is
-    // rebuilt from no roots at all (a corrupt state file is not repaired).
-    assert!(t.app().file_tree.files.is_empty());
-    t.click_first("New File");
-    t.type_text("new.txt");
-    t.key(egui::Key::Enter);
-    assert!(t.has_label("Folder is outside the current workspace."));
-    t.key(egui::Key::Escape);
-    // With an empty tree the file can only be reopened programmatically.
-    t.open_file("notes.txt");
-    t.steps(25);
-    let star = t.gutter_star_pos(0, 1);
-    t.click_at(star);
-    t.assert_status("Added bookmark: notes.txt:1");
-    assert!(t.app().current_session().is_none());
+    assert!(t.has_label("extra.txt"));
+    assert!(t.saved_state().contains("extra"));
 }
