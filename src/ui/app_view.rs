@@ -17015,6 +17015,14 @@ fn diff_row_ui(
         });
 }
 
+fn hidden_lines_label(count: usize) -> String {
+    if count == 1 {
+        "1 hidden line".to_owned()
+    } else {
+        format!("{count} hidden lines")
+    }
+}
+
 fn hidden_lines_row_ui(ui: &mut egui::Ui, rect: egui::Rect, count: usize) {
     if count == 0 {
         return;
@@ -17024,7 +17032,7 @@ fn hidden_lines_row_ui(ui: &mut egui::Ui, rect: egui::Rect, count: usize) {
     painter.text(
         egui::pos2(rect.left() + 8.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        format!("◇  非表示 {count} 行"),
+        format!("◇  {}", hidden_lines_label(count)),
         FontId::monospace(11.0),
         ui.visuals().weak_text_color(),
     );
@@ -17818,7 +17826,7 @@ fn diff_row_char_width(row: &DiffDisplayRow) -> usize {
         DiffDisplayRow::Section(title) => title.chars().count(),
         DiffDisplayRow::FileHeader { path, .. } => path.chars().count(),
         DiffDisplayRow::Hunk(text) | DiffDisplayRow::Message(text) => text.chars().count(),
-        DiffDisplayRow::HiddenLines(count) => format!("非表示 {count} 行").chars().count(),
+        DiffDisplayRow::HiddenLines(count) => hidden_lines_label(*count).chars().count(),
         DiffDisplayRow::Line { content, .. } => content.chars().count(),
     }
 }
@@ -22869,6 +22877,8 @@ mod tests {
         ));
 
         assert!(rows.contains(&DiffDisplayRow::HiddenLines(29)));
+        assert_eq!(hidden_lines_label(29), "29 hidden lines");
+        assert_eq!(hidden_lines_label(1), "1 hidden line");
     }
 
     #[test]
