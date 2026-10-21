@@ -10,3 +10,4 @@ pub mod symbol;
 pub mod symbol_index;
 pub mod symbol_indexing;
 pub mod syntax;
+pub mod text;
