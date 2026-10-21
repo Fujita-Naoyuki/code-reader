@@ -9,7 +9,7 @@ use std::{
         mpsc::{self, Receiver},
     },
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use eframe::egui::{
@@ -56,11 +56,23 @@ use crate::core::markdown::links::{
 };
 use crate::core::markdown::mermaid::{is_mermaid_language, render_mermaid_svg};
 use crate::core::markdown::source_spans::{MarkdownSourceSpanKind, markdown_source_spans};
+use crate::core::navigation::{
+    NavigationHistory, NavigationPoint, navigation_point_hover_text, navigation_point_label,
+};
+use crate::core::session::{
+    load_state, recent_files_from_open_files, recent_workspace_age_label, save_state,
+};
 use crate::core::text::{
     EditorTextBuffer, LineIndex, LineInfo, char_index_to_byte_index, clamp_to_char_boundary,
     closing_pair, find_matching_bracket_pair, is_closing_bracket, leading_indent_columns,
     next_char_boundary, previous_char_boundary, smart_newline, stable_hash,
     strip_trailing_whitespace,
+};
+use crate::core::workspace_files::{
+    WorkspaceSnapshot, file_name_stem_selection_char_len, file_title,
+    initial_workspace_file_content, is_csv_path, is_external_path, is_external_rust_path,
+    is_go_path, is_markdown_path, is_rust_path, validate_workspace_file_name,
+    workspace_search_display_path, workspace_snapshot, workspace_snapshot_diff,
 };
 use crate::core::{
     cli_agent::{CliAgentCommand, build_cli_agent_command},
@@ -93,8 +105,6 @@ const MARKDOWN_SIDE_PANE_MIN_WIDTH: f32 = 120.0;
 const MARKDOWN_SIDE_PANE_MAX_WIDTH: f32 = 560.0;
 const MARKDOWN_SIDE_PANE_MIN_REMAINING_WIDTH: f32 = 360.0;
 const NAVIGATION_BREADCRUMB_LIMIT: usize = 5;
-/// Back steps kept per pane; the breadcrumb shows only the latest ones and "..." before them.
-const NAVIGATION_HISTORY_LIMIT: usize = 50;
 const WORKSPACE_SEARCH_MAX_MATCHES: usize = 2000;
 const WORKSPACE_SEARCH_PREVIEW_CHARS: usize = 140;
 const WORKSPACE_SECTION_HEADER_HEIGHT: f32 = 24.0;
@@ -6707,40 +6717,11 @@ struct WorkspaceSearchMatch {
     preview: String,
 }
 
-type WorkspaceSnapshot = HashMap<PathBuf, WorkspaceFileFingerprint>;
-
 #[derive(Debug)]
 struct WorkspaceChangeScanResult {
     roots: Vec<PathBuf>,
     files: Vec<PathBuf>,
     snapshot: WorkspaceSnapshot,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WorkspaceFileFingerprint {
-    modified_unix_nanos: u128,
-    len: u64,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct WorkspaceSnapshotDiff {
-    added: Vec<PathBuf>,
-    modified: Vec<PathBuf>,
-    removed: Vec<PathBuf>,
-}
-
-impl WorkspaceSnapshotDiff {
-    fn len(&self) -> usize {
-        self.added.len() + self.modified.len() + self.removed.len()
-    }
-
-    fn requires_full_symbol_reindex(&self) -> bool {
-        self.added
-            .iter()
-            .chain(&self.modified)
-            .chain(&self.removed)
-            .any(|path| is_dependency_manifest_path(path))
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -13100,15 +13081,6 @@ fn workspace_search_preview(line: &str) -> String {
     preview
 }
 
-fn workspace_search_display_path(path: &Path, roots: &[PathBuf]) -> String {
-    roots
-        .iter()
-        .filter_map(|root| path.strip_prefix(root).ok())
-        .min_by_key(|relative| relative.components().count())
-        .map(|relative| relative.display().to_string())
-        .unwrap_or_else(|| path.display().to_string())
-}
-
 fn git_graph_color(color_index: usize) -> Color32 {
     GIT_GRAPH_COLORS[color_index % GIT_GRAPH_COLORS.len()]
 }
@@ -13124,13 +13096,6 @@ const GIT_GRAPH_COLORS: [Color32; 8] = [
     Color32::from_rgb(229, 192, 123),
 ];
 
-fn workspace_snapshot(files: &[PathBuf]) -> WorkspaceSnapshot {
-    files
-        .iter()
-        .filter_map(|path| Some((path.clone(), workspace_file_fingerprint(path)?)))
-        .collect()
-}
-
 fn start_workspace_change_scan(roots: Vec<PathBuf>) -> Receiver<WorkspaceChangeScanResult> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -13143,59 +13108,6 @@ fn start_workspace_change_scan(roots: Vec<PathBuf>) -> Receiver<WorkspaceChangeS
         });
     });
     receiver
-}
-
-fn workspace_file_fingerprint(path: &Path) -> Option<WorkspaceFileFingerprint> {
-    let metadata = fs::metadata(path).ok()?;
-    let modified = metadata.modified().ok()?;
-    let modified_unix_nanos = modified
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    Some(WorkspaceFileFingerprint {
-        modified_unix_nanos,
-        len: metadata.len(),
-    })
-}
-
-#[cfg(test)]
-fn workspace_snapshot_change_count(
-    previous: &WorkspaceSnapshot,
-    next: &WorkspaceSnapshot,
-) -> usize {
-    workspace_snapshot_diff(previous, next).len()
-}
-
-fn workspace_snapshot_diff(
-    previous: &WorkspaceSnapshot,
-    next: &WorkspaceSnapshot,
-) -> WorkspaceSnapshotDiff {
-    let mut diff = WorkspaceSnapshotDiff::default();
-
-    for (path, fingerprint) in next {
-        match previous.get(path) {
-            Some(previous_fingerprint) if previous_fingerprint == fingerprint => {}
-            Some(_) => diff.modified.push(path.clone()),
-            None => diff.added.push(path.clone()),
-        }
-    }
-
-    for path in previous.keys() {
-        if !next.contains_key(path) {
-            diff.removed.push(path.clone());
-        }
-    }
-
-    diff.added.sort();
-    diff.modified.sort();
-    diff.removed.sort();
-    diff
-}
-
-fn is_dependency_manifest_path(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, "Cargo.toml" | "Cargo.lock" | "go.mod" | "go.sum"))
 }
 
 fn workspace_file_tree_height(available_height: f32, footer_header_count: usize) -> f32 {
@@ -13765,24 +13677,6 @@ fn paint_navigation_breadcrumb(
     .on_hover_text(navigation_point_hover_text(&current));
 }
 
-fn navigation_point_label(point: &NavigationPoint) -> String {
-    let file_name = point
-        .path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("<unnamed>");
-    format!("{file_name}:{}", point.position.line + 1)
-}
-
-fn navigation_point_hover_text(point: &NavigationPoint) -> String {
-    format!(
-        "{}:{}:{}",
-        point.path.display(),
-        point.position.line + 1,
-        point.position.character + 1
-    )
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum EditorAction {
     GoToDefinition,
@@ -14019,99 +13913,6 @@ struct PendingGoLspRequest {
     identifier: String,
     origin: Option<NavigationPoint>,
     started_at: Instant,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NavigationPoint {
-    path: PathBuf,
-    position: Position,
-}
-
-#[derive(Debug, Clone, Default)]
-struct NavigationHistory {
-    back: Vec<NavigationPoint>,
-    forward: Vec<NavigationPoint>,
-}
-
-impl NavigationHistory {
-    fn push_back(&mut self, point: NavigationPoint) {
-        if self.back.last() != Some(&point) {
-            self.back.push(point);
-        }
-        self.forward.clear();
-        self.trim_back();
-    }
-
-    fn go_back(&mut self, current: Option<NavigationPoint>) -> Option<NavigationPoint> {
-        let previous = self.back.pop()?;
-        if let Some(current) = current {
-            push_unique(&mut self.forward, current);
-        }
-        Some(previous)
-    }
-
-    fn go_forward(&mut self, current: Option<NavigationPoint>) -> Option<NavigationPoint> {
-        let next = self.forward.pop()?;
-        if let Some(current) = current {
-            push_unique(&mut self.back, current);
-            self.trim_back();
-        }
-        Some(next)
-    }
-
-    fn open_back_entry(
-        &mut self,
-        index: usize,
-        current: Option<NavigationPoint>,
-    ) -> Option<NavigationPoint> {
-        if index >= self.back.len() {
-            return None;
-        }
-
-        let point = self.back[index].clone();
-        let later_entries = self.back.drain(index + 1..).collect::<Vec<_>>();
-        self.back.truncate(index);
-
-        if let Some(current) = current {
-            push_unique(&mut self.forward, current);
-        }
-        for entry in later_entries.into_iter().rev() {
-            push_unique(&mut self.forward, entry);
-        }
-
-        Some(point)
-    }
-
-    fn clear(&mut self) {
-        self.back.clear();
-        self.forward.clear();
-    }
-
-    fn remap_path(&mut self, old_path: &Path, new_path: &Path) {
-        for point in self.back.iter_mut().chain(self.forward.iter_mut()) {
-            if point.path == old_path {
-                point.path = new_path.to_path_buf();
-            }
-        }
-    }
-
-    fn retain_path_not(&mut self, path: &Path) {
-        self.back.retain(|point| point.path != path);
-        self.forward.retain(|point| point.path != path);
-    }
-
-    fn trim_back(&mut self) {
-        if self.back.len() > NAVIGATION_HISTORY_LIMIT {
-            let drain_count = self.back.len() - NAVIGATION_HISTORY_LIMIT;
-            self.back.drain(0..drain_count);
-        }
-    }
-}
-
-fn push_unique(points: &mut Vec<NavigationPoint>, point: NavigationPoint) {
-    if points.last() != Some(&point) {
-        points.push(point);
-    }
 }
 
 fn configure_fonts(context: &egui::Context) {
@@ -17594,34 +17395,6 @@ fn diff_page_scroll_delta(ui: &egui::Ui, focused: bool, viewport_height: f32) ->
     })
 }
 
-fn is_csv_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
-}
-
-fn is_go_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("go"))
-}
-
-fn is_rust_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("rs"))
-}
-
-fn is_markdown_path(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("md")
-                || extension.eq_ignore_ascii_case("mdx")
-                || extension.eq_ignore_ascii_case("markdown")
-        })
-}
-
 fn csv_column_widths(ui: &egui::Ui, document: &CsvDocument, column_count: usize) -> Vec<f32> {
     let row_height = editor_row_height(ui);
     let char_width = row_height * 0.58;
@@ -18323,28 +18096,6 @@ fn node_contains_git_status(
         .any(|child| node_contains_git_status(child, git_file_statuses))
 }
 
-fn recent_workspace_age_label(last_updated_unix: u64) -> String {
-    let now_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(last_updated_unix);
-    recent_workspace_age_label_at(last_updated_unix, now_unix)
-}
-
-fn recent_workspace_age_label_at(last_updated_unix: u64, now_unix: u64) -> String {
-    let elapsed = now_unix.saturating_sub(last_updated_unix);
-
-    if elapsed < 60 {
-        "just now".to_owned()
-    } else if elapsed < 60 * 60 {
-        format!("{}m ago", elapsed / 60)
-    } else if elapsed < 60 * 60 * 24 {
-        format!("{}h ago", elapsed / (60 * 60))
-    } else {
-        format!("{}d ago", elapsed / (60 * 60 * 24))
-    }
-}
-
 fn ui_was_primary_clicked(ui: &egui::Ui) -> bool {
     ui.input(|input| {
         input.pointer.button_clicked(egui::PointerButton::Primary)
@@ -18399,109 +18150,8 @@ fn workspace_right_pane_drop_target(ui: &mut egui::Ui, path: &Path) -> bool {
     hovered && ui.input(|input| input.pointer.any_released())
 }
 
-fn is_external_path(path: &Path) -> bool {
-    let display = path.to_string_lossy().replace('\\', "/");
-    display.contains("/.cargo/")
-        || display.contains("/.rustup/")
-        || display.contains("/go/pkg/mod/")
-}
-
-fn is_external_rust_path(path: &Path) -> bool {
-    if !is_rust_path(path) {
-        return false;
-    }
-    let display = path.to_string_lossy().replace('\\', "/");
-    display.contains("/.cargo/") || display.contains("/.rustup/")
-}
-
 fn pick_workspace_folder(title: &str) -> Option<PathBuf> {
     platform::current().pick_folder(title)
-}
-
-fn file_title(path: &Path) -> String {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("<invalid>")
-        .to_owned()
-}
-
-fn validate_workspace_file_name(value: &str) -> Result<String, String> {
-    let name = value.trim();
-    if name.is_empty() {
-        return Err("File name is required.".to_owned());
-    }
-    if name == "." || name == ".." {
-        return Err("File name cannot be . or ..".to_owned());
-    }
-    if name.chars().any(|character| {
-        matches!(
-            character,
-            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
-        )
-    }) {
-        return Err("File name contains an invalid character.".to_owned());
-    }
-    let path = Path::new(name);
-    if path.is_absolute() || path.components().count() != 1 {
-        return Err("Enter a file name, not a path.".to_owned());
-    }
-    Ok(name.to_owned())
-}
-
-fn file_name_stem_selection_char_len(file_name: &str) -> usize {
-    file_name
-        .rfind('.')
-        .filter(|index| *index > 0)
-        .map(|index| file_name[..index].chars().count())
-        .unwrap_or_else(|| file_name.chars().count())
-}
-
-fn initial_workspace_file_content(path: &Path) -> String {
-    if !is_markdown_path(path) {
-        return String::new();
-    }
-
-    let title = path
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .unwrap_or("New Document");
-    format!("# {title}\n")
-}
-
-fn recent_files_from_open_files(open_files: &OpenFiles) -> Vec<PathBuf> {
-    let mut recent_files = Vec::new();
-
-    if let Some(path) = &open_files.left {
-        recent_files.push(path.clone());
-    }
-    if let Some(path) = &open_files.right
-        && !recent_files.iter().any(|recent| recent == path)
-    {
-        recent_files.push(path.clone());
-    }
-
-    recent_files
-}
-
-fn load_state(path: &Path) -> Option<AppState> {
-    let text = fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
-}
-
-fn save_state(path: &Path, app_state: &AppState) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut persisted_state = app_state.clone();
-    for session in &mut persisted_state.sessions {
-        session.bookmarks.retain(|bookmark| !bookmark.temporary);
-    }
-
-    let text = serde_json::to_string_pretty(&persisted_state)?;
-    fs::write(path, text)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -18511,64 +18161,6 @@ mod event_tests;
 mod tests {
     use super::*;
     use crate::core::text::build_line_index;
-
-    fn test_navigation_point(file_name: &str, line: u32) -> NavigationPoint {
-        NavigationPoint {
-            path: PathBuf::from(file_name),
-            position: Position::new(line, 0),
-        }
-    }
-
-    #[test]
-    fn validate_workspace_file_name_accepts_simple_names() {
-        assert_eq!(
-            validate_workspace_file_name(" idea.md "),
-            Ok("idea.md".to_owned())
-        );
-        assert_eq!(
-            validate_workspace_file_name("Cargo.lock"),
-            Ok("Cargo.lock".to_owned())
-        );
-    }
-
-    #[test]
-    fn validate_workspace_file_name_rejects_paths() {
-        assert!(validate_workspace_file_name("../idea.md").is_err());
-        assert!(validate_workspace_file_name("docs/idea.md").is_err());
-        assert!(validate_workspace_file_name("C:\\temp\\idea.md").is_err());
-        assert!(validate_workspace_file_name("").is_err());
-    }
-
-    #[test]
-    fn initial_workspace_file_content_uses_markdown_for_markdown_files() {
-        assert_eq!(
-            initial_workspace_file_content(Path::new("idea.md")),
-            "# idea\n"
-        );
-        assert_eq!(
-            initial_workspace_file_content(Path::new("note.mdx")),
-            "# note\n"
-        );
-    }
-
-    #[test]
-    fn initial_workspace_file_content_keeps_non_markdown_files_empty() {
-        assert_eq!(initial_workspace_file_content(Path::new("new.csv")), "");
-        assert_eq!(initial_workspace_file_content(Path::new("main.rs")), "");
-        assert_eq!(initial_workspace_file_content(Path::new("config.toml")), "");
-    }
-
-    #[test]
-    fn file_name_stem_selection_char_len_selects_before_extension() {
-        assert_eq!(file_name_stem_selection_char_len("README.md"), 6);
-        assert_eq!(file_name_stem_selection_char_len("archive.tar.gz"), 11);
-    }
-
-    #[test]
-    fn file_name_stem_selection_char_len_selects_all_without_extension() {
-        assert_eq!(file_name_stem_selection_char_len(".gitignore"), 10);
-        assert_eq!(file_name_stem_selection_char_len("README"), 6);
-    }
 
     #[test]
     fn virtual_click_byte_column_treats_gutter_click_as_line_start() {
@@ -19176,33 +18768,6 @@ mod tests {
     }
 
     #[test]
-    fn navigation_history_supports_back_and_forward() {
-        let mut history = NavigationHistory::default();
-        let a = test_navigation_point("a.rs", 17);
-        let b = test_navigation_point("b.rs", 41);
-
-        history.push_back(a.clone());
-        assert_eq!(history.go_back(Some(b.clone())), Some(a.clone()));
-        assert_eq!(history.go_forward(Some(a)), Some(b));
-    }
-
-    #[test]
-    fn navigation_history_clicking_back_entry_preserves_forward_path() {
-        let mut history = NavigationHistory::default();
-        let a = test_navigation_point("a.rs", 17);
-        let b = test_navigation_point("b.rs", 41);
-        let c = test_navigation_point("c.rs", 9);
-
-        history.push_back(a.clone());
-        history.push_back(b.clone());
-
-        assert_eq!(history.open_back_entry(0, Some(c.clone())), Some(a.clone()));
-        assert_eq!(history.back, Vec::<NavigationPoint>::new());
-        assert_eq!(history.go_forward(Some(a.clone())), Some(b.clone()));
-        assert_eq!(history.go_forward(Some(b)), Some(c));
-    }
-
-    #[test]
     fn source_search_matches_returns_byte_ranges() {
         let matches = source_search_matches("alpha beta alpha", "alpha");
 
@@ -19242,149 +18807,6 @@ mod tests {
                     preview: "alpha beta".to_owned(),
                 },
             ]
-        );
-    }
-
-    #[test]
-    fn workspace_snapshot_change_count_counts_added_modified_and_removed_files() {
-        let unchanged = PathBuf::from("unchanged.rs");
-        let modified = PathBuf::from("modified.rs");
-        let added = PathBuf::from("added.rs");
-        let removed = PathBuf::from("removed.rs");
-
-        let previous = HashMap::from([
-            (
-                unchanged.clone(),
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-            (
-                modified.clone(),
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-            (
-                removed,
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-        ]);
-        let next = HashMap::from([
-            (
-                unchanged,
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-            (
-                modified,
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 11,
-                    len: 20,
-                },
-            ),
-            (
-                added,
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-        ]);
-
-        assert_eq!(workspace_snapshot_change_count(&previous, &next), 3);
-    }
-
-    #[test]
-    fn workspace_snapshot_diff_classifies_changed_files() {
-        let unchanged = PathBuf::from("unchanged.rs");
-        let modified = PathBuf::from("modified.rs");
-        let added = PathBuf::from("added.rs");
-        let removed = PathBuf::from("removed.rs");
-
-        let previous = HashMap::from([
-            (
-                unchanged.clone(),
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-            (
-                modified.clone(),
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-            (
-                removed.clone(),
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-        ]);
-        let next = HashMap::from([
-            (
-                unchanged,
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-            (
-                modified.clone(),
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 11,
-                    len: 20,
-                },
-            ),
-            (
-                added.clone(),
-                WorkspaceFileFingerprint {
-                    modified_unix_nanos: 10,
-                    len: 20,
-                },
-            ),
-        ]);
-
-        let diff = workspace_snapshot_diff(&previous, &next);
-
-        assert_eq!(diff.added, vec![added]);
-        assert_eq!(diff.modified, vec![modified]);
-        assert_eq!(diff.removed, vec![removed]);
-    }
-
-    #[test]
-    fn workspace_snapshot_diff_requires_full_reindex_for_dependency_files() {
-        let diff = WorkspaceSnapshotDiff {
-            added: Vec::new(),
-            modified: vec![PathBuf::from("Cargo.lock")],
-            removed: Vec::new(),
-        };
-
-        assert!(diff.requires_full_symbol_reindex());
-    }
-
-    #[test]
-    fn workspace_search_display_path_prefers_shortest_root_relative_path() {
-        let path = PathBuf::from(r"C:\git\code-reader\src\ui\app_view.rs");
-        let roots = vec![
-            PathBuf::from(r"C:\git"),
-            PathBuf::from(r"C:\git\code-reader"),
-        ];
-
-        assert_eq!(
-            workspace_search_display_path(&path, &roots),
-            PathBuf::from(r"src\ui\app_view.rs").display().to_string()
         );
     }
 
@@ -19444,14 +18866,6 @@ mod tests {
         }];
 
         assert_eq!(immediate_wheel_scroll_delta(&events, 300.0), None);
-    }
-
-    #[test]
-    fn recent_workspace_age_label_uses_compact_units() {
-        assert_eq!(recent_workspace_age_label_at(1_000, 1_030), "just now");
-        assert_eq!(recent_workspace_age_label_at(1_000, 1_180), "3m ago");
-        assert_eq!(recent_workspace_age_label_at(1_000, 8_200), "2h ago");
-        assert_eq!(recent_workspace_age_label_at(1_000, 260_200), "3d ago");
     }
 
     #[test]

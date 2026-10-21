@@ -1,5 +1,6 @@
 use std::{
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -205,6 +206,66 @@ fn now_millis() -> u128 {
         .unwrap_or_default()
 }
 
+pub(crate) fn recent_workspace_age_label(last_updated_unix: u64) -> String {
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(last_updated_unix);
+    recent_workspace_age_label_at(last_updated_unix, now_unix)
+}
+
+pub(crate) fn recent_workspace_age_label_at(last_updated_unix: u64, now_unix: u64) -> String {
+    let elapsed = now_unix.saturating_sub(last_updated_unix);
+
+    if elapsed < 60 {
+        "just now".to_owned()
+    } else if elapsed < 60 * 60 {
+        format!("{}m ago", elapsed / 60)
+    } else if elapsed < 60 * 60 * 24 {
+        format!("{}h ago", elapsed / (60 * 60))
+    } else {
+        format!("{}d ago", elapsed / (60 * 60 * 24))
+    }
+}
+
+pub(crate) fn recent_files_from_open_files(open_files: &OpenFiles) -> Vec<PathBuf> {
+    let mut recent_files = Vec::new();
+
+    if let Some(path) = &open_files.left {
+        recent_files.push(path.clone());
+    }
+    if let Some(path) = &open_files.right
+        && !recent_files.iter().any(|recent| recent == path)
+    {
+        recent_files.push(path.clone());
+    }
+
+    recent_files
+}
+
+pub(crate) fn load_state(path: &Path) -> Option<AppState> {
+    let text = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub(crate) fn save_state(
+    path: &Path,
+    app_state: &AppState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut persisted_state = app_state.clone();
+    for session in &mut persisted_state.sessions {
+        session.bookmarks.retain(|bookmark| !bookmark.temporary);
+    }
+
+    let text = serde_json::to_string_pretty(&persisted_state)?;
+    fs::write(path, text)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +390,13 @@ mod tests {
         let error = state.rename_current_session("   ").unwrap_err();
 
         assert_eq!(error, "Workspace session name cannot be empty.");
+    }
+
+    #[test]
+    fn recent_workspace_age_label_uses_compact_units() {
+        assert_eq!(recent_workspace_age_label_at(1_000, 1_030), "just now");
+        assert_eq!(recent_workspace_age_label_at(1_000, 1_180), "3m ago");
+        assert_eq!(recent_workspace_age_label_at(1_000, 8_200), "2h ago");
+        assert_eq!(recent_workspace_age_label_at(1_000, 260_200), "3d ago");
     }
 }
