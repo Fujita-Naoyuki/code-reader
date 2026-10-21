@@ -170,19 +170,25 @@ fn commit_with_nothing_staged_reports_git_error() {
 }
 
 #[test]
-fn commit_and_push_without_upstream_commits_but_fails_to_push() {
+fn commit_and_push_without_upstream_publishes_the_branch() {
     let mut t = repo();
-    add_origin(&t, false);
+    let remote = add_origin(&t, false);
     t.write("tracked.txt", "changed\n");
     open_git(&mut t);
     t.click("+ Stage All");
     // The sidebar is laid out first, so the commit message is text field #0.
     t.fill_text_field(0, "Push me");
     t.click("Commit & Push");
-    // DISCREPANCY(D05): "Commit & Push" runs a plain `git push`, so a branch without an
-    // upstream is committed but never published, although the "..." menu offers
-    // "Publish Branch" for exactly this case.
-    t.assert_status_containing("Git commit completed but push failed: workspace");
+    t.assert_status_containing("Git commit & push completed: workspace");
+    assert_eq!(
+        run_git(&remote, &["log", "-1", "--format=%s", "main"]),
+        "Push me"
+    );
+    assert_eq!(
+        t.git(&["rev-parse", "--abbrev-ref", "main@{upstream}"]),
+        "origin/main",
+        "the branch now tracks the remote, like Publish Branch"
+    );
 }
 
 #[test]

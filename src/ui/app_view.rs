@@ -3396,25 +3396,7 @@ impl CodeReaderApp {
     }
 
     fn push_git_repository(&mut self, repository: &GitRepositoryState) {
-        let result = if repository.upstream.is_some() {
-            git_command_output(&repository.root, &["push"])
-        } else if !repository
-            .branches
-            .iter()
-            .any(|branch| branch == &repository.branch)
-        {
-            Err("current HEAD is not on a named branch".to_owned())
-        } else {
-            match git_default_remote(&repository.root) {
-                Ok(remote) => git_command_output(
-                    &repository.root,
-                    &["push", "-u", &remote, &repository.branch],
-                ),
-                Err(error) => Err(error),
-            }
-        };
-
-        match result {
+        match push_or_publish_git_branch(repository) {
             Ok(output) => {
                 let detail = if output.is_empty() {
                     if repository.upstream.is_some() {
@@ -3469,7 +3451,7 @@ impl CodeReaderApp {
                     output
                 };
                 if push_after_commit {
-                    match git_command_output(&repository.root, &["push"]) {
+                    match push_or_publish_git_branch(repository) {
                         Ok(push_output) => {
                             let push_detail = if push_output.is_empty() {
                                 "Push completed.".to_owned()
@@ -13504,6 +13486,26 @@ fn untracked_file_diff_text_from_path(root: &Path, relative_path: &str) -> Resul
 
 fn trim_git_command_output(output: &str) -> String {
     output.trim_end_matches(&['\r', '\n'][..]).to_owned()
+}
+
+/// Pushes the current branch, publishing it (`push -u <remote> <branch>`) when it has no
+/// upstream yet.
+fn push_or_publish_git_branch(repository: &GitRepositoryState) -> Result<String, String> {
+    if repository.upstream.is_some() {
+        return git_command_output(&repository.root, &["push"]);
+    }
+    if !repository
+        .branches
+        .iter()
+        .any(|branch| branch == &repository.branch)
+    {
+        return Err("current HEAD is not on a named branch".to_owned());
+    }
+    let remote = git_default_remote(&repository.root)?;
+    git_command_output(
+        &repository.root,
+        &["push", "-u", &remote, &repository.branch],
+    )
 }
 
 fn parse_git_status(output: &str) -> Vec<GitChange> {

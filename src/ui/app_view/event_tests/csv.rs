@@ -203,7 +203,11 @@ fn navigating_past_the_edge_stays_inside_the_table() {
     t.key(egui::Key::ArrowDown);
     assert_eq!(t.app().left.selected_csv_cell.unwrap().row, 2);
     t.ctrl(egui::Key::S);
-    assert_eq!(t.read("data.csv"), CSV, "moving around does not change the file");
+    assert_eq!(
+        t.read("data.csv"),
+        CSV,
+        "moving around does not change the file"
+    );
 
     // Enter on the last row is the explicit way to append one; it holds no data, so
     // saving trims it again.
