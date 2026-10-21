@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use markdown::{
     ParseOptions,
-    mdast::{Node, ReferenceKind},
+    mdast::Node,
     unist::{Point, Position},
 };
 
@@ -13,7 +13,6 @@ pub struct MarkdownDocument {
     pub ast: Node,
     pub pages: Vec<MarkdownPage>,
     pub headings: Vec<MarkdownHeading>,
-    pub links: Vec<MarkdownLink>,
     pub rendered_text: String,
 }
 
@@ -36,14 +35,6 @@ pub struct MarkdownHeading {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MarkdownLink {
-    pub text: String,
-    pub url: String,
-    pub title: Option<String>,
-    pub source_range: MarkdownSourceRange,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkdownSourceRange {
     pub start: MarkdownSourcePoint,
     pub end: MarkdownSourcePoint,
@@ -61,8 +52,7 @@ impl MarkdownDocument {
         let ast = markdown::to_mdast(&source, &ParseOptions::gfm())
             .map_err(|message| message.to_string())?;
         let mut headings = Vec::new();
-        let mut links = Vec::new();
-        collect_markdown_metadata(&ast, &mut headings, &mut links);
+        collect_markdown_headings(&ast, &mut headings);
         let mut pages = build_pages(&source, &ast, &headings);
         let rendered_text = assign_rendered_text_ranges(&source, &mut pages);
         let headings = headings_with_page_ids(&headings, &pages);
@@ -73,7 +63,6 @@ impl MarkdownDocument {
             ast,
             pages,
             headings,
-            links,
             rendered_text,
         })
     }
@@ -103,6 +92,7 @@ impl MarkdownDocument {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn page_source(&self, page: &MarkdownPage) -> &str {
         source_slice(&self.source, &page.source_range)
     }
@@ -128,53 +118,22 @@ impl MarkdownDocument {
     }
 }
 
-fn collect_markdown_metadata(
-    node: &Node,
-    headings: &mut Vec<MarkdownHeading>,
-    links: &mut Vec<MarkdownLink>,
-) {
-    match node {
-        Node::Heading(heading) => {
-            if let Some(source_range) = position_to_range(node.position()) {
-                headings.push(MarkdownHeading {
-                    level: heading.depth,
-                    title: rendered_text_for_children(&heading.children),
-                    slug: String::new(),
-                    source_range,
-                    page_id: None,
-                });
-            }
-        }
-        Node::Link(link) => {
-            if let Some(source_range) = position_to_range(node.position()) {
-                links.push(MarkdownLink {
-                    text: rendered_text_for_children(&link.children),
-                    url: link.url.clone(),
-                    title: link.title.clone(),
-                    source_range,
-                });
-            }
-        }
-        Node::LinkReference(link) => {
-            if let Some(source_range) = position_to_range(node.position()) {
-                let url = match link.reference_kind {
-                    ReferenceKind::Collapsed | ReferenceKind::Shortcut => link.identifier.clone(),
-                    ReferenceKind::Full => link.identifier.clone(),
-                };
-                links.push(MarkdownLink {
-                    text: rendered_text_for_children(&link.children),
-                    url,
-                    title: None,
-                    source_range,
-                });
-            }
-        }
-        _ => {}
+fn collect_markdown_headings(node: &Node, headings: &mut Vec<MarkdownHeading>) {
+    if let Node::Heading(heading) = node
+        && let Some(source_range) = position_to_range(node.position())
+    {
+        headings.push(MarkdownHeading {
+            level: heading.depth,
+            title: rendered_text_for_children(&heading.children),
+            slug: String::new(),
+            source_range,
+            page_id: None,
+        });
     }
 
     if let Some(children) = node.children() {
         for child in children {
-            collect_markdown_metadata(child, headings, links);
+            collect_markdown_headings(child, headings);
         }
     }
 }
@@ -457,8 +416,6 @@ mod tests {
         assert!(headings.iter().any(|heading| {
             heading.title == "Install" && heading.page_id.as_deref() == Some("setup")
         }));
-        assert_eq!(document.links[0].text, "link");
-        assert_eq!(document.links[0].url, "other.md");
         assert!(document.rendered_text.contains("Intro text"));
         assert!(document.rendered_text.contains("Alt"));
     }

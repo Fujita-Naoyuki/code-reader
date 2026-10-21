@@ -92,6 +92,7 @@ pub fn current() -> Rc<dyn Platform> {
 
 /// Replaces the platform on this thread until the returned guard is dropped.
 #[must_use = "the platform is restored when the guard is dropped"]
+#[cfg(test)]
 pub fn install(platform: Rc<dyn Platform>) -> PlatformGuard {
     let previous = CURRENT.with(|current| current.replace(platform));
     PlatformGuard {
@@ -99,10 +100,12 @@ pub fn install(platform: Rc<dyn Platform>) -> PlatformGuard {
     }
 }
 
+#[cfg(test)]
 pub struct PlatformGuard {
     previous: Option<Rc<dyn Platform>>,
 }
 
+#[cfg(test)]
 impl Drop for PlatformGuard {
     fn drop(&mut self) {
         if let Some(previous) = self.previous.take() {

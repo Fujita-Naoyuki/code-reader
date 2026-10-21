@@ -30,7 +30,6 @@ use markdown::{
 use crate::core::{
     cli_agent::{CliAgentCommand, build_cli_agent_command},
     document::Document,
-    external_definitions::resolve_external_definition_on_demand,
     file_tree::{
         FileDiscoveryOptions, FileNode, FileTree, build_file_tree, discover_workspace,
         discover_workspace_files,
@@ -48,12 +47,8 @@ use crate::core::{
     symbol_index::SymbolIndex,
     symbol_indexing::{IndexingResult, start_symbol_indexing},
     syntax::{HighlightKind, HighlightSpan},
-    workspace::Workspace,
 };
-use crate::features::{
-    definition::resolve_definition,
-    search::{SearchResult, search_everywhere},
-};
+use crate::features::search::{SearchResult, search_everywhere};
 use crate::languages::LanguageRegistry;
 use crate::platform;
 
@@ -164,8 +159,6 @@ pub struct CodeReaderApp {
     workspace_change_receiver: Option<Receiver<WorkspaceChangeScanResult>>,
     symbol_index: SymbolIndex,
     symbol_index_receiver: Option<Receiver<IndexingResult>>,
-    external_file_count: usize,
-    external_package_count: usize,
     definition_candidates: Vec<DefinitionCandidate>,
     location_list_kind: LocationListKind,
     go_lsp_client: Option<LspClient>,
@@ -289,8 +282,6 @@ impl CodeReaderApp {
             workspace_change_receiver: None,
             symbol_index: SymbolIndex::new(),
             symbol_index_receiver: Some(symbol_index_receiver),
-            external_file_count: 0,
-            external_package_count: 0,
             definition_candidates: Vec::new(),
             location_list_kind: LocationListKind::Definitions,
             go_lsp_client: None,
@@ -379,19 +370,8 @@ impl CodeReaderApp {
         }
     }
 
-    fn focused_navigation_history(&self) -> &NavigationHistory {
-        self.navigation_history(self.focused_pane)
-    }
-
     fn focused_navigation_history_mut(&mut self) -> &mut NavigationHistory {
         self.navigation_history_mut(self.focused_pane)
-    }
-
-    fn navigation_history(&self, pane: Pane) -> &NavigationHistory {
-        match pane {
-            Pane::Left => &self.left_navigation_history,
-            Pane::Right => &self.right_navigation_history,
-        }
     }
 
     fn navigation_history_mut(&mut self, pane: Pane) -> &mut NavigationHistory {
@@ -403,10 +383,6 @@ impl CodeReaderApp {
 
     fn push_focused_navigation_history(&mut self, point: NavigationPoint) {
         self.focused_navigation_history_mut().push_back(point);
-    }
-
-    fn clear_focused_navigation_history(&mut self) {
-        self.focused_navigation_history_mut().clear();
     }
 
     fn open_file_in_focused_pane(&mut self, path: PathBuf) {
@@ -878,8 +854,6 @@ impl CodeReaderApp {
         self.rust_lsp_synced_hashes.clear();
         self.rust_lsp_request_started_at.clear();
         self.rust_lsp_debug = LspDebugState::default();
-        self.external_file_count = 0;
-        self.external_package_count = 0;
         self.symbol_index_receiver = Some(start_symbol_indexing(
             self.file_tree.files.clone(),
             self.language_registry.clone(),
@@ -937,8 +911,6 @@ impl CodeReaderApp {
         self.file_tree = next_file_tree;
         self.workspace_snapshot = next_snapshot;
         if full_symbol_reindex {
-            self.external_file_count = 0;
-            self.external_package_count = 0;
             self.symbol_index_receiver = Some(start_symbol_indexing(
                 self.file_tree.files.clone(),
                 self.language_registry.clone(),
@@ -1189,8 +1161,6 @@ impl CodeReaderApp {
         match receiver.try_recv() {
             Ok(result) => {
                 self.symbol_index = result.index;
-                self.external_file_count = result.external_file_count;
-                self.external_package_count = result.external_package_count;
                 self.bump_search_index_revision();
                 self.status_message =
                     format!("Indexed {} workspace symbols.", self.symbol_index.len());
@@ -1253,61 +1223,21 @@ impl CodeReaderApp {
             .identifier_at(&document, position)
             .map(|identifier| identifier.name)
             .unwrap_or_else(|| "<unknown>".to_owned());
-        if language.id().0 == "go" {
-            self.definition_candidates.clear();
-            self.location_list_kind = LocationListKind::Definitions;
-            self.close_references_overlay();
-            self.request_go_lsp_definition(document.clone(), position, identifier.clone());
-            return;
-        }
-        if language.id().0 == "rust" {
-            self.definition_candidates.clear();
-            self.location_list_kind = LocationListKind::Definitions;
-            self.close_references_overlay();
-            self.request_rust_lsp_definition(document.clone(), position, identifier.clone());
-            return;
-        }
-
-        let workspace = Workspace {
-            roots: self
-                .current_session()
-                .map(|session| session.root_folders.clone())
-                .unwrap_or_default(),
-        };
-        let mut symbols = self.symbol_index.symbols().to_vec();
-        symbols.extend(language.extract_symbols(&document));
-        let context = crate::core::language::ResolveContext {
-            workspace: &workspace,
-            symbols: &symbols,
-        };
-        let mut locations = resolve_definition(language, &document, position, &context);
-        if locations.is_empty() && identifier != "<unknown>" {
-            let resolution = resolve_external_definition_on_demand(
-                &workspace.roots,
-                &identifier,
-                None,
-                &mut self.symbol_index,
-                &self.language_registry,
-            );
-            if resolution.indexed_file_count > 0 {
-                self.bump_search_index_revision();
-                self.external_file_count =
-                    self.external_file_count.max(resolution.external_file_count);
-                self.external_package_count = self
-                    .external_package_count
-                    .max(resolution.external_package_count);
+        self.definition_candidates.clear();
+        self.location_list_kind = LocationListKind::Definitions;
+        self.close_references_overlay();
+        // Every registered language resolves definitions through its language server.
+        match language.id().0 {
+            "go" => {
+                self.request_go_lsp_definition(document, position, identifier);
             }
-            locations = resolution.locations;
+            "rust" => {
+                self.request_rust_lsp_definition(document, position, identifier);
+            }
+            other => {
+                self.status_message = format!("Go to Definition is not available for {other}.");
+            }
         }
-        locations.sort_by(|left, right| {
-            left.path
-                .cmp(&right.path)
-                .then_with(|| left.range.start.line.cmp(&right.range.start.line))
-                .then_with(|| left.range.start.character.cmp(&right.range.start.character))
-        });
-        locations.dedup();
-
-        self.handle_locations(&identifier, locations, LocationListKind::Definitions);
     }
 
     fn ensure_go_lsp_client(&mut self) {
@@ -2143,15 +2073,6 @@ impl CodeReaderApp {
         })
     }
 
-    fn handle_locations(
-        &mut self,
-        identifier: &str,
-        locations: Vec<Location>,
-        kind: LocationListKind,
-    ) {
-        self.handle_locations_with_origin(identifier, locations, kind, None);
-    }
-
     fn handle_locations_with_origin(
         &mut self,
         identifier: &str,
@@ -2307,48 +2228,6 @@ impl CodeReaderApp {
         let label = navigation_point_label(&point);
         self.open_navigation_point_in_focused_pane(point);
         self.status_message = format!("Opened navigation history: {label}");
-    }
-
-    fn add_bookmark_from_current_position(&mut self, temporary: bool) {
-        let Some(path) = self.focused_editor().path.clone() else {
-            self.status_message = "Open a file before adding a bookmark.".to_owned();
-            return;
-        };
-        let position = self
-            .focused_editor()
-            .cursor_position
-            .unwrap_or(Position::new(0, 0));
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("<invalid>");
-        let label = format!("{file_name}:{}", position.line + 1);
-        let bookmark = SessionBookmark {
-            label,
-            path: path.clone(),
-            position: TextPosition::new(position.line, position.character),
-            temporary,
-        };
-
-        if let Some(session) = self.current_session_mut() {
-            session.bookmarks.retain(|existing| {
-                existing.path != bookmark.path
-                    || existing.position != bookmark.position
-                    || existing.temporary != bookmark.temporary
-            });
-            session.bookmarks.insert(0, bookmark);
-            session.touch();
-            self.bump_search_index_revision();
-        }
-
-        self.status_message = if temporary {
-            "Added temporary bookmark.".to_owned()
-        } else {
-            "Added bookmark.".to_owned()
-        };
-        if !temporary {
-            self.save_state();
-        }
     }
 
     fn bookmark_lines_for_path(&self, path: Option<&Path>) -> Vec<u32> {
@@ -5836,10 +5715,6 @@ impl CodeReaderApp {
             self.symbol_index_receiver.is_some()
         ));
         lines.push(format!(
-            "external_files={} external_packages={}",
-            self.external_file_count, self.external_package_count
-        ));
-        lines.push(format!(
             "go_lsp={} initialized={} pending={} status={} last_kind={} last_request={} last_ms={} locations={} warmups={} syncs={} definitions={} references={} fallbacks={} timeouts={} error={} definition_status={} definition_ms={} definition_locations={} definition_error={} server_req={} server_notif={} reader_errors={} progress={} diagnostics={} last_server={}:{} server_message={}",
             self.go_lsp_client.is_some(),
             self.go_lsp_debug.initialized,
@@ -7153,7 +7028,6 @@ struct LineInfo {
     leading_end: usize,
     content_end: usize,
     end: usize,
-    char_count: usize,
     is_blank: bool,
 }
 
@@ -7647,11 +7521,6 @@ fn format_virtual_rect(rect: egui::Rect) -> String {
         rect.right(),
         rect.bottom()
     )
-}
-
-fn format_virtual_optional_rect(rect: Option<egui::Rect>) -> String {
-    rect.map(format_virtual_rect)
-        .unwrap_or_else(|| "None".to_owned())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -9318,10 +9187,6 @@ impl EditorPane {
                     self.csv_drag,
                 ) {
                     self.csv_selection = Some(match action {
-                        CsvHeaderAction::Select(column) => CsvSelection::Columns {
-                            start: column,
-                            end: column,
-                        },
                         CsvHeaderAction::Press(column) => {
                             self.csv_drag = Some(CsvSelectionDrag {
                                 kind: CsvSelectionKind::Columns,
@@ -9372,7 +9237,7 @@ impl EditorPane {
                             self.csv_drag,
                         ) {
                             self.csv_selection = Some(match action {
-                                CsvHeaderAction::Select(row) | CsvHeaderAction::Press(row) => {
+                                CsvHeaderAction::Press(row) => {
                                     self.csv_drag = Some(CsvSelectionDrag {
                                         kind: CsvSelectionKind::Rows,
                                         anchor: row,
@@ -14175,6 +14040,7 @@ fn workspace_file_fingerprint(path: &Path) -> Option<WorkspaceFileFingerprint> {
     })
 }
 
+#[cfg(test)]
 fn workspace_snapshot_change_count(
     previous: &WorkspaceSnapshot,
     next: &WorkspaceSnapshot,
@@ -15173,7 +15039,6 @@ enum CsvSelection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CsvHeaderAction {
-    Select(usize),
     Press(usize),
     ExtendDrag(usize),
 }
@@ -15685,6 +15550,7 @@ fn build_text_chunks(source: &str) -> Vec<TextChunk> {
     chunks
 }
 
+#[cfg(test)]
 fn build_line_index(source: &str, source_len: usize, source_hash: u64) -> LineIndex {
     let chunks = build_text_chunks(source);
     build_line_index_from_chunks(&chunks, source_len, source_hash)
@@ -15725,7 +15591,6 @@ fn build_line_index_from_chunks(
                 leading_end,
                 content_end,
                 end,
-                char_count,
                 is_blank,
             });
             line_start = end;
@@ -15761,7 +15626,6 @@ fn build_line_index_from_chunks(
             leading_end,
             content_end,
             end: source_len,
-            char_count,
             is_blank,
         });
     }
@@ -15776,7 +15640,6 @@ fn build_line_index_from_chunks(
             leading_end: source_len,
             content_end: source_len,
             end: source_len,
-            char_count: 0,
             is_blank: true,
         });
     }
@@ -15877,7 +15740,6 @@ enum DiffDisplayRow {
         path: String,
         status: &'static str,
     },
-    Hunk(String),
     HiddenLines(usize),
     Line {
         line_label: String,
@@ -16505,8 +16367,8 @@ fn diff_side_background_kind(row: &DiffRenderRow<'_>, side: DiffSide) -> Option<
 
 fn diff_visible_background_kind(kind: DiffLineKind) -> Option<DiffLineKind> {
     match kind {
-        DiffLineKind::Hunk | DiffLineKind::Added | DiffLineKind::Removed => Some(kind),
-        DiffLineKind::Header | DiffLineKind::Context => None,
+        DiffLineKind::Added | DiffLineKind::Removed => Some(kind),
+        DiffLineKind::Context => None,
     }
 }
 
@@ -16621,11 +16483,6 @@ fn unified_diff_render_rows<'a>(
                 current_file_collapsed = collapsed_files.get(path).copied().unwrap_or(false);
                 render_rows.push(DiffRenderRow::FileHeader { path, status });
             }
-            DiffDisplayRow::Hunk(_) => {
-                if current_file_collapsed {
-                    continue;
-                }
-            }
             DiffDisplayRow::HiddenLines(count) => {
                 if current_file_collapsed {
                     continue;
@@ -16683,9 +16540,6 @@ fn side_by_side_diff_render_rows<'a>(
                 render_rows.push(DiffRenderRow::FileHeader { path, status });
                 index += 1;
             }
-            DiffDisplayRow::Hunk(_) => {
-                index += 1;
-            }
             DiffDisplayRow::HiddenLines(count) => {
                 if !current_file_collapsed {
                     render_rows.push(DiffRenderRow::HiddenLines(*count));
@@ -16719,7 +16573,6 @@ fn side_by_side_diff_render_rows<'a>(
                             new: cell,
                         });
                     }
-                    DiffLineKind::Header | DiffLineKind::Hunk => {}
                     DiffLineKind::Added | DiffLineKind::Removed => {}
                 }
                 index += 1;
@@ -16991,91 +16844,6 @@ fn diff_file_header_row_ui(
     }
 }
 
-fn diff_file_header_ui(
-    ui: &mut egui::Ui,
-    path: &str,
-    status: &str,
-    collapsed_files: &mut HashMap<String, bool>,
-) -> bool {
-    let mut collapsed = collapsed_files.get(path).copied().unwrap_or(false);
-    let icon = if collapsed { "▶" } else { "▼" };
-    ui.add_space(4.0);
-    egui::Frame::NONE
-        .fill(ui.visuals().faint_bg_color)
-        .inner_margin(egui::Margin::symmetric(4, 2))
-        .show(ui, |ui| {
-            let (rect, response) = ui
-                .allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::click());
-            let painter = ui.painter_at(rect);
-            painter.text(
-                egui::pos2(rect.left() + 2.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                icon,
-                FontId::proportional(12.0),
-                ui.visuals().text_color(),
-            );
-            painter.text(
-                egui::pos2(rect.left() + 18.0, rect.center().y),
-                egui::Align2::LEFT_CENTER,
-                path,
-                FontId::monospace(13.0),
-                ui.visuals().text_color(),
-            );
-            painter.text(
-                egui::pos2(rect.right() - 4.0, rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                status,
-                FontId::monospace(11.0),
-                ui.visuals().weak_text_color(),
-            );
-            if response.on_hover_text("Toggle file diff").clicked() {
-                collapsed = !collapsed;
-                collapsed_files.insert(path.to_owned(), collapsed);
-            }
-        });
-    collapsed
-}
-
-fn diff_row_ui(
-    ui: &mut egui::Ui,
-    line_label: &str,
-    marker: &str,
-    content: String,
-    kind: DiffLineKind,
-) {
-    let fill = diff_line_background(kind);
-    egui::Frame::NONE
-        .fill(fill)
-        .inner_margin(egui::Margin::symmetric(0, 1))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [56.0, 16.0],
-                    egui::Label::new(
-                        RichText::new(line_label)
-                            .monospace()
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    ),
-                );
-                ui.add_sized(
-                    [14.0, 16.0],
-                    egui::Label::new(
-                        RichText::new(marker)
-                            .monospace()
-                            .small()
-                            .color(diff_line_color(ui, kind)),
-                    ),
-                );
-                ui.label(
-                    RichText::new(content)
-                        .monospace()
-                        .color(diff_line_color(ui, kind)),
-                );
-            });
-        });
-}
-
 fn hidden_lines_label(count: usize) -> String {
     if count == 1 {
         "1 hidden line".to_owned()
@@ -17097,23 +16865,6 @@ fn hidden_lines_row_ui(ui: &mut egui::Ui, rect: egui::Rect, count: usize) {
         FontId::monospace(11.0),
         ui.visuals().weak_text_color(),
     );
-}
-
-fn side_by_side_hunk_ui(ui: &mut egui::Ui, text: &str) {
-    let width = ui.available_width().max(900.0);
-    egui::Frame::NONE
-        .fill(diff_line_background(DiffLineKind::Hunk))
-        .inner_margin(egui::Margin::symmetric(0, 1))
-        .show(ui, |ui| {
-            ui.add_sized(
-                [width, 18.0],
-                egui::Label::new(
-                    RichText::new(text)
-                        .monospace()
-                        .color(diff_line_color(ui, DiffLineKind::Hunk)),
-                ),
-            );
-        });
 }
 
 fn side_by_side_diff_row_ui(
@@ -17886,7 +17637,7 @@ fn diff_row_char_width(row: &DiffDisplayRow) -> usize {
     match row {
         DiffDisplayRow::Section(title) => title.chars().count(),
         DiffDisplayRow::FileHeader { path, .. } => path.chars().count(),
-        DiffDisplayRow::Hunk(text) | DiffDisplayRow::Message(text) => text.chars().count(),
+        DiffDisplayRow::Message(text) => text.chars().count(),
         DiffDisplayRow::HiddenLines(count) => hidden_lines_label(*count).chars().count(),
         DiffDisplayRow::Line { content, .. } => content.chars().count(),
     }
@@ -18037,73 +17788,11 @@ fn parse_hunk_line_number(line: &str, marker: char) -> Option<usize> {
     digits.parse().ok()
 }
 
-fn diff_layout_job(ui: &egui::Ui, source: &str) -> LayoutJob {
-    let mut job = LayoutJob::default();
-    if source.is_empty() {
-        job.append("", 0.0, diff_text_format(ui, DiffLineKind::Context));
-        return job;
-    }
-
-    for line in source.split_inclusive('\n') {
-        let kind = diff_line_kind(line);
-        job.append(line, 0.0, diff_text_format(ui, kind));
-    }
-    job
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DiffLineKind {
-    Header,
-    Hunk,
     Added,
     Removed,
     Context,
-}
-
-fn diff_line_kind(line: &str) -> DiffLineKind {
-    if line.starts_with("@@") {
-        DiffLineKind::Hunk
-    } else if line.starts_with("diff --git")
-        || line.starts_with("index ")
-        || line.starts_with("new file mode ")
-        || line.starts_with("deleted file mode ")
-        || line.starts_with("--- ")
-        || line.starts_with("+++ ")
-    {
-        DiffLineKind::Header
-    } else if line.starts_with('+') {
-        DiffLineKind::Added
-    } else if line.starts_with('-') {
-        DiffLineKind::Removed
-    } else {
-        DiffLineKind::Context
-    }
-}
-
-fn diff_text_format(ui: &egui::Ui, kind: DiffLineKind) -> TextFormat {
-    let (color, background) = match kind {
-        DiffLineKind::Header => (ui.visuals().weak_text_color(), Color32::TRANSPARENT),
-        DiffLineKind::Hunk => (
-            Color32::from_rgb(86, 156, 214),
-            Color32::from_rgba_unmultiplied(86, 156, 214, 22),
-        ),
-        DiffLineKind::Added => (
-            Color32::from_rgb(72, 160, 92),
-            Color32::from_rgba_unmultiplied(72, 160, 92, 24),
-        ),
-        DiffLineKind::Removed => (
-            Color32::from_rgb(206, 92, 92),
-            Color32::from_rgba_unmultiplied(206, 92, 92, 24),
-        ),
-        DiffLineKind::Context => (ui.visuals().text_color(), Color32::TRANSPARENT),
-    };
-
-    TextFormat {
-        font_id: editor_font_id(),
-        color,
-        background,
-        ..Default::default()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18490,8 +18179,6 @@ fn text_format(ui: &egui::Ui, kind: Option<HighlightKind>) -> TextFormat {
 
 fn diff_line_color(ui: &egui::Ui, kind: DiffLineKind) -> Color32 {
     match kind {
-        DiffLineKind::Header => ui.visuals().weak_text_color(),
-        DiffLineKind::Hunk => Color32::from_rgb(86, 156, 214),
         DiffLineKind::Added => Color32::from_rgb(72, 160, 92),
         DiffLineKind::Removed => Color32::from_rgb(206, 92, 92),
         DiffLineKind::Context => ui.visuals().text_color(),
@@ -18500,10 +18187,9 @@ fn diff_line_color(ui: &egui::Ui, kind: DiffLineKind) -> Color32 {
 
 fn diff_line_background(kind: DiffLineKind) -> Color32 {
     match kind {
-        DiffLineKind::Hunk => Color32::from_rgba_unmultiplied(86, 156, 214, 22),
         DiffLineKind::Added => Color32::from_rgba_unmultiplied(72, 160, 92, 24),
         DiffLineKind::Removed => Color32::from_rgba_unmultiplied(206, 92, 92, 24),
-        DiffLineKind::Header | DiffLineKind::Context => Color32::TRANSPARENT,
+        DiffLineKind::Context => Color32::TRANSPARENT,
     }
 }
 
@@ -20248,6 +19934,7 @@ fn char_index_to_byte_index(source: &str, char_index: usize) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
+#[cfg(test)]
 fn char_index_to_position(source: &str, char_index: usize) -> Option<Position> {
     let byte_index = source
         .char_indices()
@@ -20265,6 +19952,7 @@ fn char_index_to_position(source: &str, char_index: usize) -> Option<Position> {
     Some(Position::new(line, character))
 }
 
+#[cfg(test)]
 fn byte_index_to_position(source: &str, byte_index: usize) -> Option<Position> {
     let byte_index = clamp_to_char_boundary(source, byte_index);
     let before_cursor = source.get(..byte_index)?;
@@ -20301,11 +19989,6 @@ fn position_to_char_index(source: &str, position: Position) -> Option<usize> {
     let target_byte = clamp_to_char_boundary(source, target_byte);
 
     Some(source[..target_byte].chars().count())
-}
-
-fn next_char_at(source: &str, char_index: usize) -> Option<char> {
-    let byte_index = char_index_to_byte_index(source, char_index)?;
-    source[byte_index..].chars().next()
 }
 
 fn closing_pair(character: char) -> Option<char> {
@@ -22851,11 +22534,6 @@ mod tests {
             "\\ No newline at end of file\n",
         ));
 
-        assert!(
-            !rows
-                .iter()
-                .any(|row| matches!(row, DiffDisplayRow::Hunk(_)))
-        );
         assert!(!rows.iter().any(|row| matches!(
             row,
             DiffDisplayRow::Line { content, .. } if content.contains("No newline at end of file")

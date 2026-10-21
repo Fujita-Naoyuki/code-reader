@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::core::{
     document::Document,
-    language::{Identifier, LanguageId, LanguageSupport, ResolveContext},
+    language::{Identifier, LanguageId, LanguageSupport},
     location::{Location, Position, Range},
     symbol::{Symbol, SymbolKind, SymbolSource},
     syntax::{HighlightKind, HighlightSpan},
@@ -13,10 +13,6 @@ pub struct RustLanguage;
 impl LanguageSupport for RustLanguage {
     fn id(&self) -> LanguageId {
         LanguageId("rust")
-    }
-
-    fn name(&self) -> &'static str {
-        "Rust"
     }
 
     fn file_extensions(&self) -> &'static [&'static str] {
@@ -32,23 +28,9 @@ impl LanguageSupport for RustLanguage {
     }
 
     fn identifier_at(&self, document: &Document, position: Position) -> Option<Identifier> {
-        let name = document.identifier_at(position)?;
-        let location = Location::new(document.path.clone(), Range::new(position, position));
-
-        Some(Identifier { name, location })
-    }
-
-    fn resolve_definition(
-        &self,
-        identifier: &Identifier,
-        context: &ResolveContext<'_>,
-    ) -> Vec<Location> {
-        context
-            .symbols
-            .iter()
-            .filter(|symbol| symbol.name == identifier.name)
-            .map(|symbol| symbol.location.clone())
-            .collect()
+        Some(Identifier {
+            name: document.identifier_at(position)?,
+        })
     }
 }
 

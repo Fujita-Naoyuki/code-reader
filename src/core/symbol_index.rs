@@ -34,11 +34,6 @@ impl SymbolIndex {
         self.add_file_with_source(path, language_registry, SymbolSource::ExternalLibrary);
     }
 
-    pub fn add_external_files(&mut self, paths: &[PathBuf], language_registry: &LanguageRegistry) {
-        self.extend_files_with_source(paths, language_registry, SymbolSource::ExternalLibrary);
-        self.sort();
-    }
-
     pub fn replace_file(&mut self, path: &Path, language_registry: &LanguageRegistry) {
         self.remove_file(path);
         self.add_file(path, language_registry);
@@ -83,17 +78,6 @@ impl SymbolIndex {
 
     pub fn len(&self) -> usize {
         self.symbols.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.symbols.is_empty()
-    }
-
-    pub fn find_by_name(&self, name: &str) -> Vec<&Symbol> {
-        self.symbols
-            .iter()
-            .filter(|symbol| symbol.name == name)
-            .collect()
     }
 
     fn sort(&mut self) {

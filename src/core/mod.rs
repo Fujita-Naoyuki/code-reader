@@ -1,7 +1,5 @@
 pub mod cli_agent;
 pub mod document;
-pub mod external_definitions;
-pub mod external_libraries;
 pub mod file_tree;
 pub mod language;
 pub mod location;
@@ -12,4 +10,3 @@ pub mod symbol;
 pub mod symbol_index;
 pub mod symbol_indexing;
 pub mod syntax;
-pub mod workspace;

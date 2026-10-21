@@ -19,8 +19,6 @@ pub enum SymbolKind {
     Trait,
     Interface,
     Module,
-    Constant,
-    Variable,
     Field,
     TypeAlias,
 }

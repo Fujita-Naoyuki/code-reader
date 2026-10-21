@@ -83,19 +83,6 @@ impl ScriptedLsp {
         (command, server)
     }
 
-    /// Pushes a message (notification or server request) to the client now.
-    pub fn send(&self, message: Value) {
-        write_message(&self.writer, &message);
-    }
-
-    /// Writes raw bytes to the client (for malformed frames).
-    pub fn send_raw(&self, bytes: &[u8]) {
-        if let Some(writer) = self.writer.lock().unwrap().as_mut() {
-            let _ = writer.write_all(bytes);
-            let _ = writer.flush();
-        }
-    }
-
     /// Closes the server's output, as if the process exited.
     pub fn hang_up(&self) {
         self.writer.lock().unwrap().take();

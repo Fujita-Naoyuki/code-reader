@@ -19,7 +19,7 @@ use eframe::egui;
 use egui::accesskit;
 use egui_kittest::{
     Harness,
-    kittest::{By, NodeT, Queryable},
+    kittest::{By, Queryable},
 };
 
 use crate::core::location::{Location, Position, Range};
@@ -542,16 +542,6 @@ impl TestApp {
         self.app_mut().next_workspace_change_poll = Instant::now() + Duration::from_secs(3600);
     }
 
-    /// Runs the external-change scan now and waits until its result has been applied.
-    pub fn scan_workspace(&mut self) {
-        self.app_mut().next_workspace_change_poll = Instant::now();
-        self.step();
-        self.wait_until("workspace scan", |app| {
-            app.workspace_change_receiver.is_none()
-        });
-        self.postpone_workspace_scan();
-    }
-
     /// Waits for the initial background symbol indexing to finish.
     pub fn wait_for_indexing(&mut self) {
         self.wait_until("symbol indexing", |app| app.symbol_index_receiver.is_none());
@@ -647,14 +637,6 @@ impl TestApp {
         self.type_text(text);
     }
 
-    /// Debug helper: every node label on screen.
-    pub fn all_labels(&self) -> Vec<String> {
-        self.harness
-            .query_all(By::new().predicate(|_| true))
-            .filter_map(|node| node.accesskit_node().label())
-            .collect()
-    }
-
     pub fn click_containing(&mut self, text: &str) {
         let visible = self
             .harness
@@ -667,17 +649,6 @@ impl TestApp {
         }
         let rect = self.harness.get_by_label_contains(text).rect();
         self.click_at(rect.center());
-    }
-
-    pub fn right_click(&mut self, label: &str) {
-        let rect = self.harness.get_by_label(label).rect();
-        self.secondary_click_at(rect.center());
-    }
-
-    pub fn hover(&mut self, label: &str) {
-        let rect = self.harness.get_by_label(label).rect();
-        self.move_pointer(rect.center());
-        self.step();
     }
 
     pub fn label_rect(&self, label: &str) -> egui::Rect {
@@ -982,17 +953,6 @@ impl TestApp {
     pub fn copy_event(&mut self) {
         self.send(egui::Event::Copy);
         self.step();
-    }
-
-    pub fn cut_event(&mut self) {
-        self.send(egui::Event::Cut);
-        self.step();
-    }
-
-    pub fn open_file(&mut self, relative_path: &str) {
-        let path = self.path(relative_path);
-        self.app_mut().open_file_in_focused_pane(path);
-        self.steps(2);
     }
 
     pub fn set_modifiers(&mut self, modifiers: egui::Modifiers) {

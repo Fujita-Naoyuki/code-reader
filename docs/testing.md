@@ -40,7 +40,7 @@ Git のテストは実際の `git` コマンドを一時リポジトリに対し
 | クリップボード、フォルダ選択ダイアログ、ブラウザ起動、状態ファイルの場所、カレントディレクトリ、LSP クライアント生成 | `platform::SystemPlatform`（`src/platform.rs`） | `FakePlatform`。`platform::install` でテストスレッドにだけ差し込む |
 | LSP サーバー | `rust-analyzer` / `gopls` プロセス | 次の3方式から選ぶ。① チャネルレベルの偽物（`LspClient::in_memory`）② 実ワーカー＋スクリプト化した JSON-RPC サーバー（`lsp::register_test_process` で起動コマンド名に結び付け、OS パイプで接続）③ 存在しない実行ファイル・LSP ではない実行ファイルの実起動 |
 | git | 実行 | 実行（一時リポジトリ。`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_NOSYSTEM` で開発者の設定を無視） |
-| 時間 | 実時間 | 外部変更スキャン（1秒ごと）は既定で先送りし、必要なテストだけ `scan_workspace()` などで明示的に起動する。LSP のタイムアウトは要求開始時刻を巻き戻して再現する |
+| 時間 | 実時間 | 外部変更スキャン（1秒ごと）は既定で先送りし、必要なテストだけ `next_workspace_change_poll` を前倒しして起動する。LSP のタイムアウトは要求開始時刻を巻き戻して再現する |
 
 テストのための本番コードへの変更は、上記の差し替え点（`platform.rs`、`LspProcess` による LSP プロセス I/O の抽象化）だけです。挙動は変えていません。
 

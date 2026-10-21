@@ -1,6 +1,6 @@
 use crate::core::{
     document::Document,
-    language::{Identifier, LanguageId, LanguageSupport, ResolveContext},
+    language::{Identifier, LanguageId, LanguageSupport},
     location::{Location, Position, Range},
     symbol::{Symbol, SymbolKind, SymbolSource},
     syntax::{HighlightKind, HighlightSpan},
@@ -11,10 +11,6 @@ pub struct GoLanguage;
 impl LanguageSupport for GoLanguage {
     fn id(&self) -> LanguageId {
         LanguageId("go")
-    }
-
-    fn name(&self) -> &'static str {
-        "Go"
     }
 
     fn file_extensions(&self) -> &'static [&'static str] {
@@ -30,18 +26,9 @@ impl LanguageSupport for GoLanguage {
     }
 
     fn identifier_at(&self, document: &Document, position: Position) -> Option<Identifier> {
-        let name = document.identifier_at(position)?;
-        let location = Location::new(document.path.clone(), Range::new(position, position));
-
-        Some(Identifier { name, location })
-    }
-
-    fn resolve_definition(
-        &self,
-        _identifier: &Identifier,
-        _context: &ResolveContext<'_>,
-    ) -> Vec<Location> {
-        Vec::new()
+        Some(Identifier {
+            name: document.identifier_at(position)?,
+        })
     }
 }
 

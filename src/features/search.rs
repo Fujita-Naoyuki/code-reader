@@ -23,7 +23,6 @@ pub enum SearchResultKind {
     Symbol,
     Bookmark,
     History,
-    External,
 }
 
 impl SearchResultKind {
@@ -33,7 +32,6 @@ impl SearchResultKind {
             Self::Symbol => "Symbol",
             Self::Bookmark => "Bookmark",
             Self::History => "History",
-            Self::External => "External",
         }
     }
 }
