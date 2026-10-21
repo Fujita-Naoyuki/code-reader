@@ -100,12 +100,15 @@ fn preview_renders_the_first_page_with_navigation() {
     assert!(t.has_label("Pages"));
     assert!(t.has_label("1/5"));
     assert!(t.has_label("Introduction"));
-    // DISCREPANCY(D12): pages are parsed one by one, so a footnote or reference-link
-    // definition on another page (usually the end of the file) leaves the marker as
-    // literal text instead of a link.
-    assert!(t.has_label_containing("[far ref][far]"));
-    assert!(t.has_label_containing("note[^far]"));
-    assert!(!t.has_label("Footnotes"));
+    // Definitions at the end of the file still resolve on the first page.
+    assert!(t.has_label("far ref"));
+    assert!(!t.has_label_containing("[far ref][far]"));
+    assert!(!t.has_label_containing("note[^far]"));
+    assert!(t.has_label("[2]"));
+    assert!(t.has_label("Footnotes"));
+    assert!(t.has_label("The far footnote."));
+    t.click_text_label("far ref");
+    t.assert_status("Opened external URL: https://example.com/far");
 
     t.click_nth("Next", 0);
     assert!(t.has_label("2/5"));
@@ -336,7 +339,7 @@ fn other_links_report_or_open_externally() {
     t.ctrl(egui::Key::PageDown);
     t.ctrl(egui::Key::PageDown);
     t.click_text_label("near ref");
-    t.assert_status("Reference links are not resolved yet: near");
+    t.assert_status("Failed to open external URL: https://example.com/near (no browser)");
     t.ctrl(egui::Key::PageUp);
     t.ctrl(egui::Key::PageUp);
     t.click_text_label("txt");

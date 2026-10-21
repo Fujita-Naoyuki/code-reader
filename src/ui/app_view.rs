@@ -10396,7 +10396,20 @@ impl EditorPane {
         source: &str,
         search_query: Option<&str>,
     ) {
-        let Ok(ast) = markdown::to_mdast(source, &ParseOptions::gfm()) else {
+        // A fragment is parsed on its own, so add the definitions it does not contain;
+        // otherwise its reference links and footnote markers stay literal text.
+        let definitions = markdown_definition_sources_outside(
+            document,
+            fragment_start_offset..fragment_start_offset + source.len(),
+        );
+        let source_with_definitions;
+        let parse_source = if definitions.is_empty() {
+            source
+        } else {
+            source_with_definitions = format!("{source}\n\n{definitions}");
+            source_with_definitions.as_str()
+        };
+        let Ok(ast) = markdown::to_mdast(parse_source, &ParseOptions::gfm()) else {
             let text = MarkdownDocument::rendered_text_for_source(source);
             if !text.trim().is_empty() {
                 let job = markdown_plain_text_layout_job(
@@ -10753,10 +10766,15 @@ impl EditorPane {
                         ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
                     }
                     if response.clicked() {
-                        self.pending_action = Some(EditorAction::ShowStatus(format!(
-                            "Reference links are not resolved yet: {}",
-                            link.identifier
-                        )));
+                        match markdown_definition_url(document, &link.identifier) {
+                            Some(url) => self.activate_markdown_link(document, &url),
+                            None => {
+                                self.pending_action = Some(EditorAction::ShowStatus(format!(
+                                    "Reference link has no definition: {}",
+                                    link.identifier
+                                )));
+                            }
+                        }
                     }
                 }
                 Node::Image(image) => {
@@ -14210,19 +14228,78 @@ fn markdown_footnote_number(document: &MarkdownDocument, identifier: &str) -> Op
         .map(|index| index + 1)
 }
 
+/// Footnotes listed under a page: those defined on it and those referenced from it, so a
+/// definition gathered at the end of the file still shows next to its reference.
 fn markdown_footnote_definitions_for_page<'a>(
     document: &'a MarkdownDocument,
     page: &crate::core::markdown::MarkdownPage,
 ) -> Vec<&'a markdown::mdast::FootnoteDefinition> {
+    let in_page = |position: Option<&markdown::unist::Position>| {
+        position.is_some_and(|position| {
+            page.source_range.start.offset <= position.start.offset
+                && position.start.offset < page.source_range.end.offset
+        })
+    };
+    let mut referenced = Vec::new();
+    visit_markdown_nodes(&document.ast, &mut |node| {
+        if let Node::FootnoteReference(reference) = node
+            && in_page(reference.position.as_ref())
+        {
+            referenced.push(reference.identifier.clone());
+        }
+    });
     markdown_footnote_definitions(document)
         .into_iter()
         .filter(|definition| {
-            definition.position.as_ref().is_some_and(|position| {
-                page.source_range.start.offset <= position.start.offset
-                    && position.start.offset < page.source_range.end.offset
-            })
+            in_page(definition.position.as_ref()) || referenced.contains(&definition.identifier)
         })
         .collect()
+}
+
+fn visit_markdown_nodes<'a>(node: &'a Node, visit: &mut impl FnMut(&'a Node)) {
+    visit(node);
+    if let Some(children) = node.children() {
+        for child in children {
+            visit_markdown_nodes(child, visit);
+        }
+    }
+}
+
+/// Source text of the link and footnote definitions outside `range`, one block each.
+fn markdown_definition_sources_outside(
+    document: &MarkdownDocument,
+    range: std::ops::Range<usize>,
+) -> String {
+    let mut sources = Vec::new();
+    visit_markdown_nodes(&document.ast, &mut |node| {
+        let position = match node {
+            Node::Definition(definition) => definition.position.as_ref(),
+            Node::FootnoteDefinition(definition) => definition.position.as_ref(),
+            _ => return,
+        };
+        if let Some(position) = position
+            && !range.contains(&position.start.offset)
+            && let Some(source) = document
+                .source
+                .get(position.start.offset..position.end.offset)
+        {
+            sources.push(source);
+        }
+    });
+    sources.join("\n\n")
+}
+
+fn markdown_definition_url(document: &MarkdownDocument, identifier: &str) -> Option<String> {
+    let mut url = None;
+    visit_markdown_nodes(&document.ast, &mut |node| {
+        if let Node::Definition(definition) = node
+            && url.is_none()
+            && definition.identifier == identifier
+        {
+            url = Some(definition.url.clone());
+        }
+    });
+    url
 }
 
 fn markdown_footnote_definitions(
@@ -23063,6 +23140,28 @@ mod tests {
         assert_eq!(first_definitions[0].identifier, "a");
         assert_eq!(second_definitions.len(), 1);
         assert_eq!(second_definitions[0].identifier, "b");
+    }
+
+    #[test]
+    fn markdown_footnotes_defined_elsewhere_are_listed_where_referenced() {
+        let document = MarkdownDocument::parse(
+            "guide.md".into(),
+            "# First\n\nText[^a] and [ref][r].\n\n## Notes\n\n[^a]: Far note.\n\n[r]: https://example.com/r\n"
+                .to_owned(),
+        )
+        .unwrap();
+
+        let first = document.page_by_id("first").unwrap();
+        let definitions = markdown_footnote_definitions_for_page(&document, first);
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].identifier, "a");
+        assert_eq!(
+            markdown_definition_url(&document, "r").as_deref(),
+            Some("https://example.com/r")
+        );
+        let outside = markdown_definition_sources_outside(&document, 0..10);
+        assert!(outside.contains("[^a]: Far note."));
+        assert!(outside.contains("[r]: https://example.com/r"));
     }
 
     #[test]

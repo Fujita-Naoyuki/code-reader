@@ -350,7 +350,7 @@ fn shortcut_reference_links_and_odd_heading_slugs() {
     t.click_first("odd.md");
     t.steps(2);
     t.click_text_label("collapsed");
-    t.assert_status("Reference links are not resolved yet: collapsed");
+    t.assert_status("Opened external URL: https://example.com/c");
     t.click_text_label("to punctuation");
     assert_eq!(
         t.app().left.markdown_active_heading_id.as_deref(),
