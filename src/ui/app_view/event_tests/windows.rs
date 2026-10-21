@@ -60,14 +60,14 @@ fn help_and_status_bar_follow_the_current_context() {
     t.ctrl(egui::Key::P);
     assert_help_context(&mut t, "Search Everywhere");
     assert_eq!(status_keys(&t)[0], "Enter");
-    t.key(egui::Key::Escape);
     close_help(&mut t);
+    t.key(egui::Key::Escape);
 
     t.click("Workspaces");
     assert_help_context(&mut t, "Recent Workspaces");
     assert_eq!(status_keys(&t), vec!["Esc"]);
-    t.key(egui::Key::Escape);
     close_help(&mut t);
+    t.key(egui::Key::Escape);
 
     t.click("Git");
     t.steps(2);
@@ -75,27 +75,27 @@ fn help_and_status_bar_follow_the_current_context() {
     t.click("Create Branch...");
     assert_help_context(&mut t, "Create Branch");
     assert_eq!(status_keys(&t)[0], "Enter");
-    t.key(egui::Key::Escape);
     close_help(&mut t);
+    t.key(egui::Key::Escape);
 
     t.click("main ▾");
     assert_help_context(&mut t, "Switch Branch");
     assert_eq!(status_keys(&t)[0], "Enter");
     assert_eq!(t.app().context_shortcuts()[0].keys, "Up/Down");
-    t.key(egui::Key::Escape);
     close_help(&mut t);
+    t.key(egui::Key::Escape);
 
     t.click("↶");
     assert_help_context(&mut t, "Discard Changes");
     assert_eq!(t.app().context_shortcuts()[0].keys, "Enter");
-    t.key(egui::Key::Escape);
     close_help(&mut t);
+    t.key(egui::Key::Escape);
 
     t.click("Workspace");
     t.click_first("Rename");
     assert_help_context(&mut t, "Rename Workspace");
-    t.key(egui::Key::Escape);
     close_help(&mut t);
+    t.key(egui::Key::Escape);
 
     t.ctrl_shift(egui::Key::F);
     assert_help_context(&mut t, "Workspace Search");

@@ -405,8 +405,8 @@ fn rendered_search_finds_text_across_pages() {
     assert!(t.has_label("No results"));
     t.key(egui::Key::F3);
     t.key(egui::Key::Escape);
-    // DISCREPANCY(D02): Escape does not close the rendered-text search either.
-    assert!(t.app().left.markdown_search.open);
+    assert!(!t.app().left.markdown_search.open);
+    t.ctrl(egui::Key::F);
     t.click("Close");
     assert!(!t.app().left.markdown_search.open);
 }

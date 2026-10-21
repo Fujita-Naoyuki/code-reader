@@ -2695,7 +2695,10 @@ impl CodeReaderApp {
         if input_had_focus && ui.input(raw_enter_pressed) {
             run_search = true;
         }
-        if input_had_focus && ui.input(raw_escape_pressed) {
+        // egui drops focus at the start of the frame that carries a plain Escape, so check
+        // who had focus in the previous frame.
+        if ui.memory(|memory| memory.had_focus_last_frame(input_id)) && ui.input(raw_escape_pressed)
+        {
             close_search = true;
         }
 
@@ -4637,7 +4640,6 @@ impl CodeReaderApp {
             return;
         }
 
-        let mut close = false;
         let groups = self.shortcut_help_groups();
         egui::Window::new("Help")
             .id(egui::Id::new("shortcuts_help_window"))
@@ -4646,11 +4648,6 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-                {
-                    close = true;
-                }
-
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(self.shortcut_context_title()).strong());
                     ui.separator();
@@ -4769,10 +4766,6 @@ impl CodeReaderApp {
                         }
                     });
             });
-
-        if close {
-            self.shortcuts_help_open = false;
-        }
     }
 
     fn shortcut_context_title(&self) -> &'static str {
@@ -5951,6 +5944,13 @@ impl eframe::App for CodeReaderApp {
                     page_key,
                 )
             });
+        // Help is drawn last but sits on top, so take its Escape before a focused search box
+        // in a panel sees it.
+        if self.shortcuts_help_open
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.shortcuts_help_open = false;
+        }
         self.poll_workspace_changes(ui.ctx());
         self.poll_symbol_index();
         self.poll_workspace_search(ui.ctx());
@@ -9753,9 +9753,13 @@ impl EditorPane {
                     }
                     _ => {}
                 }
-                if ui.input(raw_escape_pressed) {
-                    close = true;
-                }
+            }
+            // egui drops focus at the start of the frame that carries a plain Escape, so check
+            // who had focus in the previous frame.
+            if ui.memory(|memory| memory.had_focus_last_frame(search_id))
+                && ui.input(raw_escape_pressed)
+            {
+                close = true;
             }
 
             let response = ui.add(
@@ -11567,9 +11571,13 @@ impl EditorPane {
                     }
                     _ => {}
                 }
-                if ui.input(raw_escape_pressed) {
-                    close = true;
-                }
+            }
+            // egui drops focus at the start of the frame that carries a plain Escape, so check
+            // who had focus in the previous frame.
+            if ui.memory(|memory| memory.had_focus_last_frame(search_id))
+                && ui.input(raw_escape_pressed)
+            {
+                close = true;
             }
 
             let response = ui.add(

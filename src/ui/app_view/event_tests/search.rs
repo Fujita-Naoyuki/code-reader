@@ -227,10 +227,8 @@ fn escape_in_workspace_search_clears_it() {
     t.ctrl_shift(egui::Key::F);
     t.type_text("needle");
     t.key(egui::Key::Escape);
-    // DISCREPANCY(D02): Help and the status bar say "Esc: Clear", but egui drops the text
-    // field's focus on Escape before workspace_search_ui() checks it, so nothing is cleared.
-    assert!(t.app().workspace_search.open);
-    assert_eq!(t.app().workspace_search.query, "needle");
+    assert!(!t.app().workspace_search.open);
+    assert!(t.app().workspace_search.query.is_empty());
 }
 
 #[test]

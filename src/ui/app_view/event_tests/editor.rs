@@ -175,9 +175,7 @@ fn find_without_matches_and_escape() {
     assert!(t.has_label("No results"));
     t.key(egui::Key::F3);
     t.key(egui::Key::Escape);
-    // DISCREPANCY(D02): like workspace search, Escape is swallowed by egui's focus
-    // handling before the search box sees it, so "Esc: Close" does not close it.
-    assert!(t.app().left.source_search.open);
+    assert!(!t.app().left.source_search.open);
 }
 
 #[test]
