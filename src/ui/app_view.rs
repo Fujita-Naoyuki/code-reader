@@ -7512,8 +7512,6 @@ struct VirtualClickEventDebug {
     response_rect: egui::Rect,
     viewport_rect: egui::Rect,
     text_clip_rect: egui::Rect,
-    vertical_scrollbar_rect: Option<egui::Rect>,
-    horizontal_scrollbar_rect: Option<egui::Rect>,
     response_hovered: bool,
     response_contains_pointer: bool,
     response_clicked: bool,
@@ -7584,7 +7582,7 @@ impl VirtualClickDebug {
 impl VirtualClickEventDebug {
     fn report_line(&self, pane_label: &str) -> String {
         format!(
-            "{pane_label} virtual_click_event#{}: source={} accepted={} reason={} pointer={} hits(response/view/text/scrollbar)={}/{}/{}/{} input(primary p/r/c={}/{}/{}, any p/r/c={}/{}/{}, dragging={}) response(hovered={} contains={} clicked={} primary_clicked={}) focus(pane={} text_edit={}) scroll=({:.1},{:.1}) row_h={:.2} lines={} visible={:?} rects(response={} viewport={} text_clip={} scrollbar={})",
+            "{pane_label} virtual_click_event#{}: source={} accepted={} reason={} pointer={} hits(response/view/text/scrollbar)={}/{}/{}/{} input(primary p/r/c={}/{}/{}, any p/r/c={}/{}/{}, dragging={}) response(hovered={} contains={} clicked={} primary_clicked={}) focus(pane={} text_edit={}) scroll=({:.1},{:.1}) row_h={:.2} lines={} visible={:?} rects(response={} viewport={} text_clip={})",
             self.index,
             self.source,
             self.accepted,
@@ -7615,10 +7613,6 @@ impl VirtualClickEventDebug {
             format_virtual_rect(self.response_rect),
             format_virtual_rect(self.viewport_rect),
             format_virtual_rect(self.text_clip_rect),
-            format_virtual_scrollbar_rects(
-                self.vertical_scrollbar_rect,
-                self.horizontal_scrollbar_rect
-            ),
         )
     }
 }
@@ -7659,17 +7653,6 @@ fn format_virtual_rect(rect: egui::Rect) -> String {
 fn format_virtual_optional_rect(rect: Option<egui::Rect>) -> String {
     rect.map(format_virtual_rect)
         .unwrap_or_else(|| "None".to_owned())
-}
-
-fn format_virtual_scrollbar_rects(
-    vertical_rect: Option<egui::Rect>,
-    horizontal_rect: Option<egui::Rect>,
-) -> String {
-    format!(
-        "v:{} h:{}",
-        format_virtual_optional_rect(vertical_rect),
-        format_virtual_optional_rect(horizontal_rect)
-    )
 }
 
 #[derive(Debug, Clone, Default)]
@@ -12496,8 +12479,6 @@ impl EditorPane {
             &self.text,
             content_rect,
             text_clip_rect,
-            content_rect.width(),
-            content_rect.height(),
             text_left,
             row_height,
             self.scroll_y,
@@ -12520,8 +12501,6 @@ impl EditorPane {
             focused,
             content_rect,
             text_clip_rect,
-            content_rect.width(),
-            content_rect.height(),
             self.scroll_x,
             self.scroll_y,
             row_height,
@@ -19232,24 +19211,6 @@ fn virtual_scrollbar_layout(
     }
 }
 
-fn virtual_scrollbar_hit_rects(
-    viewport_rect: egui::Rect,
-    total_width: f32,
-    total_height: f32,
-) -> (Option<egui::Rect>, Option<egui::Rect>) {
-    let layout = virtual_scrollbar_layout(viewport_rect, total_width, total_height);
-    (layout.vertical_rect, layout.horizontal_rect)
-}
-
-fn virtual_scrollbar_hit_contains(
-    vertical_rect: Option<egui::Rect>,
-    horizontal_rect: Option<egui::Rect>,
-    position: egui::Pos2,
-) -> bool {
-    vertical_rect.is_some_and(|rect| rect.contains(position))
-        || horizontal_rect.is_some_and(|rect| rect.contains(position))
-}
-
 fn virtual_scrollbar_handle_color(ui: &egui::Ui, response: &egui::Response) -> Color32 {
     if response.dragged() {
         ui.visuals().widgets.active.fg_stroke.color
@@ -19638,8 +19599,6 @@ fn virtual_editor_drag_selection(
     text: &EditorTextBuffer,
     viewport_rect: egui::Rect,
     text_clip_rect: egui::Rect,
-    total_width: f32,
-    total_height: f32,
     text_left: f32,
     row_height: f32,
     scroll_y: f32,
@@ -19651,21 +19610,15 @@ fn virtual_editor_drag_selection(
         return None;
     }
 
-    let (vertical_scrollbar_rect, horizontal_scrollbar_rect) =
-        virtual_scrollbar_hit_rects(viewport_rect, total_width, total_height);
     let pointer_pos = response
         .interact_pointer_pos()
         .or_else(|| ui.input(|input| input.pointer.interact_pos()))?;
     let press_origin = ui
         .input(|input| input.pointer.press_origin())
         .unwrap_or(pointer_pos);
-    if !viewport_rect.contains(press_origin)
-        || virtual_scrollbar_hit_contains(
-            vertical_scrollbar_rect,
-            horizontal_scrollbar_rect,
-            press_origin,
-        )
-    {
+    // `viewport_rect` is the text area without the scrollbars, so presses on a scrollbar
+    // never start a selection.
+    if !viewport_rect.contains(press_origin) {
         return None;
     }
 
@@ -19848,16 +19801,12 @@ fn virtual_editor_click_input(
     pane_focused: bool,
     viewport_rect: egui::Rect,
     text_clip_rect: egui::Rect,
-    total_width: f32,
-    total_height: f32,
     scroll_x: f32,
     scroll_y: f32,
     row_height: f32,
     line_count: usize,
     visible_range: std::ops::Range<usize>,
 ) -> VirtualEditorClickInput {
-    let (vertical_scrollbar_rect, horizontal_scrollbar_rect) =
-        virtual_scrollbar_hit_rects(viewport_rect, total_width, total_height);
     let response_pointer_pos = response.interact_pointer_pos();
     let response_clicked = response.clicked();
     let response_primary_clicked = response.clicked_by(egui::PointerButton::Primary);
@@ -19914,8 +19863,9 @@ fn virtual_editor_click_input(
     let response_hit = pointer_pos.is_some_and(|position| response.rect.contains(position));
     let viewport_hit = pointer_pos.is_some_and(|position| viewport_rect.contains(position));
     let text_hit = pointer_pos.is_some_and(|position| text_clip_rect.contains(position));
+    // The response covers the whole editor; `viewport_rect` leaves out the scrollbars.
     let scrollbar_hit = pointer_pos.is_some_and(|position| {
-        virtual_scrollbar_hit_contains(vertical_scrollbar_rect, horizontal_scrollbar_rect, position)
+        response.rect.contains(position) && !viewport_rect.contains(position)
     });
 
     let reason = if source == "none" {
@@ -19924,10 +19874,10 @@ fn virtual_editor_click_input(
         "no_pointer_position"
     } else if source != "response_primary_clicked" && dragging {
         "dragging"
-    } else if !viewport_hit {
-        "outside_viewport"
     } else if scrollbar_hit {
         "scrollbar"
+    } else if !viewport_hit {
+        "outside_viewport"
     } else {
         "accepted"
     };
@@ -19942,8 +19892,6 @@ fn virtual_editor_click_input(
         response_rect: response.rect,
         viewport_rect,
         text_clip_rect,
-        vertical_scrollbar_rect,
-        horizontal_scrollbar_rect,
         response_hovered,
         response_contains_pointer,
         response_clicked,
@@ -21787,28 +21735,6 @@ mod tests {
         assert_eq!(visual_column_for_byte_column("abcdef", 3), 3);
         assert_eq!(visual_column_for_byte_column("aあb", 4), 2);
         assert_eq!(visual_column_for_byte_column("aあb", 2), 1);
-    }
-
-    #[test]
-    fn virtual_scrollbar_hit_rects_keep_editor_body_clickable() {
-        let viewport = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(210.0, 320.0));
-        let (vertical, horizontal) = virtual_scrollbar_hit_rects(viewport, 400.0, 800.0);
-
-        assert!(!virtual_scrollbar_hit_contains(
-            vertical,
-            horizontal,
-            egui::pos2(100.0, 100.0)
-        ));
-        assert!(virtual_scrollbar_hit_contains(
-            vertical,
-            horizontal,
-            egui::pos2(205.0, 100.0)
-        ));
-        assert!(virtual_scrollbar_hit_contains(
-            vertical,
-            horizontal,
-            egui::pos2(100.0, 315.0)
-        ));
     }
 
     #[test]

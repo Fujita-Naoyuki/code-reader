@@ -315,6 +315,9 @@ fn wheel_and_scrollbars_scroll_the_view() {
         g.full_rect.bottom() - 40.0,
     ));
     assert_eq!(t.app().left.cursor_position, cursor);
+    t.click("Report");
+    let report = t.platform.clipboard_text().unwrap();
+    assert!(report.contains("reason=scrollbar"), "{report}");
 }
 
 #[test]
