@@ -321,9 +321,8 @@ fn rendered_search_box_handles_enter_in_the_frame_it_gets_focus() {
         (egui::Key::F, super::support::CTRL),
         (egui::Key::Enter, egui::Modifiers::SHIFT),
     ]);
-    // Ctrl+F restarts at the first match, so Shift+Enter wraps to the last one.
-    let count = t.app().left.markdown_search.match_count;
-    assert_eq!(t.app().left.markdown_search.current_match, count - 1);
+    // Ctrl+F keeps the current match, so Shift+Enter steps back from it.
+    assert_eq!(t.app().left.markdown_search.current_match, 0);
 }
 
 #[test]

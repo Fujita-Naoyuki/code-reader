@@ -175,6 +175,22 @@ fn find_without_matches_and_escape() {
 }
 
 #[test]
+fn ctrl_f_on_an_open_find_bar_keeps_the_current_match() {
+    let mut t = editor_app();
+    t.ctrl(egui::Key::F);
+    t.type_text("alpha");
+    t.key(egui::Key::Enter);
+    assert!(t.has_label("2/3"));
+    t.ctrl(egui::Key::F);
+    assert!(t.has_label("2/3"));
+    // Closing clears the search; reopening starts from the first match again.
+    t.key(egui::Key::Escape);
+    t.ctrl(egui::Key::F);
+    t.type_text("alpha");
+    assert!(t.has_label("1/3"));
+}
+
+#[test]
 fn find_shrinks_the_current_match_when_text_changes() {
     let mut t = editor_app();
     t.ctrl(egui::Key::F);
@@ -387,8 +403,8 @@ fn find_box_handles_enter_in_the_frame_it_gets_focus() {
         (egui::Key::F, CTRL),
         (egui::Key::Enter, egui::Modifiers::SHIFT),
     ]);
-    // Ctrl+F restarts at the first match, so Shift+Enter wraps to the last one.
-    assert!(t.has_label("3/3"));
+    // Ctrl+F keeps the current match, so Shift+Enter steps back from it.
+    assert!(t.has_label("1/3"));
 }
 
 #[cfg(windows)]

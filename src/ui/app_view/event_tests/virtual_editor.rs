@@ -651,7 +651,10 @@ fn brackets_and_quotes_are_paired_and_stepped_over() {
     assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 1)));
     t.type_text("x");
     t.type_text(")");
-    assert!(text(&t).starts_with("(x)fn first_word"), "closing bracket steps over");
+    assert!(
+        text(&t).starts_with("(x)fn first_word"),
+        "closing bracket steps over"
+    );
     assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 3)));
     // Undo removes the pair and puts the cursor back.
     t.ctrl(egui::Key::Z);

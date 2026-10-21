@@ -2647,9 +2647,12 @@ impl CodeReaderApp {
             return false;
         }
 
+        // Ctrl+F on an open search box only refocuses it; the current match stays.
+        if !editor.markdown_search.open {
+            editor.markdown_search.current_match = 0;
+        }
         editor.markdown_search.open = true;
         editor.markdown_search.focus_requested = true;
-        editor.markdown_search.current_match = 0;
         true
     }
 
@@ -2659,10 +2662,13 @@ impl CodeReaderApp {
             return false;
         }
 
+        // Ctrl+F on an open search box only refocuses it; the current match stays.
+        if !editor.source_search.open {
+            editor.source_search.current_match = 0;
+            editor.source_search.scrolled_match = None;
+        }
         editor.source_search.open = true;
         editor.source_search.focus_requested = true;
-        editor.source_search.current_match = 0;
-        editor.source_search.scrolled_match = None;
         true
     }
 
