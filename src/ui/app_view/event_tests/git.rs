@@ -708,14 +708,29 @@ fn history_of_a_detached_head_and_an_octopus_merge() {
         t.git(&["add", "-A"]);
         t.git(&["commit", "-qm", &format!("{branch} work")]);
     }
+    // main moves on too, so the merge has three parents (graph prefix "*-.").
     t.git(&["switch", "-q", "main"]);
+    t.write("main.txt", "m\n");
+    t.git(&["add", "-A"]);
+    t.git(&["commit", "-qm", "main work"]);
     let long_subject = format!("octopus {}", "very long subject ".repeat(20));
     t.git(&["merge", "-q", "one", "two", "-m", &long_subject]);
+    assert_eq!(
+        t.git(&["rev-list", "--parents", "-n", "1", "HEAD"])
+            .split(' ')
+            .count(),
+        4
+    );
     let head = t.git(&["rev-parse", "HEAD"]);
     t.git(&["checkout", "-q", "--detach", &head]);
     open_git(&mut t);
     t.click("History");
-    assert!(t.has_label("4 commits"));
+    assert!(t.has_label("5 commits"));
+    assert!(
+        t.app().left.git_history_view.as_ref().unwrap().rows[0]
+            .graph
+            .starts_with("*-.")
+    );
     t.steps(3);
 }
 
