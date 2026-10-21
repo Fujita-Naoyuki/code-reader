@@ -7731,6 +7731,9 @@ struct EditorPane {
     virtual_ime_preedit: Option<String>,
     virtual_undo_stack: Vec<VirtualEditHistoryEntry>,
     virtual_redo_stack: Vec<VirtualEditHistoryEntry>,
+    /// Wheel scrolling the large-file editor applied immediately but egui is still going to
+    /// deliver as smoothed deltas on later frames; those are skipped up to this amount.
+    virtual_wheel_lead: egui::Vec2,
     scroll_y: f32,
     scroll_max_y: f32,
     scroll_x: f32,
@@ -7795,6 +7798,7 @@ impl EditorPane {
             virtual_ime_preedit: None,
             virtual_undo_stack: Vec::new(),
             virtual_redo_stack: Vec::new(),
+            virtual_wheel_lead: egui::Vec2::ZERO,
             scroll_y: 0.0,
             scroll_max_y: 0.0,
             scroll_x: 0.0,
@@ -7863,6 +7867,7 @@ impl EditorPane {
                 virtual_ime_preedit: None,
                 virtual_undo_stack: Vec::new(),
                 virtual_redo_stack: Vec::new(),
+                virtual_wheel_lead: egui::Vec2::ZERO,
                 scroll_y: 0.0,
                 scroll_max_y: 0.0,
                 scroll_x: 0.0,
@@ -7925,6 +7930,7 @@ impl EditorPane {
                     virtual_ime_preedit: None,
                     virtual_undo_stack: Vec::new(),
                     virtual_redo_stack: Vec::new(),
+                    virtual_wheel_lead: egui::Vec2::ZERO,
                     scroll_y: 0.0,
                     scroll_max_y: 0.0,
                     scroll_x: 0.0,
@@ -7990,6 +7996,7 @@ impl EditorPane {
             virtual_ime_preedit: None,
             virtual_undo_stack: Vec::new(),
             virtual_redo_stack: Vec::new(),
+            virtual_wheel_lead: egui::Vec2::ZERO,
             scroll_y: 0.0,
             scroll_max_y: 0.0,
             scroll_x: 0.0,
@@ -8054,6 +8061,7 @@ impl EditorPane {
             virtual_ime_preedit: None,
             virtual_undo_stack: Vec::new(),
             virtual_redo_stack: Vec::new(),
+            virtual_wheel_lead: egui::Vec2::ZERO,
             scroll_y: 0.0,
             scroll_max_y: 0.0,
             scroll_x: 0.0,
@@ -12068,30 +12076,39 @@ impl EditorPane {
         self.scroll_x = self.scroll_x.clamp(0.0, max_scroll_x);
 
         if response.hovered() {
-            let (scroll_delta, shift, immediate_scroll) = ui.input(|input| {
-                let immediate_scroll =
-                    immediate_wheel_scroll_delta(&input.raw.events, content_rect.height());
+            let (immediate_scroll, smooth_scroll, shift) = ui.input(|input| {
                 (
-                    immediate_scroll.unwrap_or_else(|| input.smooth_scroll_delta()),
+                    immediate_wheel_scroll_delta(&input.raw.events, content_rect.height()),
+                    input.smooth_scroll_delta(),
                     input.modifiers.shift,
-                    immediate_scroll.is_some(),
                 )
             });
-            if scroll_delta != egui::Vec2::ZERO {
-                if shift {
-                    self.scroll_x =
-                        (self.scroll_x - scroll_delta.y - scroll_delta.x).clamp(0.0, max_scroll_x);
-                } else {
-                    self.scroll_y = (self.scroll_y - scroll_delta.y).clamp(0.0, max_scroll_y);
-                    self.scroll_x = (self.scroll_x - scroll_delta.x).clamp(0.0, max_scroll_x);
+            // Wheel notches are applied at once; egui smooths the same notch over the next
+            // frames, so that later smoothed delta is skipped instead of scrolling twice.
+            let scroll_delta = match immediate_scroll {
+                Some(raw) => {
+                    let raw = if shift {
+                        egui::vec2(raw.x + raw.y, 0.0)
+                    } else {
+                        raw
+                    };
+                    self.virtual_wheel_lead += raw - smooth_scroll;
+                    raw
                 }
+                None => consume_wheel_lead(&mut self.virtual_wheel_lead, smooth_scroll),
+            };
+            if scroll_delta != egui::Vec2::ZERO {
+                self.scroll_y = (self.scroll_y - scroll_delta.y).clamp(0.0, max_scroll_y);
+                self.scroll_x = (self.scroll_x - scroll_delta.x).clamp(0.0, max_scroll_x);
+            }
+            if smooth_scroll != egui::Vec2::ZERO {
                 ui.input_mut(|input| {
                     input.smooth_scroll_delta = egui::Vec2::ZERO;
                 });
-                if !immediate_scroll {
-                    ui.ctx().request_repaint();
-                }
+                ui.ctx().request_repaint();
             }
+        } else {
+            self.virtual_wheel_lead = egui::Vec2::ZERO;
         }
 
         let visible_start = (self.scroll_y / row_height).floor().max(0.0) as usize;
@@ -19142,6 +19159,29 @@ fn should_use_virtual_source_view(source_len: usize, line_count: usize) -> bool 
     source_len >= VIRTUAL_SOURCE_MIN_BYTES || line_count >= VIRTUAL_SOURCE_MIN_LINES
 }
 
+/// Removes from `smooth` the part already applied ahead of time (`lead`, per axis and only
+/// in the same direction) and returns what is left to scroll.
+fn consume_wheel_lead(lead: &mut egui::Vec2, smooth: egui::Vec2) -> egui::Vec2 {
+    let mut remaining = smooth;
+    for axis in 0..2 {
+        if smooth[axis] == 0.0 {
+            continue;
+        }
+        if lead[axis].signum() != smooth[axis].signum() {
+            lead[axis] = 0.0;
+            continue;
+        }
+        let skipped = if lead[axis] > 0.0 {
+            smooth[axis].min(lead[axis])
+        } else {
+            smooth[axis].max(lead[axis])
+        };
+        lead[axis] -= skipped;
+        remaining[axis] -= skipped;
+    }
+    remaining
+}
+
 fn immediate_wheel_scroll_delta(
     events: &[egui::Event],
     viewport_height: f32,
@@ -23047,6 +23087,34 @@ mod tests {
             serialize_csv_for_save(&document, CsvTextStyle::of("")),
             "a,b"
         );
+    }
+
+    #[test]
+    fn consume_wheel_lead_skips_only_what_was_applied_ahead() {
+        let mut lead = egui::vec2(0.0, -60.0);
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::vec2(0.0, -40.0)),
+            egui::Vec2::ZERO
+        );
+        assert_eq!(lead, egui::vec2(0.0, -20.0));
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::Vec2::ZERO),
+            egui::Vec2::ZERO
+        );
+        assert_eq!(lead, egui::vec2(0.0, -20.0), "an idle frame keeps the lead");
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::vec2(0.0, -30.0)),
+            egui::vec2(0.0, -10.0)
+        );
+        assert_eq!(lead, egui::Vec2::ZERO);
+
+        // Scrolling the other way drops the lead.
+        let mut lead = egui::vec2(0.0, -60.0);
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::vec2(0.0, 10.0)),
+            egui::vec2(0.0, 10.0)
+        );
+        assert_eq!(lead, egui::Vec2::ZERO);
     }
 
     #[test]

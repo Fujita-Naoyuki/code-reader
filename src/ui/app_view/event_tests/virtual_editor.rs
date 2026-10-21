@@ -332,7 +332,7 @@ fn tab_moves_keyboard_focus_away_from_the_large_file_editor() {
 }
 
 #[test]
-fn one_wheel_event_keeps_scrolling_on_later_frames() {
+fn one_wheel_event_scrolls_exactly_once() {
     let mut t = virtual_app("big.txt");
     let pos = t.virtual_pos(5, 5);
     t.move_pointer(pos);
@@ -345,9 +345,11 @@ fn one_wheel_event_keeps_scrolling_on_later_frames() {
     t.step();
     assert_eq!(t.app().left.scroll_y, 100.0);
     t.steps(30);
-    // DISCREPANCY(D09): the raw wheel delta is applied immediately, but egui's smoothed
-    // remainder keeps arriving on later frames, so one 100px notch ends up past 100px.
-    assert!(t.app().left.scroll_y > 150.0, "{}", t.app().left.scroll_y);
+    assert_eq!(
+        t.app().left.scroll_y,
+        100.0,
+        "egui's smoothed copy of the notch is not applied again"
+    );
 }
 
 #[test]
