@@ -120,10 +120,18 @@ fn keyboard_navigation_and_selection() {
     assert_eq!(t.app().left.cursor_position, Some(Position::new(1, 3)));
     t.key(egui::Key::ArrowDown);
     assert_eq!(t.app().left.cursor_position, Some(Position::new(2, 1)));
-    // The column is clamped to the short line and not remembered (no "desired column").
+    // The column is clamped on the short line but remembered for the next move.
     t.key(egui::Key::ArrowUp);
     t.key(egui::Key::ArrowUp);
-    assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 1)));
+    assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 3)));
+    // Moving sideways sets a new column.
+    t.key(egui::Key::ArrowDown);
+    t.key(egui::Key::ArrowDown);
+    t.key(egui::Key::ArrowLeft);
+    t.key(egui::Key::ArrowUp);
+    t.key(egui::Key::ArrowUp);
+    assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 0)));
+    t.key(egui::Key::ArrowRight);
     t.key(egui::Key::End);
     assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 17)));
     t.key(egui::Key::Home);
@@ -609,10 +617,17 @@ fn edit_history_is_capped() {
 }
 
 #[test]
-fn text_with_ctrl_modifier_is_not_inserted() {
+fn altgr_text_is_inserted_but_ctrl_text_is_not() {
     let mut t = virtual_app("big.txt");
     t.click_virtual(0, 0);
-    // AltGr arrives as Ctrl+Alt on Windows; the large-file editor drops such text.
+    // Plain Ctrl+letter is a shortcut, not text.
+    t.set_modifiers(CTRL);
+    t.harness.event(egui::Event::Text("q".to_owned()));
+    t.step();
+    t.set_modifiers(egui::Modifiers::NONE);
+    t.step();
+    assert!(!text(&t).starts_with('q'));
+    // AltGr arrives as Ctrl+Alt on Windows and types characters such as `@`.
     t.set_modifiers(egui::Modifiers {
         alt: true,
         ctrl: true,
@@ -624,7 +639,30 @@ fn text_with_ctrl_modifier_is_not_inserted() {
     t.step();
     t.set_modifiers(egui::Modifiers::NONE);
     t.step();
-    assert!(!text(&t).contains('@'));
+    assert!(text(&t).starts_with("@fn first_word"));
+}
+
+#[test]
+fn brackets_and_quotes_are_paired_and_stepped_over() {
+    let mut t = virtual_app("big.txt");
+    t.click_virtual(0, 0);
+    t.type_text("(");
+    assert!(text(&t).starts_with("()fn first_word"));
+    assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 1)));
+    t.type_text("x");
+    t.type_text(")");
+    assert!(text(&t).starts_with("(x)fn first_word"), "closing bracket steps over");
+    assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 3)));
+    // Undo removes the pair and puts the cursor back.
+    t.ctrl(egui::Key::Z);
+    t.ctrl(egui::Key::Z);
+    assert!(text(&t).starts_with("fn first_word"));
+
+    // With a selection the typed bracket replaces it, without a partner.
+    t.click_virtual(0, 0);
+    t.shift_held(&[egui::Key::ArrowRight, egui::Key::ArrowRight]);
+    t.type_text("[");
+    assert!(text(&t).starts_with("[ first_word"));
 }
 
 #[test]

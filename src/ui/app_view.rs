@@ -7855,6 +7855,10 @@ struct NormalizedVirtualSelection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum VirtualEditCommand {
     Insert(String),
+    /// An opening bracket or quote and its closing partner, with the cursor between them.
+    InsertPair(char, char),
+    /// Typing a closing bracket right before the same bracket steps over it.
+    SkipClosing(char),
     Backspace,
     Delete,
     Undo,
@@ -7933,6 +7937,9 @@ struct EditorPane {
     /// Wheel scrolling the large-file editor applied immediately but egui is still going to
     /// deliver as smoothed deltas on later frames; those are skipped up to this amount.
     virtual_wheel_lead: egui::Vec2,
+    /// Where Up/Down last left the cursor and the column it was aiming for, so passing
+    /// through shorter lines does not lose the column (only while the cursor stays there).
+    virtual_vertical_goal: Option<(Position, u32)>,
     scroll_y: f32,
     scroll_max_y: f32,
     scroll_x: f32,
@@ -8000,6 +8007,7 @@ impl EditorPane {
             virtual_undo_stack: Vec::new(),
             virtual_redo_stack: Vec::new(),
             virtual_wheel_lead: egui::Vec2::ZERO,
+            virtual_vertical_goal: None,
             scroll_y: 0.0,
             scroll_max_y: 0.0,
             scroll_x: 0.0,
@@ -8076,6 +8084,7 @@ impl EditorPane {
                 virtual_undo_stack: Vec::new(),
                 virtual_redo_stack: Vec::new(),
                 virtual_wheel_lead: egui::Vec2::ZERO,
+                virtual_vertical_goal: None,
                 scroll_y: 0.0,
                 scroll_max_y: 0.0,
                 scroll_x: 0.0,
@@ -8140,6 +8149,7 @@ impl EditorPane {
                     virtual_undo_stack: Vec::new(),
                     virtual_redo_stack: Vec::new(),
                     virtual_wheel_lead: egui::Vec2::ZERO,
+                    virtual_vertical_goal: None,
                     scroll_y: 0.0,
                     scroll_max_y: 0.0,
                     scroll_x: 0.0,
@@ -8207,6 +8217,7 @@ impl EditorPane {
             virtual_undo_stack: Vec::new(),
             virtual_redo_stack: Vec::new(),
             virtual_wheel_lead: egui::Vec2::ZERO,
+            virtual_vertical_goal: None,
             scroll_y: 0.0,
             scroll_max_y: 0.0,
             scroll_x: 0.0,
@@ -8273,6 +8284,7 @@ impl EditorPane {
             virtual_undo_stack: Vec::new(),
             virtual_redo_stack: Vec::new(),
             virtual_wheel_lead: egui::Vec2::ZERO,
+            virtual_vertical_goal: None,
             scroll_y: 0.0,
             scroll_max_y: 0.0,
             scroll_x: 0.0,
@@ -8625,6 +8637,13 @@ impl EditorPane {
 
         let edited = match command {
             VirtualEditCommand::Insert(text) => self.apply_virtual_insert(&text),
+            VirtualEditCommand::InsertPair(open, close) => {
+                self.apply_virtual_insert_pair(open, close)
+            }
+            VirtualEditCommand::SkipClosing(character) => {
+                self.skip_virtual_closing(character);
+                false
+            }
             VirtualEditCommand::Backspace => self.apply_virtual_backspace(),
             VirtualEditCommand::Delete => self.apply_virtual_delete(),
             VirtualEditCommand::Undo => self.apply_virtual_undo(),
@@ -8773,20 +8792,40 @@ impl EditorPane {
                 return Some(VirtualEditCommand::Delete);
             }
 
+            let has_selection = self
+                .virtual_selection
+                .is_some_and(|selection| selection.anchor != selection.head);
+            // AltGr arrives as Ctrl+Alt on Windows and types characters (`@`, `{`, ...);
+            // plain Ctrl / Cmd text is a shortcut, not input.
+            let shortcut_modifiers =
+                (input.modifiers.command || input.modifiers.ctrl) && !input.modifiers.alt;
             let mut command = None;
             input.events.retain(|event| {
                 let egui::Event::Text(text) = event else {
                     return true;
                 };
-                if text.is_empty() || input.modifiers.command || input.modifiers.ctrl {
+                if text.is_empty() || shortcut_modifiers {
                     return true;
                 }
 
-                command = Some(VirtualEditCommand::Insert(virtual_input_text(
-                    text,
-                    &self.text,
-                    cursor_index,
-                )));
+                // Same assistance as the regular editor: pair brackets and quotes, step over
+                // a closing one, never with a selection or for multi-character input.
+                let mut chars = text.chars();
+                if let (Some(character), None, false) = (chars.next(), chars.next(), has_selection)
+                {
+                    if let Some(close) = closing_pair(character) {
+                        command = Some(VirtualEditCommand::InsertPair(character, close));
+                        return false;
+                    }
+                    if is_closing_bracket(character)
+                        && self.text.next_char_at(cursor_index) == Some(character)
+                    {
+                        command = Some(VirtualEditCommand::SkipClosing(character));
+                        return false;
+                    }
+                }
+
+                command = Some(VirtualEditCommand::Insert(text.to_string()));
                 false
             });
             command
@@ -8818,22 +8857,29 @@ impl EditorPane {
             .virtual_selection
             .map(|selection| selection.anchor)
             .unwrap_or(current);
+        let goal_column = match self.virtual_vertical_goal {
+            Some((position, column)) if position == current => column,
+            _ => current.character,
+        };
+        let vertical_from = Position::new(current.line, goal_column);
         let next = match command.target {
             VirtualNavigationTarget::Left => virtual_position_left(&self.text, current),
             VirtualNavigationTarget::Right => virtual_position_right(&self.text, current),
-            VirtualNavigationTarget::Up => virtual_position_vertical(line_index, current, -1),
-            VirtualNavigationTarget::Down => virtual_position_vertical(line_index, current, 1),
+            VirtualNavigationTarget::Up => virtual_position_vertical(line_index, vertical_from, -1),
+            VirtualNavigationTarget::Down => {
+                virtual_position_vertical(line_index, vertical_from, 1)
+            }
             VirtualNavigationTarget::Home => virtual_position_line_home(line_index, current),
             VirtualNavigationTarget::End => virtual_position_line_end(line_index, current),
             VirtualNavigationTarget::PageUp => {
                 let rows = virtual_page_row_delta(row_height, viewport_height);
                 self.scroll_y = (self.scroll_y - rows as f32 * row_height).clamp(0.0, max_scroll_y);
-                virtual_position_vertical(line_index, current, -rows)
+                virtual_position_vertical(line_index, vertical_from, -rows)
             }
             VirtualNavigationTarget::PageDown => {
                 let rows = virtual_page_row_delta(row_height, viewport_height);
                 self.scroll_y = (self.scroll_y + rows as f32 * row_height).clamp(0.0, max_scroll_y);
-                virtual_position_vertical(line_index, current, rows)
+                virtual_position_vertical(line_index, vertical_from, rows)
             }
             VirtualNavigationTarget::SelectAll => {
                 let start = Position::new(0, 0);
@@ -8859,6 +8905,14 @@ impl EditorPane {
         };
 
         self.cursor_position = Some(next);
+        let vertical = matches!(
+            command.target,
+            VirtualNavigationTarget::Up
+                | VirtualNavigationTarget::Down
+                | VirtualNavigationTarget::PageUp
+                | VirtualNavigationTarget::PageDown
+        );
+        self.virtual_vertical_goal = vertical.then_some((next, goal_column));
         if command.extend_selection {
             self.virtual_selection = Some(VirtualTextSelection { anchor, head: next });
         } else {
@@ -8919,6 +8973,34 @@ impl EditorPane {
             return false;
         };
         self.replace_virtual_byte_range(range, text)
+    }
+
+    fn apply_virtual_insert_pair(&mut self, open: char, close: char) -> bool {
+        if !self.apply_virtual_insert(&format!("{open}{close}")) {
+            return false;
+        }
+        // Put the cursor between the pair, for the edit and for its undo entry.
+        if let Some(cursor) = self.cursor_position
+            && let Some(cursor_byte) = virtual_position_to_byte_index(&self.text, cursor)
+        {
+            self.cursor_position = self
+                .text
+                .byte_index_to_position(cursor_byte - close.len_utf8());
+            if let Some(entry) = self.virtual_undo_stack.last_mut() {
+                entry.after_cursor = self.cursor_position;
+            }
+        }
+        true
+    }
+
+    fn skip_virtual_closing(&mut self, character: char) {
+        if let Some(cursor) = self.cursor_position
+            && let Some(cursor_byte) = virtual_position_to_byte_index(&self.text, cursor)
+        {
+            self.cursor_position = self
+                .text
+                .byte_index_to_position(cursor_byte + character.len_utf8());
+        }
     }
 
     fn apply_virtual_backspace(&mut self) -> bool {
@@ -18849,10 +18931,6 @@ fn previous_char_boundary(source: &str, byte_index: usize) -> usize {
         index -= 1;
     }
     index
-}
-
-fn virtual_input_text(text: &str, _source: &EditorTextBuffer, _cursor_index: usize) -> String {
-    text.to_owned()
 }
 
 fn paint_virtual_cursor(
