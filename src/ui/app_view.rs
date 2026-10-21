@@ -195,6 +195,8 @@ pub struct CodeReaderApp {
     /// Branch highlighted with Up/Down in the Switch Branch window; Enter switches to it.
     git_switch_branch_cursor: Option<String>,
     pending_git_discard: Option<GitDiscardRequest>,
+    /// An action that would drop unsaved edits, waiting for Save / Discard / Cancel.
+    pending_unsaved_action: Option<UnsavedChangesAction>,
     git_commit_details: Option<GitCommitDetailsWindow>,
     dragging_workspace_file: Option<PathBuf>,
     selected_workspace_path: Option<PathBuf>,
@@ -313,6 +315,7 @@ impl CodeReaderApp {
             git_switch_branch_root: None,
             git_switch_branch_cursor: None,
             pending_git_discard: None,
+            pending_unsaved_action: None,
             git_commit_details: None,
             dragging_workspace_file: None,
             selected_workspace_path: None,
@@ -420,9 +423,78 @@ impl CodeReaderApp {
             }
             self.remember_recent_file(path.clone());
         }
+        self.replace_editor(pane, next, true, None);
+    }
+
+    /// Puts `next` into `pane`. When the pane holds unsaved edits of another file, the user
+    /// is asked first and this returns false; the replacement (with `sync_open_files` and
+    /// `status`) then happens once they save or discard. For the same file the unsaved
+    /// text is carried over instead.
+    fn replace_editor(
+        &mut self,
+        pane: Pane,
+        mut next: EditorPane,
+        sync_open_files: bool,
+        status: Option<String>,
+    ) -> bool {
+        let current = self.editor_mut(pane);
+        if current.has_unsaved_changes() {
+            if current.path == next.path && !next.read_only {
+                next.adopt_unsaved_text(current);
+            } else {
+                self.status_message = format!(
+                    "{} has unsaved changes: save or discard them first.",
+                    current.title
+                );
+                self.pending_unsaved_action = Some(UnsavedChangesAction::ReplaceEditor {
+                    pane,
+                    next: Box::new(next),
+                    sync_open_files,
+                    status,
+                });
+                return false;
+            }
+        }
         *self.editor_mut(pane) = next;
-        self.sync_open_files();
-        self.save_state();
+        if sync_open_files {
+            self.sync_open_files();
+            self.save_state();
+        }
+        if let Some(status) = status {
+            self.status_message = status;
+        }
+        true
+    }
+
+    fn panes_with_unsaved_changes(&self) -> Vec<Pane> {
+        [Pane::Left, Pane::Right]
+            .into_iter()
+            .filter(|pane| self.editor(*pane).has_unsaved_changes())
+            .collect()
+    }
+
+    fn run_unsaved_changes_action(&mut self, action: UnsavedChangesAction) {
+        match action {
+            UnsavedChangesAction::ReplaceEditor {
+                pane,
+                next,
+                sync_open_files,
+                status,
+            } => {
+                *self.editor_mut(pane) = *next;
+                if sync_open_files {
+                    self.sync_open_files();
+                    self.save_state();
+                }
+                if let Some(status) = status {
+                    self.status_message = status;
+                }
+            }
+            UnsavedChangesAction::SwitchSession(session_id) => {
+                self.switch_session_now(&session_id);
+            }
+            UnsavedChangesAction::CreateSession => self.create_session_now(),
+        }
     }
 
     fn open_markdown_link_in_focused_pane(&mut self, path: PathBuf, fragment: Option<String>) {
@@ -472,12 +544,9 @@ impl CodeReaderApp {
         self.symbol_index.add_file(&path, &self.language_registry);
         self.remember_recent_file(path.clone());
         self.reveal_workspace_file_in_tree(&path);
-        *self.focused_editor_mut() = next;
-        self.sync_open_files();
-        self.save_state();
-
-        self.status_message =
+        let status =
             fragment_status.unwrap_or_else(|| format!("Opened Markdown link: {}", path.display()));
+        self.replace_editor(self.focused_pane, next, true, Some(status));
     }
 
     fn open_external_url(&mut self, url: &str) {
@@ -889,6 +958,14 @@ impl CodeReaderApp {
     }
 
     fn create_session(&mut self) {
+        if !self.panes_with_unsaved_changes().is_empty() {
+            self.pending_unsaved_action = Some(UnsavedChangesAction::CreateSession);
+            return;
+        }
+        self.create_session_now();
+    }
+
+    fn create_session_now(&mut self) {
         let Some(root) = pick_workspace_folder("New workspace session") else {
             self.status_message = "New session canceled.".to_owned();
             return;
@@ -960,6 +1037,15 @@ impl CodeReaderApp {
     }
 
     fn switch_session(&mut self, session_id: &str) {
+        if !self.panes_with_unsaved_changes().is_empty() {
+            self.pending_unsaved_action =
+                Some(UnsavedChangesAction::SwitchSession(session_id.to_owned()));
+            return;
+        }
+        self.switch_session_now(session_id);
+    }
+
+    fn switch_session_now(&mut self, session_id: &str) {
         self.sync_open_files();
         self.pending_delete_session_id = None;
         self.editing_session_name = false;
@@ -2154,7 +2240,7 @@ impl CodeReaderApp {
         });
     }
 
-    fn open_navigation_point_in_focused_pane(&mut self, point: NavigationPoint) {
+    fn open_navigation_point_in_focused_pane(&mut self, point: NavigationPoint) -> bool {
         let mut next = EditorPane::from_path(self.focused_pane, point.path.clone());
         next.target_position = Some(point.position);
         next.pending_navigation = Some(PendingEditorNavigation {
@@ -2178,9 +2264,7 @@ impl CodeReaderApp {
             self.reveal_workspace_file_in_tree(path);
         }
 
-        *self.focused_editor_mut() = next;
-        self.sync_open_files();
-        self.save_state();
+        self.replace_editor(self.focused_pane, next, true, None)
     }
 
     fn go_back(&mut self) {
@@ -2190,8 +2274,9 @@ impl CodeReaderApp {
             return;
         };
 
-        self.open_navigation_point_in_focused_pane(previous);
-        self.status_message = "Returned to previous location.".to_owned();
+        if self.open_navigation_point_in_focused_pane(previous) {
+            self.status_message = "Returned to previous location.".to_owned();
+        }
     }
 
     fn go_forward(&mut self) {
@@ -2201,8 +2286,9 @@ impl CodeReaderApp {
             return;
         };
 
-        self.open_navigation_point_in_focused_pane(next);
-        self.status_message = "Moved to next location.".to_owned();
+        if self.open_navigation_point_in_focused_pane(next) {
+            self.status_message = "Moved to next location.".to_owned();
+        }
     }
 
     fn open_navigation_history_entry(&mut self, index: usize) {
@@ -3243,8 +3329,13 @@ impl CodeReaderApp {
                     return_history: None,
                 };
                 let pane = self.focused_pane;
-                *self.focused_editor_mut() = EditorPane::from_diff(pane, diff_view, text);
-                self.status_message = format!("Opened all diffs: {}", repository.name);
+                let next = EditorPane::from_diff(pane, diff_view, text);
+                self.replace_editor(
+                    pane,
+                    next,
+                    false,
+                    Some(format!("Opened all diffs: {}", repository.name)),
+                );
             }
             Err(error) => {
                 self.status_message =
@@ -3280,8 +3371,16 @@ impl CodeReaderApp {
                     return_history: None,
                 };
                 let pane = self.focused_pane;
-                *self.focused_editor_mut() = EditorPane::from_diff(pane, diff_view, text);
-                self.status_message = format!("Opened diff: {} | {}", repository.name, change.path);
+                let next = EditorPane::from_diff(pane, diff_view, text);
+                self.replace_editor(
+                    pane,
+                    next,
+                    false,
+                    Some(format!(
+                        "Opened diff: {} | {}",
+                        repository.name, change.path
+                    )),
+                );
             }
             Err(error) => {
                 self.status_message = format!(
@@ -3302,8 +3401,9 @@ impl CodeReaderApp {
                     selected_commit_hash: None,
                 };
                 let pane = self.focused_pane;
-                *self.focused_editor_mut() = EditorPane::from_git_history(pane, history_view);
-                self.status_message = format!("Opened Git graph: {}", repository.name);
+                let next = EditorPane::from_git_history(pane, history_view);
+                let status = format!("Opened Git graph: {}", repository.name);
+                self.replace_editor(pane, next, false, Some(status));
             }
             Err(error) => {
                 self.status_message =
@@ -3359,8 +3459,13 @@ impl CodeReaderApp {
                     return_history,
                 };
                 let pane = self.focused_pane;
-                *self.focused_editor_mut() = EditorPane::from_diff(pane, diff_view, text);
-                self.status_message = format!("Opened commit diff: {short_hash}");
+                let next = EditorPane::from_diff(pane, diff_view, text);
+                self.replace_editor(
+                    pane,
+                    next,
+                    false,
+                    Some(format!("Opened commit diff: {short_hash}")),
+                );
             }
             Err(error) => {
                 self.status_message = format!(
@@ -4825,6 +4930,9 @@ impl CodeReaderApp {
         if self.pending_git_discard.is_some() {
             return "Discard Changes";
         }
+        if self.pending_unsaved_action.is_some() {
+            return "Unsaved Changes";
+        }
         if self.editing_session_name {
             return "Rename Workspace";
         }
@@ -4878,6 +4986,7 @@ impl CodeReaderApp {
         if self.git_create_branch_root.is_some()
             || self.git_switch_branch_root.is_some()
             || self.pending_git_discard.is_some()
+            || self.pending_unsaved_action.is_some()
             || self.editing_session_name
         {
             return shortcuts(&[("Enter", "Confirm"), ("Esc", "Close")]);
@@ -5005,7 +5114,7 @@ impl CodeReaderApp {
                 ("Enter", "Switch"),
                 ("Esc", "Close"),
             ]),
-            "Create Branch" | "Discard Changes" | "Rename Workspace" => {
+            "Create Branch" | "Discard Changes" | "Unsaved Changes" | "Rename Workspace" => {
                 shortcuts(&[("Enter", "Confirm"), ("Esc", "Close")])
             }
             "Workspace Search" => shortcuts(&[("Enter", "Run search"), ("Esc", "Clear")]),
@@ -5562,15 +5671,101 @@ impl CodeReaderApp {
     }
 
     fn save_focused_file(&mut self) {
-        match self.focused_editor_mut().save_to_disk() {
+        self.save_pane(self.focused_pane);
+    }
+
+    fn save_pane(&mut self, pane: Pane) -> bool {
+        match self.editor_mut(pane).save_to_disk() {
             Ok(path) => {
                 self.symbol_index.add_file(&path, &self.language_registry);
                 self.bump_search_index_revision();
                 self.status_message = format!("Saved file: {}", path.display());
+                true
             }
             Err(error) => {
                 self.status_message = error;
+                false
             }
+        }
+    }
+
+    fn show_unsaved_changes_window(&mut self, ui: &mut egui::Ui) {
+        if self.pending_unsaved_action.is_none() {
+            return;
+        }
+        let panes = match &self.pending_unsaved_action {
+            Some(UnsavedChangesAction::ReplaceEditor { pane, .. }) => vec![*pane],
+            _ => self.panes_with_unsaved_changes(),
+        };
+        let files = panes
+            .iter()
+            .map(|pane| self.editor(*pane).title.clone())
+            .collect::<Vec<_>>();
+
+        let mut save = false;
+        let mut discard = false;
+        let mut cancel = false;
+        egui::Window::new("Unsaved Changes")
+            .id(egui::Id::new("unsaved_changes_window"))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 96.0))
+            .fixed_size(egui::vec2(440.0, 160.0))
+            .collapsible(false)
+            .resizable(false)
+            .show(ui.ctx(), |ui| {
+                let (escape, enter) = ui.input_mut(|input| {
+                    (
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                    )
+                });
+                if escape {
+                    cancel = true;
+                } else if enter {
+                    save = true;
+                }
+
+                ui.label(
+                    RichText::new("These files have unsaved changes:")
+                        .small()
+                        .weak(),
+                );
+                for file in &files {
+                    ui.label(RichText::new(file).monospace());
+                }
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(egui::Button::new("Save").stroke(ui.visuals().selection.stroke))
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                    if ui.button("Discard").clicked() {
+                        discard = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+
+        if cancel {
+            self.pending_unsaved_action = None;
+            self.status_message = "Kept unsaved changes.".to_owned();
+            return;
+        }
+        if save {
+            for pane in panes {
+                if !self.save_pane(pane) {
+                    // Keep the question open so the edits are not lost.
+                    return;
+                }
+            }
+        }
+        if (save || discard)
+            && let Some(action) = self.pending_unsaved_action.take()
+        {
+            self.run_unsaved_changes_action(action);
         }
     }
 
@@ -6513,6 +6708,7 @@ impl eframe::App for CodeReaderApp {
         self.show_git_switch_branch_window(ui);
         self.show_git_create_branch_window(ui);
         self.show_git_discard_window(ui);
+        self.show_unsaved_changes_window(ui);
         self.show_git_commit_details_window(ui);
         self.show_shortcuts_help_window(ui);
         register_focused_test_node(ui.ctx());
@@ -6712,6 +6908,18 @@ impl GitCommitFileChange {
             None => self.path.clone(),
         }
     }
+}
+
+/// What to do once the user has saved or discarded unsaved edits.
+enum UnsavedChangesAction {
+    ReplaceEditor {
+        pane: Pane,
+        next: Box<EditorPane>,
+        sync_open_files: bool,
+        status: Option<String>,
+    },
+    SwitchSession(String),
+    CreateSession,
 }
 
 #[derive(Debug, Clone)]
@@ -7783,6 +7991,8 @@ struct EditorPane {
     diff_unified_selection: Option<DiffUnifiedSelection>,
     diff_display_cache: Option<DiffDisplayCache>,
     pending_action: Option<EditorAction>,
+    /// Text fingerprint when the file was last read or saved; see `has_unsaved_changes`.
+    saved_fingerprint: (usize, u64),
 }
 
 impl EditorPane {
@@ -7848,10 +8058,17 @@ impl EditorPane {
             diff_unified_selection: None,
             diff_display_cache: None,
             pending_action: None,
+            saved_fingerprint: (0, 0),
         }
     }
 
     fn from_path(pane: Pane, path: PathBuf) -> Self {
+        let mut editor = Self::read_path(pane, path);
+        editor.saved_fingerprint = editor.text_fingerprint();
+        editor
+    }
+
+    fn read_path(pane: Pane, path: PathBuf) -> Self {
         match fs::read_to_string(&path) {
             Ok(text) => Self {
                 pane,
@@ -7917,6 +8134,7 @@ impl EditorPane {
                 diff_unified_selection: None,
                 diff_display_cache: None,
                 pending_action: None,
+                saved_fingerprint: (0, 0),
             },
             Err(error) => {
                 let text = format!("Failed to read file: {error}");
@@ -7980,6 +8198,7 @@ impl EditorPane {
                     diff_unified_selection: None,
                     diff_display_cache: None,
                     pending_action: None,
+                    saved_fingerprint: (0, 0),
                 }
             }
         }
@@ -8046,6 +8265,7 @@ impl EditorPane {
             diff_unified_selection: None,
             diff_display_cache: None,
             pending_action: None,
+            saved_fingerprint: (0, 0),
         }
     }
 
@@ -8111,6 +8331,7 @@ impl EditorPane {
             diff_unified_selection: None,
             diff_display_cache: None,
             pending_action: None,
+            saved_fingerprint: (0, 0),
         }
     }
 
@@ -8127,6 +8348,23 @@ impl EditorPane {
 
     fn text_fingerprint(&self) -> (usize, u64) {
         self.text.fingerprint()
+    }
+
+    /// An editable file whose text differs from what was last read or saved.
+    fn has_unsaved_changes(&self) -> bool {
+        self.path.is_some()
+            && !self.read_only
+            && self.diff_view.is_none()
+            && self.git_history_view.is_none()
+            && self.text_fingerprint() != self.saved_fingerprint
+    }
+
+    /// Takes over `other`'s unsaved text when `self` is a fresh copy of the same file, so
+    /// moving within that file (definition jump, Back/Forward) keeps the edits.
+    fn adopt_unsaved_text(&mut self, other: &mut EditorPane) {
+        self.text = std::mem::replace(&mut other.text, EditorTextBuffer::new(String::new()));
+        self.saved_fingerprint = other.saved_fingerprint;
+        self.mark_text_changed();
     }
 
     fn mark_text_changed(&mut self) {
@@ -8248,8 +8486,9 @@ impl EditorPane {
             self.replace_text(text);
         }
         fs::write(&path, self.text.as_str())
-            .map(|()| path)
-            .map_err(|error| format!("Failed to save file: {error}"))
+            .map_err(|error| format!("Failed to save file: {error}"))?;
+        self.saved_fingerprint = self.text_fingerprint();
+        Ok(path)
     }
 
     fn is_csv(&self) -> bool {
@@ -13078,7 +13317,12 @@ impl EditorPane {
             ui.set_min_height(ui.available_height());
 
             ui.horizontal(|ui| {
-                ui.label(RichText::new(&self.title).strong());
+                if self.has_unsaved_changes() {
+                    ui.label(RichText::new(format!("● {}", self.title)).strong())
+                        .on_hover_text("Unsaved changes");
+                } else {
+                    ui.label(RichText::new(&self.title).strong());
+                }
                 paint_navigation_breadcrumb(
                     ui,
                     navigation_history,

@@ -255,18 +255,71 @@ fn external_definitions_open_read_only() {
 }
 
 #[test]
-fn opening_another_file_discards_unsaved_edits_without_warning() {
+fn opening_another_file_asks_about_unsaved_edits() {
     let mut t = editor_app();
     t.click_text(0, 0);
     t.type_text("unsaved ");
-    assert!(t.app().left.text.as_str().starts_with("unsaved alpha"));
+    assert!(t.has_label("● notes.txt"));
+
+    // Cancel keeps the edits and the file.
     t.click_first("bin.dat.txt");
-    t.click_first("notes.txt");
-    // DISCREPANCY(D06): there is no dirty tracking; switching files (tree, search,
-    // definition jump, Git diff) silently drops edits that were not saved.
-    assert!(t.app().left.text.as_str().starts_with("alpha beta"));
+    assert!(t.has_label("Unsaved Changes"));
+    t.assert_status("notes.txt has unsaved changes: save or discard them first.");
+    t.click("Cancel");
+    t.assert_status("Kept unsaved changes.");
+    assert!(t.app().pending_unsaved_action.is_none());
+    assert!(t.app().left.text.as_str().starts_with("unsaved alpha"));
+
+    // Discard opens the other file and leaves the disk untouched.
+    t.click_first("bin.dat.txt");
+    t.click("Discard");
+    assert_eq!(
+        t.app().left.path.as_deref(),
+        Some(t.path("bin.dat.txt").as_path())
+    );
     assert!(!t.read("notes.txt").contains("unsaved"));
-    assert!(!t.has_label_containing("unsaved changes"));
+
+    // Save (Enter) writes the edits before switching.
+    t.click_first("notes.txt");
+    t.click_text(0, 0);
+    t.type_text("kept ");
+    t.click_first("bin.dat.txt");
+    t.key(egui::Key::Enter);
+    assert!(t.read("notes.txt").starts_with("kept alpha"));
+    assert_eq!(
+        t.app().left.path.as_deref(),
+        Some(t.path("bin.dat.txt").as_path())
+    );
+    assert!(!t.has_label("Unsaved Changes"));
+}
+
+#[test]
+fn reopening_the_same_file_keeps_unsaved_edits() {
+    let mut t = editor_app();
+    t.click_text(0, 0);
+    t.type_text("unsaved ");
+    t.click_first("notes.txt");
+    assert!(t.app().pending_unsaved_action.is_none());
+    assert!(t.app().left.text.as_str().starts_with("unsaved alpha"));
+    assert!(t.has_label("● notes.txt"));
+    t.ctrl(egui::Key::S);
+    assert!(t.has_label("notes.txt"));
+    assert!(!t.has_label("● notes.txt"));
+}
+
+#[test]
+fn new_workspace_asks_about_unsaved_edits() {
+    let mut t = editor_app();
+    t.click_text(0, 0);
+    t.type_text("unsaved ");
+    t.click("New Workspace");
+    assert!(t.has_label("Unsaved Changes"));
+    t.key(egui::Key::Escape);
+    assert!(t.app().pending_unsaved_action.is_none());
+    assert!(t.app().left.text.as_str().starts_with("unsaved alpha"));
+    t.click("New Workspace");
+    t.click("Discard");
+    t.assert_status("New session canceled.");
 }
 
 #[test]
