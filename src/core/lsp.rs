@@ -9,18 +9,13 @@ use std::{
     time::Duration,
 };
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
 use serde_json::{Value, json};
 
 use crate::core::{
     document::Document,
     location::{Location, Position, Range},
+    process::hide_windows_console,
 };
-
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LspRequestKind {
@@ -703,13 +698,6 @@ impl LspConnection {
                 })
                 .collect(),
         )
-    }
-}
-
-fn hide_windows_console(command: &mut Command) {
-    #[cfg(windows)]
-    {
-        command.creation_flags(CREATE_NO_WINDOW);
     }
 }
 
