@@ -41,9 +41,7 @@ pub trait LanguageSupport: Send + Sync {
             return false;
         };
 
-        self.file_extensions()
-            .iter()
-            .any(|candidate| *candidate == extension)
+        self.file_extensions().contains(&extension)
     }
 
     fn extract_symbols(&self, document: &Document) -> Vec<Symbol>;

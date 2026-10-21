@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+// Until the editor helpers take context structs (refactoring plan, phase 3-4).
+#![allow(clippy::too_many_arguments)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;

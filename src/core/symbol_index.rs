@@ -124,9 +124,7 @@ fn file_symbols_with_source(
     language_registry: &LanguageRegistry,
     source: SymbolSource,
 ) -> Option<Vec<Symbol>> {
-    let Some(language) = language_registry.language_for_path(path) else {
-        return None;
-    };
+    let language = language_registry.language_for_path(path)?;
     let Ok(text) = fs::read_to_string(path) else {
         return None;
     };

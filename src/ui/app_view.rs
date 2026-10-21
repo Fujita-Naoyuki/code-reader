@@ -144,6 +144,7 @@ enum WorkspaceFileDialog {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // The actions all act on files.
 enum WorkspaceFileDialogAction {
     CreateFile { folder: PathBuf, file_name: String },
     RenameFile { path: PathBuf, new_name: String },
@@ -1596,10 +1597,9 @@ impl CodeReaderApp {
                         &pending.document.path,
                         pending.position,
                     )
+                    && self.request_go_lsp_references(pending.clone())
                 {
-                    if self.request_go_lsp_references(pending.clone()) {
-                        return;
-                    }
+                    return;
                 }
                 self.handle_locations_with_origin(
                     &pending.identifier,
@@ -1983,10 +1983,9 @@ impl CodeReaderApp {
                         &pending.document.path,
                         pending.position,
                     )
+                    && self.request_rust_lsp_references(pending.clone())
                 {
-                    if self.request_rust_lsp_references(pending.clone()) {
-                        return;
-                    }
+                    return;
                 }
                 self.handle_locations_with_origin(
                     &pending.identifier,
@@ -2079,9 +2078,7 @@ impl CodeReaderApp {
     }
 
     fn rust_lsp_readiness_status_message(&self) -> Option<String> {
-        if self.rust_lsp_client.is_none() {
-            return None;
-        }
+        self.rust_lsp_client.as_ref()?;
         if !self.has_open_workspace_rust_document() && self.pending_rust_lsp_request.is_none() {
             return None;
         }
@@ -2234,10 +2231,10 @@ impl CodeReaderApp {
         origin: Option<NavigationPoint>,
     ) {
         let history_point = origin.or_else(|| self.focused_editor().navigation_point());
-        if let Some(current) = history_point {
-            if push_history {
-                self.push_focused_navigation_history(current);
-            }
+        if let Some(current) = history_point
+            && push_history
+        {
+            self.push_focused_navigation_history(current);
         }
 
         self.open_navigation_point_in_focused_pane(NavigationPoint {
@@ -3315,14 +3312,12 @@ impl CodeReaderApp {
             {
                 self.stage_git_file(repository, change);
             }
-        } else {
-            if ui
-                .put(action_rect, egui::Button::new("-"))
-                .on_hover_text("Unstage file")
-                .clicked()
-            {
-                self.unstage_git_file(repository, change);
-            }
+        } else if ui
+            .put(action_rect, egui::Button::new("-"))
+            .on_hover_text("Unstage file")
+            .clicked()
+        {
+            self.unstage_git_file(repository, change);
         }
     }
 
@@ -4204,8 +4199,7 @@ impl CodeReaderApp {
             .unwrap_or_else(|| "No session".to_owned());
         let input_id = egui::Id::new("workspace_rename_name");
         if self.session_name_select_all {
-            let mut state =
-                TextEditState::load(ui.ctx(), input_id).unwrap_or_else(TextEditState::default);
+            let mut state = TextEditState::load(ui.ctx(), input_id).unwrap_or_default();
             state.cursor.set_char_range(Some(CCursorRange::two(
                 CCursor::new(0),
                 CCursor::new(self.session_name_edit.chars().count()),
@@ -4376,8 +4370,8 @@ impl CodeReaderApp {
                         let edit_id = ui.id().with("workspace_rename_file_name");
                         if *select_stem {
                             let selection_end = file_name_stem_selection_char_len(new_name);
-                            let mut state = TextEditState::load(ui.ctx(), edit_id)
-                                .unwrap_or_else(TextEditState::default);
+                            let mut state =
+                                TextEditState::load(ui.ctx(), edit_id).unwrap_or_default();
                             state.cursor.set_char_range(Some(CCursorRange::two(
                                 CCursor::new(0),
                                 CCursor::new(selection_end),
@@ -5078,11 +5072,10 @@ impl CodeReaderApp {
     }
 
     fn shortcut_help_groups(&self) -> Vec<ShortcutGroup> {
-        let mut groups = Vec::new();
-        groups.push(ShortcutGroup {
+        let mut groups = vec![ShortcutGroup {
             title: self.shortcut_context_title(),
             shortcuts: self.context_shortcuts(),
-        });
+        }];
         groups.push(ShortcutGroup {
             title: "Common",
             shortcuts: shortcuts(&[
@@ -7378,7 +7371,7 @@ impl TextBuffer for EditorTextBuffer {
     fn insert_text(&mut self, text: &str, char_index: usize) -> usize {
         let byte_index = self
             .char_index_to_byte_index(char_index)
-            .unwrap_or_else(|| self.text.len());
+            .unwrap_or(self.text.len());
         self.text.insert_str(byte_index, text);
         self.refresh_metadata();
         text.chars().count()
@@ -9708,9 +9701,7 @@ impl EditorPane {
             return cache.spans.clone();
         }
 
-        if path
-            .as_deref()
-            .is_some_and(|path| is_external_rust_path(path))
+        if path.as_deref().is_some_and(is_external_rust_path)
             && source_len > EXTERNAL_RUST_HIGHLIGHT_MAX_BYTES
         {
             let spans = Rc::new(Vec::new());
@@ -9910,7 +9901,7 @@ impl EditorPane {
                 return entry.galley.clone();
             }
         }
-        if let Some(counters) = frame_counters.as_deref_mut() {
+        if let Some(counters) = frame_counters {
             counters.galley_misses += 1;
         }
 
@@ -9987,7 +9978,7 @@ impl EditorPane {
             }
             return entry.galley.clone();
         }
-        if let Some(counters) = frame_counters.as_deref_mut() {
+        if let Some(counters) = frame_counters {
             counters.line_number_misses += 1;
         }
 
@@ -10678,9 +10669,8 @@ impl EditorPane {
             if response.clicked() {
                 self.markdown_active_heading_id = Some(heading.slug.clone());
             }
-            if selected {
-                response.scroll_to_me(Some(egui::Align::Center));
-            } else if self.should_scroll_to_markdown_search_match(search_query, &heading.title) {
+            if selected || self.should_scroll_to_markdown_search_match(search_query, &heading.title)
+            {
                 response.scroll_to_me(Some(egui::Align::Center));
             }
 
@@ -11599,8 +11589,7 @@ impl EditorPane {
                 && let Some(char_index) = self.text.position_to_char_index(target_position)
             {
                 let cursor = CCursor::new(char_index);
-                let mut state = TextEditState::load(ui.ctx(), text_edit_id)
-                    .unwrap_or_else(TextEditState::default);
+                let mut state = TextEditState::load(ui.ctx(), text_edit_id).unwrap_or_default();
                 state.cursor.set_char_range(Some(CCursorRange::one(cursor)));
                 state.store(ui.ctx(), text_edit_id);
                 if pending_focus_editor {
@@ -12260,8 +12249,7 @@ impl EditorPane {
                 && let Some(char_index) = self.text.position_to_char_index(target_position)
             {
                 let cursor = CCursor::new(char_index);
-                let mut state = TextEditState::load(ui.ctx(), text_edit_id)
-                    .unwrap_or_else(TextEditState::default);
+                let mut state = TextEditState::load(ui.ctx(), text_edit_id).unwrap_or_default();
                 state.cursor.set_char_range(Some(CCursorRange::one(cursor)));
                 state.store(ui.ctx(), text_edit_id);
                 if pending_focus_editor {
@@ -12819,19 +12807,21 @@ impl EditorPane {
             char_width,
             content_rect,
         );
-        if focused && !self.read_only && virtual_editor_can_handle_key(ui, text_edit_id) {
-            if let Some(cursor_rect) = cursor_rect {
-                let to_global = ui
-                    .ctx()
-                    .layer_transform_to_global(ui.layer_id())
-                    .unwrap_or_default();
-                ui.output_mut(|output| {
-                    output.ime = Some(egui::output::IMEOutput {
-                        rect: to_global * viewport_rect,
-                        cursor_rect: to_global * cursor_rect,
-                    });
+        if focused
+            && !self.read_only
+            && virtual_editor_can_handle_key(ui, text_edit_id)
+            && let Some(cursor_rect) = cursor_rect
+        {
+            let to_global = ui
+                .ctx()
+                .layer_transform_to_global(ui.layer_id())
+                .unwrap_or_default();
+            ui.output_mut(|output| {
+                output.ime = Some(egui::output::IMEOutput {
+                    rect: to_global * viewport_rect,
+                    cursor_rect: to_global * cursor_rect,
                 });
-            }
+            });
         }
         if response.hovered() && !self.read_only {
             ui.output_mut(|output| {
@@ -14422,8 +14412,7 @@ fn markdown_side_pane_width(available_width: f32) -> f32 {
 
 fn clamp_markdown_side_pane_width(width: f32, available_width: f32) -> f32 {
     let max_width = (available_width - MARKDOWN_SIDE_PANE_MIN_REMAINING_WIDTH)
-        .min(MARKDOWN_SIDE_PANE_MAX_WIDTH)
-        .max(MARKDOWN_SIDE_PANE_MIN_WIDTH);
+        .clamp(MARKDOWN_SIDE_PANE_MIN_WIDTH, MARKDOWN_SIDE_PANE_MAX_WIDTH);
     width.clamp(MARKDOWN_SIDE_PANE_MIN_WIDTH, max_width)
 }
 
@@ -16413,8 +16402,8 @@ fn paint_unified_diff_background_runs(
 ) {
     let mut run_kind = None;
     let mut run_start = start;
-    for row_index in start..end {
-        let kind = diff_unified_background_kind(&rows[row_index]);
+    for (row_index, row) in rows.iter().enumerate().take(end).skip(start) {
+        let kind = diff_unified_background_kind(row);
         if kind != run_kind {
             paint_diff_background_run(
                 ui, run_kind, run_start, row_index, start, left, top, width, row_height,
@@ -16482,8 +16471,8 @@ fn paint_side_diff_background_runs_for_side(
     }
     let mut run_kind = None;
     let mut run_start = start;
-    for row_index in start..end {
-        let kind = diff_side_background_kind(&rows[row_index], side);
+    for (row_index, row) in rows.iter().enumerate().take(end).skip(start) {
+        let kind = diff_side_background_kind(row, side);
         if kind != run_kind {
             paint_diff_background_run(
                 ui, run_kind, run_start, row_index, start, left, top, width, row_height,
@@ -16903,7 +16892,7 @@ fn paint_diff_overview_markers(
     );
 
     let total = summary.total_rows.saturating_sub(1).max(1) as f32;
-    let marker_height = row_height.max(3.0).min(8.0);
+    let marker_height = row_height.clamp(3.0, 8.0);
     for marker in &summary.markers {
         let ratio = marker.row_index as f32 / total;
         let y = (lane_rect.top() + ratio * lane_rect.height())
@@ -17984,17 +17973,17 @@ fn parse_diff_display_rows(source: &str) -> Vec<DiffDisplayRow> {
             continue;
         }
 
-        if raw_line.starts_with('+') {
+        if let Some(content) = raw_line.strip_prefix('+') {
             rows.push(DiffDisplayRow::Line {
                 line_label: format!("+{new_line}"),
-                content: raw_line[1..].to_owned(),
+                content: content.to_owned(),
                 kind: DiffLineKind::Added,
             });
             new_line += 1;
-        } else if raw_line.starts_with('-') {
+        } else if let Some(content) = raw_line.strip_prefix('-') {
             rows.push(DiffDisplayRow::Line {
                 line_label: format!("-{old_line}"),
-                content: raw_line[1..].to_owned(),
+                content: content.to_owned(),
                 kind: DiffLineKind::Removed,
             });
             old_line += 1;
@@ -18707,19 +18696,19 @@ fn paint_virtual_indent_guides(
             let continues_run =
                 previous_line.is_some_and(|previous| guide_line.line_number == previous + 1);
 
-            if !line_has_guide || guide_line.active || !continues_run {
-                if let (Some(start), Some(end)) = (run_start.take(), previous_line) {
-                    paint_virtual_indent_guide_run(
-                        &painter,
-                        x,
-                        start,
-                        end,
-                        row_height,
-                        scroll_y,
-                        clip_rect,
-                        guide_color,
-                    );
-                }
+            if (!line_has_guide || guide_line.active || !continues_run)
+                && let (Some(start), Some(end)) = (run_start.take(), previous_line)
+            {
+                paint_virtual_indent_guide_run(
+                    &painter,
+                    x,
+                    start,
+                    end,
+                    row_height,
+                    scroll_y,
+                    clip_rect,
+                    guide_color,
+                );
             }
 
             if line_has_guide && guide_line.active {

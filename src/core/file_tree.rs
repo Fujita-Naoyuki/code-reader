@@ -122,7 +122,7 @@ mod tests {
 
         let files = relative_files(
             &root,
-            discover_workspace_files(&[root.clone()], FileDiscoveryOptions::default()),
+            discover_workspace_files(std::slice::from_ref(&root), FileDiscoveryOptions::default()),
         );
 
         assert_eq!(
@@ -148,7 +148,7 @@ mod tests {
         let files = relative_files(
             &root,
             discover_workspace_files(
-                &[root.clone()],
+                std::slice::from_ref(&root),
                 FileDiscoveryOptions {
                     max_file_size_bytes: 4,
                 },

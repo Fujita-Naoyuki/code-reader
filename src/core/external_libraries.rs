@@ -452,10 +452,10 @@ fn parse_go_mod_requires(source: &str) -> Vec<GoModule> {
             continue;
         }
 
-        if let Some(rest) = line.strip_prefix("require ") {
-            if let Some(module) = parse_go_require_fields(rest.split_whitespace()) {
-                modules.insert(module);
-            }
+        if let Some(rest) = line.strip_prefix("require ")
+            && let Some(module) = parse_go_require_fields(rest.split_whitespace())
+        {
+            modules.insert(module);
         }
     }
 

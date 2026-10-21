@@ -156,7 +156,7 @@ fn search_bookmarks(
         .collect()
 }
 
-fn score_path(query: &str, path: &PathBuf, matcher: &SkimMatcherV2) -> Option<i64> {
+fn score_path(query: &str, path: &std::path::Path, matcher: &SkimMatcherV2) -> Option<i64> {
     let file_name = file_label(path);
     let target = format!("{file_name} {}", path.display());
     score_text(query, &target, matcher)
@@ -170,7 +170,7 @@ fn score_text(query: &str, target: &str, matcher: &SkimMatcherV2) -> Option<i64>
     }
 }
 
-fn file_label(path: &PathBuf) -> String {
+fn file_label(path: &std::path::Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("<invalid>")
