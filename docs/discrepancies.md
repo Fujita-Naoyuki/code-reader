@@ -164,7 +164,7 @@
 
 ---
 
-## コードレビューで見つかった事項（テストでの固定なし・参考）
+## コードレビューで見つかった事項（すべて対応済み）
 
 | ID | 概要 | 方針 |
 |---|---|---|
@@ -177,3 +177,17 @@
 | R07 | 仮想エディタは Ctrl 修飾付きの Text イベントを捨てるため、AltGr（Windows では Ctrl+Alt として届く）で入力する文字（欧州配列の `@` など）が入らない可能性がある | AltGr（Ctrl+Alt 同時）の場合は受け付ける |
 | R08 | 検索ボックスを開いたまま Ctrl+F を押すと、現在の一致位置が先頭に戻る | 既に開いていれば位置を保持する |
 | R09 | 差分ビューの「◇ 非表示 N 行」だけ日本語で、他の UI は英語 | 表記を統一する |
+
+### 対応結果
+
+| ID | コミット | 実装した挙動 | テスト |
+|---|---|---|---|
+| R01 | 6d81ff9 | Windows で `file://server/share/...` と `file:////server/share/...` を `\\server\share\...` に戻す。`file://localhost/C:/...` も受け付ける | `lsp.rs` `windows_file_uris_round_trip_drive_and_unc_paths` |
+| R02 | 144bb26, ea11ab4 | 起動時に `current_session_id` が存在しなければ、最終更新が最も新しいセッションへ切り替える（セッションが 1 つもなければ Default を作る）。修復した状態は保存する | `session.rs` `repair_current_session_picks_the_latest_or_creates_one` / `workspace.rs` `inconsistent_state_falls_back_to_an_existing_session` / `sessions.rs` `state_without_sessions_starts_a_default_session` |
+| R03 | 479d5f8 | 見出しは `#` 記号部分と本文部分の重ならない 2 スパンに分ける | `app_view.rs` `markdown_source_heading_spans_do_not_overlap_the_marker` |
+| R04 | 8de8940 | 履歴の上限をパンくずの表示件数から切り離し、ペインごとに 50 件保持する。パンくずは直近 4 件と「...」を表示する | `lsp.rs`（event_tests）`long_navigation_chains_collapse_the_breadcrumb_and_follow_renames` |
+| R05 | 3f29946 | 常に無効だったスクロールバー除外の判定と、そのための引数を削除した。テキスト領域の判定で除外できている。診断レポートではスクロールバー上のクリックを `reason=scrollbar` と記録する | `virtual_editor.rs` `wheel_and_scrollbars_scroll_the_view` |
+| R06 | 4f11873 | 大容量ファイルでも括弧・引用符の自動補完と、閉じ括弧の上書き（飛び越し）を行う（選択中や複数文字入力では行わない）。上下移動・PageUp/Down で列位置を記憶する（その位置からの移動に限る） | `virtual_editor.rs` `brackets_and_quotes_are_paired_and_stepped_over` / `keyboard_navigation_and_selection` |
+| R07 | 4f11873 | Ctrl+Alt（AltGr）付きの文字入力は受け付け、Ctrl / Cmd だけの文字はショートカットとして無視する | `virtual_editor.rs` `altgr_text_is_inserted_but_ctrl_text_is_not` |
+| R08 | 1abed16 | 開いている検索ボックスで Ctrl+F を押しても一致位置を保持する（閉じてから開き直すと先頭から） | `editor.rs` `ctrl_f_on_an_open_find_bar_keeps_the_current_match` ほか |
+| R09 | 6a8da8a | 「◇ N hidden lines」（1 行なら「1 hidden line」）に統一した | `app_view.rs` の差分表示行のユニットテスト |
