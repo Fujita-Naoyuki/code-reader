@@ -587,7 +587,7 @@ fn repository_without_commits_has_an_empty_history() {
 }
 
 #[test]
-fn files_with_spaces_or_japanese_names_cannot_be_staged() {
+fn files_with_spaces_or_japanese_names_can_be_staged_and_diffed() {
     let mut t = repo();
     t.write("my notes.txt", "space\n");
     t.write("日本語.txt", "japanese\n");
@@ -597,22 +597,35 @@ fn files_with_spaces_or_japanese_names_cannot_be_staged() {
         .iter()
         .map(|change| change.path.clone())
         .collect::<Vec<_>>();
-    // DISCREPANCY(D04): `git status --porcelain=v1` without `-z` quotes and octal-escapes
-    // such paths, and the escaped text is used as-is for stage / diff / discard.
-    assert!(paths.contains(&"\"my notes.txt\"".to_owned()), "{paths:?}");
-    assert!(
-        paths.iter().any(|path| path.starts_with(r#""\346"#)),
-        "{paths:?}"
-    );
+    assert_eq!(paths, ["my notes.txt", "日本語.txt"]);
     t.click_nth("+", 0);
-    t.assert_status_containing("Git stage failed: workspace");
+    t.assert_status_containing("Staged my notes.txt.");
     let cell = changed_row_path(&t, 0);
     t.click_at(cell);
-    t.assert_status_containing("Open diff failed: workspace");
-    // The tree cannot match the escaped names to the files either.
+    t.assert_status("Opened diff: workspace | 日本語.txt");
+    // The tree marks both files once they are discovered.
     t.click("Workspace");
+    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.wait_until("new files discovered", |app| {
+        app.file_tree
+            .files
+            .iter()
+            .any(|path| path.ends_with("日本語.txt"))
+    });
     t.steps(2);
-    assert!(!t.has_label("?"));
+    assert!(t.has_label("?"));
+    assert!(t.has_label("A"));
+}
+
+#[test]
+fn renamed_files_use_the_new_path() {
+    let mut t = repo();
+    t.git(&["mv", "tracked.txt", "moved file.txt"]);
+    open_git(&mut t);
+    let changes = &t.app().git_repositories[0].changes;
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].status, "R");
+    assert_eq!(changes[0].path, "moved file.txt");
 }
 
 #[test]

@@ -13118,7 +13118,7 @@ fn git_repository_state(root: PathBuf) -> GitRepositoryState {
         .map(|output| parse_git_branches(&output))
         .unwrap_or_default();
 
-    let (changes, error) = match git_output(&root, &["status", "--porcelain=v1", "-uall"]) {
+    let (changes, error) = match git_output(&root, &["status", "--porcelain=v1", "-z", "-uall"]) {
         Ok(output) => (parse_git_status(&output), None),
         Err(error) => (Vec::new(), Some(error)),
     };
@@ -13508,30 +13508,38 @@ fn push_or_publish_git_branch(repository: &GitRepositoryState) -> Result<String,
     )
 }
 
+/// Parses `git status --porcelain=v1 -z` output. NUL-separated entries keep paths with
+/// spaces or non-ASCII characters verbatim (no quoting or octal escapes); a rename or copy
+/// entry is followed by an extra entry holding the original path.
 fn parse_git_status(output: &str) -> Vec<GitChange> {
-    output
-        .lines()
-        .filter_map(|line| {
-            if line.len() < 4 {
-                return None;
-            }
-            let mut chars = line.chars();
-            let index_status = chars.next().unwrap_or(' ');
-            let worktree_status = chars.next().unwrap_or(' ');
-            let status = line.get(0..2)?.trim().to_owned();
-            let path = line.get(3..)?.to_owned();
-            Some(GitChange {
-                status: if status.is_empty() {
-                    "?".to_owned()
-                } else {
-                    status
-                },
-                index_status,
-                worktree_status,
-                path,
-            })
-        })
-        .collect()
+    let mut entries = output.split('\0');
+    let mut changes = Vec::new();
+    while let Some(entry) = entries.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        let mut chars = entry.chars();
+        let index_status = chars.next().unwrap_or(' ');
+        let worktree_status = chars.next().unwrap_or(' ');
+        if matches!(index_status, 'R' | 'C') || matches!(worktree_status, 'R' | 'C') {
+            entries.next();
+        }
+        let Some(path) = entry.get(3..) else {
+            continue;
+        };
+        let status = entry.get(0..2).unwrap_or_default().trim().to_owned();
+        changes.push(GitChange {
+            status: if status.is_empty() {
+                "?".to_owned()
+            } else {
+                status
+            },
+            index_status,
+            worktree_status,
+            path: path.to_owned(),
+        });
+    }
+    changes
 }
 
 fn parse_git_branches(output: &str) -> Vec<String> {
@@ -13587,12 +13595,8 @@ fn workspace_git_file_statuses(
 }
 
 fn git_change_workspace_path(repository_root: &Path, git_path: &str) -> PathBuf {
-    let display_path = git_path
-        .split_once(" -> ")
-        .map(|(_, new_path)| new_path)
-        .unwrap_or(git_path);
     let mut path = repository_root.to_path_buf();
-    for component in display_path.split('/') {
+    for component in git_path.split('/') {
         if !component.is_empty() {
             path.push(component);
         }
@@ -21913,7 +21917,7 @@ mod tests {
 
     #[test]
     fn parse_git_status_keeps_unstaged_first_line_path_and_state() {
-        let changes = parse_git_status(" M idea.md\n M src/ui/app_view.rs");
+        let changes = parse_git_status(" M idea.md\0 M src/ui/app_view.rs\0");
 
         assert_eq!(changes.len(), 2);
         assert_eq!(changes[0].path, "idea.md");
@@ -21921,6 +21925,17 @@ mod tests {
         assert!(changes[0].has_worktree_change());
         assert_eq!(changes[1].path, "src/ui/app_view.rs");
         assert!(!changes[1].is_staged());
+    }
+
+    #[test]
+    fn parse_git_status_reads_nul_separated_paths_and_skips_rename_sources() {
+        let changes = parse_git_status("R  new name.txt\0old name.txt\0?? 日本語.txt\0");
+
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0].status, "R");
+        assert_eq!(changes[0].path, "new name.txt");
+        assert_eq!(changes[1].status, "??");
+        assert_eq!(changes[1].path, "日本語.txt");
     }
 
     #[test]
