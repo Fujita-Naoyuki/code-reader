@@ -1059,17 +1059,31 @@ fn normalize_windows_file_uri_path(path: String) -> String {
 fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
     let path = uri.strip_prefix("file://")?;
     let path = percent_decode_uri_path(path);
-    let path = if cfg!(windows) && path.as_bytes().get(0) == Some(&b'/') {
-        let bytes = path.as_bytes();
-        if bytes.len() >= 3 && bytes[2] == b':' {
-            path[1..].to_owned()
-        } else {
-            path
-        }
-    } else {
-        path
+    if !cfg!(windows) {
+        return Some(PathBuf::from(path));
+    }
+    let path = match path.strip_prefix("localhost") {
+        Some(rest) if rest.starts_with('/') => rest.to_owned(),
+        _ => path,
     };
-    Some(PathBuf::from(path))
+    // UNC paths come as `file://server/share/...` (what `path_to_file_uri` writes) or
+    // `file:////server/share/...`.
+    let unc = if let Some(rest) = path.strip_prefix("//") {
+        Some(rest)
+    } else if !path.starts_with('/') {
+        Some(path.as_str())
+    } else {
+        None
+    };
+    if let Some(unc) = unc {
+        return Some(PathBuf::from(format!(r"\\{}", unc.replace('/', "\\"))));
+    }
+    let bytes = path.as_bytes();
+    if bytes.len() >= 3 && bytes[2] == b':' {
+        Some(PathBuf::from(&path[1..]))
+    } else {
+        Some(PathBuf::from(path))
+    }
 }
 
 fn percent_encode_uri_path(path: &str) -> String {
@@ -1191,5 +1205,28 @@ mod tests {
     fn windows_unc_verbatim_path_uri_uses_unc_authority() {
         let path = PathBuf::from(r"\\?\UNC\server\share\src\app.rs");
         assert_eq!(path_to_file_uri(&path), "file://server/share/src/app.rs");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_file_uris_round_trip_drive_and_unc_paths() {
+        assert_eq!(
+            file_uri_to_path("file://server/share/src/my%20app.rs"),
+            Some(PathBuf::from(r"\\server\share\src\my app.rs"))
+        );
+        assert_eq!(
+            file_uri_to_path("file:////server/share/src/app.rs"),
+            Some(PathBuf::from(r"\\server\share\src\app.rs"))
+        );
+        assert_eq!(
+            file_uri_to_path("file:///C:/git/app.rs"),
+            Some(PathBuf::from("C:/git/app.rs"))
+        );
+        assert_eq!(
+            file_uri_to_path("file://localhost/C:/git/app.rs"),
+            Some(PathBuf::from("C:/git/app.rs"))
+        );
+        let unc = PathBuf::from(r"\\server\share\src\app.rs");
+        assert_eq!(file_uri_to_path(&path_to_file_uri(&unc)), Some(unc));
     }
 }
