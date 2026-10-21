@@ -146,6 +146,27 @@ fn double_shift_opens_search_everywhere() {
 }
 
 #[test]
+fn shift_taps_with_typing_in_between_do_not_open_search_everywhere() {
+    let mut t = search_workspace();
+    t.set_modifiers(egui::Modifiers::SHIFT);
+    t.step();
+    t.set_modifiers(egui::Modifiers::NONE);
+    t.step();
+    t.type_text("x");
+    t.set_modifiers(egui::Modifiers::SHIFT);
+    t.step();
+    t.set_modifiers(egui::Modifiers::NONE);
+    t.step();
+    assert!(!t.app().search_overlay.open);
+    // A second lone tap right after still opens it.
+    t.set_modifiers(egui::Modifiers::SHIFT);
+    t.step();
+    t.set_modifiers(egui::Modifiers::NONE);
+    t.step();
+    assert!(t.app().search_overlay.open);
+}
+
+#[test]
 fn slow_shift_taps_do_not_open_search_everywhere() {
     let mut t = search_workspace();
     t.set_modifiers(egui::Modifiers::SHIFT);

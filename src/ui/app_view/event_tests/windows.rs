@@ -235,13 +235,11 @@ fn ctrl_shift_a_copies_the_ai_command() {
 }
 
 #[test]
-fn two_quick_shift_combinations_open_search_everywhere() {
+fn two_quick_shift_combinations_do_not_open_search_everywhere() {
     let mut t = TestApp::plain();
     t.ctrl_shift(egui::Key::A);
     t.ctrl_shift(egui::Key::A);
-    // DISCREPANCY(D03): "Shift x2" only looks at the Shift modifier going down, so two
-    // quick Ctrl+Shift shortcuts (or Shift+letter while typing) open Search Everywhere.
-    assert!(t.app().search_overlay.open);
+    assert!(!t.app().search_overlay.open);
 }
 
 #[test]

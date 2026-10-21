@@ -928,8 +928,6 @@ impl TestApp {
     /// Presses `keys` one after another while Shift is held down the whole time, as a user
     /// extending a selection does (Shift goes down once, so it is not a Shift double-tap).
     pub fn shift_held(&mut self, keys: &[egui::Key]) {
-        // Keep consecutive calls out of the Shift double-tap window (DISCREPANCY D03).
-        self.steps(30);
         self.set_modifiers(egui::Modifiers::SHIFT);
         self.step();
         for key in keys {

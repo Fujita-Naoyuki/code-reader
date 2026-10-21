@@ -149,7 +149,7 @@ fn ctrl_f_finds_matches_and_navigates_them() {
 }
 
 #[test]
-fn quick_shift_enter_presses_reopen_the_file_through_search_everywhere() {
+fn quick_shift_enter_presses_step_back_without_opening_search_everywhere() {
     let mut t = editor_app();
     t.click_text(0, 0);
     t.type_text("unsaved ");
@@ -157,14 +157,10 @@ fn quick_shift_enter_presses_reopen_the_file_through_search_everywhere() {
     t.type_text("alpha");
     t.shift(egui::Key::Enter);
     t.shift(egui::Key::Enter);
-    // DISCREPANCY(D03): stepping back through matches with Shift+Enter twice in quick
-    // succession counts as "Shift x2": Search Everywhere opens and the same Enter picks
-    // its first result, re-opening the file from disk. The find bar closes and the
-    // unsaved edit is lost (see also D06).
-    t.assert_status("Opened History: notes.txt");
+    // Shift+Enter is not a lone Shift tap, so "Shift x2" does not fire.
     assert!(!t.app().search_overlay.open);
-    assert!(!t.app().left.source_search.open);
-    assert!(!t.app().left.text.as_str().contains("unsaved"));
+    assert!(t.app().left.source_search.open);
+    assert!(t.app().left.text.as_str().contains("unsaved"));
 }
 
 #[test]

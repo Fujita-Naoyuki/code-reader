@@ -209,6 +209,9 @@ pub struct CodeReaderApp {
     ai_command_open: bool,
     workspace_root_open: HashMap<PathBuf, bool>,
     last_shift_down: bool,
+    /// Shift is down and nothing else (keys, text, other modifiers) has happened since it
+    /// went down, so releasing it counts as a lone Shift tap.
+    shift_tap_candidate: bool,
     last_shift_tap_time: Option<f64>,
     tab_width: usize,
     status_message: String,
@@ -324,6 +327,7 @@ impl CodeReaderApp {
             ai_command_open: false,
             workspace_root_open: HashMap::new(),
             last_shift_down: false,
+            shift_tap_candidate: false,
             last_shift_tap_time: None,
             tab_width: DEFAULT_TAB_WIDTH,
             status_message: "Session restored.".to_owned(),
@@ -3650,11 +3654,48 @@ impl CodeReaderApp {
             return true;
         }
 
-        let (shift_down, time) = ui.input(|input| (input.modifiers.shift, input.time));
+        // "Shift x2" means two lone Shift taps: a Shift that is part of Shift+Enter,
+        // Ctrl+Shift+Z or Shift+Arrow does not count, and neither does a pair with other
+        // input in between. Taps count on release, so the second one never shares a frame
+        // with a key the opened overlay would take.
+        let (shift_down, other_input, time) = ui.input(|input| {
+            let other_modifier = input.modifiers.ctrl
+                || input.modifiers.alt
+                || input.modifiers.mac_cmd
+                || input.modifiers.command;
+            let other_event = input.raw.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::Key { .. }
+                        | egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                        | egui::Event::Copy
+                        | egui::Event::Cut
+                        | egui::Event::Ime(_)
+                )
+            });
+            (
+                input.modifiers.shift,
+                other_modifier || other_event,
+                input.time,
+            )
+        });
         let shift_pressed = shift_down && !self.last_shift_down;
+        let shift_released = !shift_down && self.last_shift_down;
         self.last_shift_down = shift_down;
 
-        if !shift_pressed || self.search_overlay.open {
+        if other_input {
+            self.shift_tap_candidate = false;
+            self.last_shift_tap_time = None;
+            return false;
+        }
+        if shift_pressed {
+            self.shift_tap_candidate = true;
+        }
+        if !shift_released || !std::mem::take(&mut self.shift_tap_candidate) {
+            return false;
+        }
+        if self.search_overlay.open {
             return false;
         }
 
