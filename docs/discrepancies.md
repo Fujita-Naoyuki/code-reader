@@ -4,7 +4,7 @@
 
 - 各項目は、現状の挙動をそのままアサーションしたテストで固定していました。テストには `DISCREPANCY(Dxx)` のコメントがあります。
 - 修正するときは、該当テストのアサーションを「意図どおりの挙動」に反転させてから実装してください（テストが先に赤くなり、修正で緑に戻る順序）。
-- **D07 以外は修正済みです**（下の「対応結果」）。修正後のテストは意図どおりの挙動をアサーションしており、`DISCREPANCY` コメントが残っているのは D07 だけです。
+- **D01〜D16 はすべて修正済みです**（下の「対応結果」）。修正後のテストは意図どおりの挙動をアサーションしており、`DISCREPANCY` コメントはもう残っていません。
 - 優先度：**高** = データ消失・誤操作の危険がある / **中** = 案内どおりに操作できない / **低** = 表示や細かな使い勝手。
 
 ## 一覧
@@ -16,7 +16,7 @@
 | D16 | 高 | 大容量ファイルをツリーから開いた直後、エディタをクリックしていなくても入力がファイル先頭に入る。Delete だけはファイル削除ダイアログになる | `virtual_editor.rs` `typing_right_after_opening_from_the_tree_edits_the_top_of_the_file` |
 | D13 | 高 | CSV で最終列を越えて移動しただけで空の列が追加され、保存される | `csv.rs` `navigating_past_the_edge_adds_rows_and_columns_to_the_file` |
 | D04 | 高 | 空白・日本語を含むファイル名で Git の stage / diff / discard が失敗する | `git.rs` `files_with_spaces_or_japanese_names_cannot_be_staged` |
-| D07 | 高（要実機確認） | 実在しないウィジェットIDにフォーカスを置いており、スクリーンリーダー等のアクセシビリティ機能が有効だとパニックし得る | テスト用回避コード `register_focused_test_node`（`app_view.rs`） |
+| D07 | 高 | 実在しないウィジェットIDにフォーカスを置いており、スクリーンリーダー等のアクセシビリティ機能が有効だとパニックし得る | テスト用回避コード `register_focused_test_node`（`app_view.rs`） |
 | D10 | 中 | Ctrl+Shift+Z（ヘルプ上は Redo）が Undo として動く（大容量エディタ・CSVグリッド） | `virtual_editor.rs` `clicking_places_the_cursor_and_typing_edits` / `csv.rs` `ctrl_shift_z_undoes_in_the_grid` |
 | D08 | 中 | 大容量ファイルで Tab を押すとスペースが入らずフォーカスが移り、以後の入力が効かない | `virtual_editor.rs` `tab_moves_keyboard_focus_away_from_the_large_file_editor` |
 | D02 | 中 | 各検索ボックスで Esc が効かない（ヘルプには「Esc: Clear/Close」） | `search.rs` `escape_in_workspace_search_clears_it` / `editor.rs` `find_without_matches_and_escape` / `markdown.rs` `rendered_search_finds_text_across_pages` |
@@ -40,6 +40,7 @@
 | D04 | b0b5ef7 | `git status --porcelain=v1 -z` を NUL 区切りで解析する。リネームは新しいパスを使う | `git.rs` `files_with_spaces_or_japanese_names_can_be_staged_and_diffed` / `renamed_files_use_the_new_path` |
 | D05 | 46b2c62 | Commit & Push の push 部分を Publish Branch と共通化した（upstream がなければ `push -u`） | `git.rs` `commit_and_push_without_upstream_publishes_the_branch` |
 | D06 | 994f73a | `EditorPane` が最後に読込・保存した時点のフィンガープリントを持ち、未保存の編集がある状態で別ファイル・Git 差分・履歴を開く、またはワークスペースを切替・新規作成すると「Unsaved Changes」（Save / Discard / Cancel、Enter = Save、Esc = Cancel）を表示する。同じファイル内の移動（定義ジャンプ・Back/Forward・ツリーから同じファイル）では未保存テキストを引き継ぐ。タイトルに `●` を表示する | `editor.rs` `opening_another_file_asks_about_unsaved_edits` / `reopening_the_same_file_keeps_unsaved_edits` / `new_workspace_asks_about_unsaved_edits` |
+| D07 | （本コミット） | Markdown のフォーカス ID を呼び出し元の `ui` に依存しない `Id::new(("markdown_focus", pane, target))` にし、本文ウィジェットと一致させた。CSV グリッドでは、セルのクリック時とセル移動時に、まだ作られていない TextEdit へフォーカスを要求するのをやめ、選択セルの TextEdit が作られたフレームでフォーカスを取るようにした（1 フレーム遅れる）。テストビルド限定の回避コード `register_focused_test_node` を削除した | 回避コードなしで全テストが通ること（AccessKit が常に有効な egui_kittest 上で、フォーカス ID がノードを持たないとパニックする） |
 | D08 | c582eaa | 仮想エディタの表示領域を `text_edit_id` の実ウィジェットにし、フォーカス中は Tab と矢印キーをロックする。表示領域外をクリックするとフォーカスを外す | `virtual_editor.rs` `tab_indents_and_keeps_focus_in_the_large_file_editor` |
 | D09 | 7ac61ce | 即時に適用したホイール量を記録し、egui が後続フレームで届ける平滑化分からその分を差し引く | `virtual_editor.rs` `one_wheel_event_scrolls_exactly_once` |
 | D10 | 1834974 | Undo / Redo 判定から `consume_key` のフォールバック（余分な Shift を無視する）を外した | `virtual_editor.rs` `clicking_places_the_cursor_and_typing_edits` / `csv.rs` `ctrl_shift_z_redoes_in_the_grid` |
@@ -88,7 +89,7 @@
 - **実際**: `git status --porcelain=v1`（`-z` なし）は特殊文字を含むパスを `"..."` で囲み、非 ASCII を `\346...` の 8 進エスケープで出力する。`parse_git_status` はそれをそのままパスとして使うため、後続の `git add -- <path>` などが失敗する。ツリーの変更マークも付かない。
 - **修正方針**: `git status --porcelain=v1 -z -uall` に変更し、NUL 区切りで解析する。リネーム（`R  old -> new`）は `-z` では `new\0old\0` の順になるので、`GitChange` に `old_path` を持たせる。`git_change_workspace_path` の `" -> "` 分割は不要になる。
 
-### D07 実在しないウィジェットへのフォーカス（高・要実機確認）
+### D07 実在しないウィジェットへのフォーカス（高・対応済み）
 - **意図**: キーボードフォーカスは画面上のウィジェットに置かれる。
 - **実際**: 仮想エディタは `text_edit_id`、Markdown の各ペインは `markdown_focus_id(ui, target)` にフォーカスを要求するが、どちらも対応するウィジェットがない（Markdown 側は呼び出し元の `ui.id()` から作るため、本文ウィジェットの ID とも一致しない）。AccessKit が有効だと、フォーカス中の ID に対応するノードがないことで `accesskit_consumer` がパニックする。テストでは常に AccessKit が有効なため、テストビルド限定の `register_focused_test_node` で回避している。実アプリでもスクリーンリーダーなどの UI Automation クライアントが AccessKit を有効化すると、同じパニックが起きる可能性が高い（未検証）。
 - **修正方針**: 仮想エディタの描画領域を `ui.interact(viewport_rect, text_edit_id, Sense::click_and_drag())` で実ウィジェットにし、`memory.set_focus_lock_filter` で矢印・Tab を自分に留める（D08・D16 も同時に解消）。Markdown のフォーカス要求は本文ウィジェットの ID（`body_id`）に統一する。修正後は `register_focused_test_node` を削除する。
@@ -97,6 +98,7 @@
   - CSV グリッドで Tab / Enter / 矢印キーでセルを移動する（`csv.rs` の 5 件）。次のセルの TextEdit はまだ作られていないフレームで、その ID にフォーカスを要求している。これは当初の調査で見落としていた。
 - **実機での確認結果**:
   - 2026-10-21：ユーザが手順 3 の操作を行ったが、アプリは終了しなかった。ただし旧手順は Next のクリックを第一に挙げており、テストではこの操作はパニックしない。また AccessKit が有効になっていたかは未確認。下記の改訂手順で再確認が必要。
+  - 2026-10-21（改訂手順）：Inspect.exe で AccessKit を有効にした状態で、アプリがエラーで終了することをユーザが確認した。実機でも再現したため、上記「対応結果」のとおり修正した。修正後の実機確認は、改訂手順の 1〜5 を再度行い、終了しないことを確かめる。
 - **実機での確認手順（改訂）**:
   1. AccessKit を有効にするため、UI Automation を使うクライアントを起動しておく。Inspect.exe（Windows SDK）か Accessibility Insights for Windows を推奨する。ナレーターでもよい。
   2. ターミナルで `$env:RUST_BACKTRACE=1; cargo run` を実行してアプリを起動し、パニック出力が見えるようにする。

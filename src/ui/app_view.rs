@@ -6711,7 +6711,6 @@ impl eframe::App for CodeReaderApp {
         self.show_unsaved_changes_window(ui);
         self.show_git_commit_details_window(ui);
         self.show_shortcuts_help_window(ui);
-        register_focused_test_node(ui.ctx());
 
         let scroll_after_y = self.editor(focused_pane_at_start).scroll_y;
         self.record_app_perf_sample(
@@ -9365,7 +9364,8 @@ impl EditorPane {
                                     Some(format!("csv cell selected: R{}C{}", row + 1, column + 1));
                                 self.cursor_position =
                                     Some(Position::new(row as u32, column as u32));
-                                ui.memory_mut(|memory| memory.request_focus(id));
+                                // The cell's TextEdit is only built from the next frame on;
+                                // it takes focus itself then (see below).
                                 ui.ctx().request_repaint();
                             }
 
@@ -9453,11 +9453,7 @@ impl EditorPane {
             self.selected_csv_cell = Some(target);
             self.csv_edit_history_cell = None;
             self.cursor_position = Some(Position::new(target.row as u32, target.column as u32));
-            let id = ui.id().with(format!(
-                "csv_cell_{:?}_{}_{}",
-                self.pane, target.row, target.column
-            ));
-            ui.memory_mut(|memory| memory.request_focus(id));
+            // The target cell's TextEdit takes focus when it is built in the next frame.
             ui.ctx().request_repaint();
         }
     }
@@ -10529,7 +10525,7 @@ impl EditorPane {
             .id_salt(format!("markdown_body_{:?}", self.pane))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                let body_id = self.markdown_focus_id(ui, MarkdownFocusTarget::Body);
+                let body_id = self.markdown_focus_id(MarkdownFocusTarget::Body);
                 let body_response = ui.interact(ui.max_rect(), body_id, egui::Sense::click());
                 if body_response.clicked() {
                     self.request_markdown_focus(ui, MarkdownFocusTarget::Body);
@@ -11821,9 +11817,10 @@ impl EditorPane {
         self.markdown_focus_target = MarkdownFocusTarget::Body;
     }
 
-    fn markdown_focus_id(&self, ui: &egui::Ui, target: MarkdownFocusTarget) -> egui::Id {
-        ui.id()
-            .with(format!("markdown_focus_{:?}_{target:?}", self.pane))
+    /// Independent of the calling `ui`, so a request from the page header or a shortcut
+    /// handler focuses the same widget the body registers with `ui.interact`.
+    fn markdown_focus_id(&self, target: MarkdownFocusTarget) -> egui::Id {
+        egui::Id::new(("markdown_focus", self.pane, target))
     }
 
     fn request_markdown_focus(&mut self, ui: &mut egui::Ui, target: MarkdownFocusTarget) {
@@ -11838,7 +11835,7 @@ impl EditorPane {
             });
             return;
         }
-        let focus_id = self.markdown_focus_id(ui, target);
+        let focus_id = self.markdown_focus_id(target);
         ui.memory_mut(|memory| memory.request_focus(focus_id));
     }
 
@@ -13378,7 +13375,7 @@ struct MarkdownInlineStyle {
     delete: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum MarkdownFocusTarget {
     Pages,
     Body,
@@ -19683,20 +19680,6 @@ fn virtual_editor_drag_selection(
         char_width,
     )?;
     Some((anchor, head))
-}
-
-/// Some editors park keyboard focus on ids that are not real widgets (the virtual source
-/// editor's `text_edit_id`, the Markdown pane focus ids). AccessKit rejects a focused id
-/// without a node, and tests always run with AccessKit on because egui_kittest reads the UI
-/// through it, so give such an id an empty node in test builds.
-/// See DISCREPANCY(D07): with an accessibility client attached the app hits the same issue.
-fn register_focused_test_node(context: &egui::Context) {
-    #[cfg(test)]
-    if let Some(focused) = context.memory(|memory| memory.focused()) {
-        context.accesskit_node_builder(focused, |_| {});
-    }
-    #[cfg(not(test))]
-    let _ = context;
 }
 
 fn virtual_editor_can_handle_key(ui: &egui::Ui, text_edit_id: egui::Id) -> bool {

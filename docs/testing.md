@@ -42,7 +42,9 @@ Git のテストは実際の `git` コマンドを一時リポジトリに対し
 | git | 実行 | 実行（一時リポジトリ。`GIT_CONFIG_GLOBAL` / `GIT_CONFIG_NOSYSTEM` で開発者の設定を無視） |
 | 時間 | 実時間 | 外部変更スキャン（1秒ごと）は既定で先送りし、必要なテストだけ `scan_workspace()` などで明示的に起動する。LSP のタイムアウトは要求開始時刻を巻き戻して再現する |
 
-本番コードへの変更は、上記の差し替え点（`platform.rs`、`LspProcess` による LSP プロセス I/O の抽象化）と、テストビルド限定の `register_focused_test_node`（[乖離 D07](discrepancies.md#d07-実在しないウィジェットへのフォーカス高要実機確認) の回避）だけです。挙動は変えていません。
+テストのための本番コードへの変更は、上記の差し替え点（`platform.rs`、`LspProcess` による LSP プロセス I/O の抽象化）だけです。挙動は変えていません。
+
+egui_kittest は AccessKit 経由で UI を読むため、テストは常に AccessKit が有効な状態で動きます。そのため、実在しないウィジェットにフォーカスを置くコードはテストでパニックします（[乖離 D07](discrepancies.md)）。以前はテストビルド限定の回避コード（`register_focused_test_node`）を入れていましたが、D07 の修正に伴い削除しました。
 
 ## 書き方の約束
 
@@ -52,7 +54,7 @@ Git のテストは実際の `git` コマンドを一時リポジトリに対し
   - 時間を進める操作（スキャン時刻の前倒し、LSP 要求開始時刻の巻き戻し）
   - 観測用の目印として `status_message` に書き込む操作
   - 到達不能な状態を説明するためのもの（D11）
-- 意図と異なる現状の挙動を固定するテストには、`DISCREPANCY(Dxx)` のコメントを付ける（[discrepancies.md](discrepancies.md)）。D07 以外は修正済みで、テストは意図どおりの挙動を検証している。
+- 意図と異なる現状の挙動を固定するテストには、`DISCREPANCY(Dxx)` のコメントを付ける（[discrepancies.md](discrepancies.md)）。D01〜D16 はすべて修正済みで、テストは意図どおりの挙動を検証している。
 
 ## カバレッジ
 
