@@ -92,22 +92,23 @@
 - **意図**: キーボードフォーカスは画面上のウィジェットに置かれる。
 - **実際**: 仮想エディタは `text_edit_id`、Markdown の各ペインは `markdown_focus_id(ui, target)` にフォーカスを要求するが、どちらも対応するウィジェットがない（Markdown 側は呼び出し元の `ui.id()` から作るため、本文ウィジェットの ID とも一致しない）。AccessKit が有効だと、フォーカス中の ID に対応するノードがないことで `accesskit_consumer` がパニックする。テストでは常に AccessKit が有効なため、テストビルド限定の `register_focused_test_node` で回避している。実アプリでもスクリーンリーダーなどの UI Automation クライアントが AccessKit を有効化すると、同じパニックが起きる可能性が高い（未検証）。
 - **修正方針**: 仮想エディタの描画領域を `ui.interact(viewport_rect, text_edit_id, Sense::click_and_drag())` で実ウィジェットにし、`memory.set_focus_lock_filter` で矢印・Tab を自分に留める（D08・D16 も同時に解消）。Markdown のフォーカス要求は本文ウィジェットの ID（`body_id`）に統一する。修正後は `register_focused_test_node` を削除する。
-- **現状（D08・D16 の修正後）**: 仮想エディタ側は D08 の修正で実ウィジェットになったため解消した。残っているのは Markdown 本文で、`request_markdown_focus(Body)` を本文以外の `ui`（ページ見出しの Next / Previous、Pages 一覧、Ctrl+PageDown など）から呼ぶと、本文ウィジェットと異なる ID にフォーカスが置かれる。D11 で追加した Pages / Outline へのフォーカス移動は egui のフォーカスを外すだけなので、この問題には関係しない。
-- **実機での確認手順**:
-  1. AccessKit を有効にするため、UI Automation を使うクライアントを起動しておく。いずれか1つでよい。
-     - ナレーター（Win + Ctrl + Enter）
-     - Windows SDK の Inspect.exe
-     - Accessibility Insights for Windows
+- **現状（D08・D16 の修正後）**: 仮想エディタ側は D08 の修正で実ウィジェットになったため解消した。テストビルドで回避コードを無効にして（`register_focused_test_node` を通さずに）ユーザイベント起因テストを実行すると、次の 12 件が `Focused ID ... is not in the node list` でパニックする。つまり、少なくとも 1 フレームの間、実在しない ID にフォーカスが置かれる操作が残っている。
+  - Markdown プレビューで Ctrl+PageDown / Ctrl+PageUp を押す（`markdown.rs` の 7 件）。ページ見出しの Next / Previous ボタンのクリックではパニックしない（押したボタン自体がフォーカスを持つため）。
+  - CSV グリッドで Tab / Enter / 矢印キーでセルを移動する（`csv.rs` の 5 件）。次のセルの TextEdit はまだ作られていないフレームで、その ID にフォーカスを要求している。これは当初の調査で見落としていた。
+- **実機での確認結果**:
+  - 2026-10-21：ユーザが手順 3 の操作を行ったが、アプリは終了しなかった。ただし旧手順は Next のクリックを第一に挙げており、テストではこの操作はパニックしない。また AccessKit が有効になっていたかは未確認。下記の改訂手順で再確認が必要。
+- **実機での確認手順（改訂）**:
+  1. AccessKit を有効にするため、UI Automation を使うクライアントを起動しておく。Inspect.exe（Windows SDK）か Accessibility Insights for Windows を推奨する。ナレーターでもよい。
   2. ターミナルで `$env:RUST_BACKTRACE=1; cargo run` を実行してアプリを起動し、パニック出力が見えるようにする。
-  3. H1 / H2 で 2 ページ以上に分かれる Markdown ファイルを開き、Preview モードのまま次のいずれかを行う。
-     - ページ見出しの「Next」をクリックする
-     - Ctrl+PageDown を押す
-     - Pages 一覧の行をクリックする
-  4. 判定:
-     - 不具合が実在する場合は、アプリが終了し、`accesskit_consumer` の `Focused ID ... is not in the node list` というパニックが出力される。
-     - 終了せずに操作を続けられる場合、実機では再現しない（AccessKit がフォーカス ID を検証しない経路で動いている）。
-  5. 比較用（任意）: `git checkout 7ac61ce`（D08 修正の直前）で同じクライアントを起動したまま 512KB 以上（または 1 万行以上）のファイルを開き、エディタ内をクリックする。旧実装は仮想エディタでも同じパニックになるはずで、`develop` の最新ではならないことを確認できる。
-  6. 確認後は、パニックの有無と、使ったクライアント・OS のバージョンを本項に追記する。再現した場合は上記の修正方針（Markdown のフォーカス ID 統一）を実施し、`register_focused_test_node` を削除する。
+  3. AccessKit が有効になったことを確かめる。Inspect.exe などでアプリのウィンドウを選び、子要素（「Workspace」「Git」などのボタンやラベル）がツリーに出ていれば有効。ウィンドウだけで子要素がなければ無効なので、この確認は成立しない。
+  4. 次の操作を行う。
+     - H1 / H2 で 2 ページ以上に分かれる Markdown ファイルを Preview モードで開き、本文をクリックしてから Ctrl+PageDown を押す。
+     - CSV ファイルを開き、グリッドのセルをクリックしてから Tab（または Enter / 右矢印）を押す。
+  5. 判定:
+     - 手順 3 で有効を確認したうえで、アプリが終了し、`accesskit_consumer` の `Focused ID ... is not in the node list` が出力されたら、実機で再現している。
+     - 有効を確認したうえで終了しなければ、実機では起きない（テスト環境の `accesskit_consumer` だけが検証している）と判断できる。
+  6. 比較用（任意）: `git checkout 7ac61ce`（D08 修正の直前）で 512KB 以上（または 1 万行以上）のファイルを開き、エディタ内をクリックする。旧実装は仮想エディタでも同じパニックになるはず。
+  7. 確認後は、結果と、使ったクライアント・OS のバージョンを本項に追記する。再現した場合は、Markdown のフォーカス ID 統一と、CSV で次のセルにフォーカスを移すタイミングの修正（TextEdit を作ったフレームで要求する）を行い、`register_focused_test_node` を削除する。
 
 ### D10 Ctrl+Shift+Z が Undo になる（中・対応済み）
 - **意図**: Ctrl+Shift+Z は Redo（README とヘルプの記載どおり）。
