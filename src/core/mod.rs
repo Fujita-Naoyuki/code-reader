@@ -1,5 +1,6 @@
 pub mod cli_agent;
 pub mod csv;
+pub mod diff;
 pub mod document;
 pub mod file_tree;
 pub mod git;
