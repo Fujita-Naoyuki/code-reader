@@ -20249,8 +20249,8 @@ fn consume_undo_shortcut(input: &mut egui::InputState) -> bool {
         !is_undo_key
     });
 
-    undo || input.consume_key(egui::Modifiers::CTRL, egui::Key::Z)
-        || input.consume_key(egui::Modifiers::COMMAND, egui::Key::Z)
+    // No consume_key fallback: it ignores extra Shift and would swallow Ctrl+Shift+Z (redo).
+    undo
 }
 
 fn consume_redo_shortcut(input: &mut egui::InputState) -> bool {
@@ -20277,13 +20277,7 @@ fn consume_redo_shortcut(input: &mut egui::InputState) -> bool {
         !is_redo_key
     });
 
-    redo || input.consume_key(egui::Modifiers::CTRL, egui::Key::Y)
-        || input.consume_key(egui::Modifiers::COMMAND, egui::Key::Y)
-        || input.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::Z)
-        || input.consume_key(
-            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-            egui::Key::Z,
-        )
+    redo
 }
 
 fn consume_delete_shortcut(input: &mut egui::InputState) -> bool {

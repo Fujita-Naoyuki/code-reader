@@ -80,12 +80,10 @@ fn clicking_places_the_cursor_and_typing_edits() {
     t.ctrl(egui::Key::Z);
     assert!(text(&t).contains("let Xlpha"));
     t.ctrl_shift(egui::Key::Z);
-    // DISCREPANCY(D10): Ctrl+Shift+Z is documented as Redo, but the undo check runs
-    // first and egui's consume_key ignores the extra Shift, so it undoes once more.
-    assert!(text(&t).contains("let Xalpha"));
-    t.ctrl(egui::Key::Y);
-    t.ctrl(egui::Key::Y);
-    assert!(text(&t).contains("let X\n    lpha"));
+    assert!(
+        text(&t).contains("let X\n    lpha"),
+        "Ctrl+Shift+Z redoes like Ctrl+Y"
+    );
 
     // Ctrl+S saves the large file too.
     t.ctrl(egui::Key::S);

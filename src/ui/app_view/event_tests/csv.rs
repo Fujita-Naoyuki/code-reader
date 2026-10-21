@@ -390,7 +390,7 @@ fn csv_selection_in_the_unfocused_pane_still_handles_shortcuts() {
 }
 
 #[test]
-fn ctrl_shift_z_undoes_in_the_grid() {
+fn ctrl_shift_z_redoes_in_the_grid() {
     let mut t = csv_app();
     let g = grid(&t);
     t.click_at(g.cell(1, 1));
@@ -399,9 +399,8 @@ fn ctrl_shift_z_undoes_in_the_grid() {
     t.ctrl(egui::Key::Z);
     assert!(text(&t).contains("apple,1,red"));
     t.ctrl_shift(egui::Key::Z);
-    // DISCREPANCY(D10): Help lists Ctrl+Shift+Z as "Redo CSV grid edit", but it undoes.
-    t.assert_status("No CSV edit to undo.");
-    assert!(text(&t).contains("apple,1,red"));
+    t.assert_status("CSV redo.");
+    assert!(text(&t).contains("apple,5,red"));
 }
 
 #[test]
