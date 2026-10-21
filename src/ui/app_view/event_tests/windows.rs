@@ -80,16 +80,14 @@ fn help_and_status_bar_follow_the_current_context() {
 
     t.click("main ▾");
     assert_help_context(&mut t, "Switch Branch");
+    assert_eq!(status_keys(&t)[0], "Enter");
+    assert_eq!(t.app().context_shortcuts()[0].keys, "Up/Down");
     t.key(egui::Key::Escape);
     close_help(&mut t);
 
     t.click("↶");
     assert_help_context(&mut t, "Discard Changes");
-    // DISCREPANCY(D15): Help and the status bar offer "Enter: Confirm" for Switch Branch
-    // and Discard Changes, but those windows do not handle Enter at all.
     assert_eq!(t.app().context_shortcuts()[0].keys, "Enter");
-    t.key(egui::Key::Enter);
-    assert!(t.app().pending_git_discard.is_some());
     t.key(egui::Key::Escape);
     close_help(&mut t);
 

@@ -117,8 +117,10 @@ fn discard_restores_tracked_files_and_removes_untracked_ones() {
     t.key(egui::Key::Escape);
     assert!(t.app().pending_git_discard.is_none());
 
+    // Enter confirms, as Help and the status bar say.
     t.click("↶");
-    t.click("Discard");
+    t.key(egui::Key::Enter);
+    assert!(t.app().pending_git_discard.is_none());
     t.assert_status_containing("Git discard completed: workspace");
     assert_eq!(t.read("tracked.txt"), "one\ntwo\nthree\n");
 
@@ -347,6 +349,22 @@ fn switch_branch_window() {
     t.click_at(develop_row);
     t.assert_status_containing("Git branch switched: workspace");
     assert!(t.has_label("develop ▾"));
+
+    // Keyboard: the highlight starts on the current branch; Enter on it just closes.
+    t.click("develop ▾");
+    t.key(egui::Key::Enter);
+    assert!(t.app().git_switch_branch_root.is_none());
+    assert!(t.has_label("develop ▾"));
+    t.click("develop ▾");
+    t.key(egui::Key::ArrowDown);
+    t.key(egui::Key::ArrowDown);
+    assert_eq!(t.app().git_switch_branch_cursor.as_deref(), Some("main"));
+    t.key(egui::Key::ArrowUp);
+    t.key(egui::Key::ArrowDown);
+    t.key(egui::Key::Enter);
+    assert!(t.has_label("main ▾"));
+    assert!(t.app().git_switch_branch_cursor.is_none());
+    t.git(&["switch", "-q", "develop"]);
 
     // Switching with uncommitted conflicting changes fails.
     t.git(&["switch", "-q", "main"]);

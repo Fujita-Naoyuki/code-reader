@@ -192,6 +192,8 @@ pub struct CodeReaderApp {
     git_new_branch_names: HashMap<PathBuf, String>,
     git_create_branch_root: Option<PathBuf>,
     git_switch_branch_root: Option<PathBuf>,
+    /// Branch highlighted with Up/Down in the Switch Branch window; Enter switches to it.
+    git_switch_branch_cursor: Option<String>,
     pending_git_discard: Option<GitDiscardRequest>,
     git_commit_details: Option<GitCommitDetailsWindow>,
     dragging_workspace_file: Option<PathBuf>,
@@ -306,6 +308,7 @@ impl CodeReaderApp {
             git_new_branch_names: HashMap::new(),
             git_create_branch_root: None,
             git_switch_branch_root: None,
+            git_switch_branch_cursor: None,
             pending_git_discard: None,
             git_commit_details: None,
             dragging_workspace_file: None,
@@ -2847,6 +2850,7 @@ impl CodeReaderApp {
             .is_some_and(|root| !self.git_repositories.iter().any(|repo| &repo.root == root))
         {
             self.git_switch_branch_root = None;
+            self.git_switch_branch_cursor = None;
         }
         for repository in &self.git_repositories {
             self.git_commit_messages
@@ -4962,7 +4966,12 @@ impl CodeReaderApp {
                 ("Esc", "Close"),
             ]),
             "Recent Workspaces" => shortcuts(&[("Esc", "Close")]),
-            "Create Branch" | "Switch Branch" | "Discard Changes" | "Rename Workspace" => {
+            "Switch Branch" => shortcuts(&[
+                ("Up/Down", "Select branch"),
+                ("Enter", "Switch"),
+                ("Esc", "Close"),
+            ]),
+            "Create Branch" | "Discard Changes" | "Rename Workspace" => {
                 shortcuts(&[("Enter", "Confirm"), ("Esc", "Close")])
             }
             "Workspace Search" => shortcuts(&[("Enter", "Run search"), ("Esc", "Clear")]),
@@ -5142,6 +5151,11 @@ impl CodeReaderApp {
 
         let mut switch_to_branch = None;
         let mut close = false;
+        let mut cursor = self
+            .git_switch_branch_cursor
+            .clone()
+            .filter(|branch| repository.branches.contains(branch))
+            .unwrap_or_else(|| repository.branch.clone());
 
         egui::Window::new("Switch Branch")
             .id(egui::Id::new("git_switch_branch_window"))
@@ -5150,10 +5164,38 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                let escape = ui
-                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                let (escape, up, down, enter) = ui.input_mut(|input| {
+                    (
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                    )
+                });
                 if escape {
                     close = true;
+                }
+                let cursor_index = repository
+                    .branches
+                    .iter()
+                    .position(|branch| branch == &cursor);
+                let moved_index = match cursor_index {
+                    Some(index) if up => Some(index.saturating_sub(1)),
+                    Some(index) if down => {
+                        Some((index + 1).min(repository.branches.len().saturating_sub(1)))
+                    }
+                    None if up || down => Some(0),
+                    _ => None,
+                };
+                if let Some(branch) = moved_index.and_then(|index| repository.branches.get(index)) {
+                    cursor = branch.clone();
+                }
+                if enter {
+                    if cursor == repository.branch || !repository.branches.contains(&cursor) {
+                        close = true;
+                    } else {
+                        switch_to_branch = Some(cursor.clone());
+                    }
                 }
 
                 ui.horizontal(|ui| {
@@ -5161,7 +5203,7 @@ impl CodeReaderApp {
                         RichText::new(format!("{} branches", repository.branches.len())).weak(),
                     );
                     ui.separator();
-                    ui.label(RichText::new("Esc: close").weak());
+                    ui.label(RichText::new("Up/Down: select  Enter: switch  Esc: close").weak());
                 });
                 ui.separator();
 
@@ -5226,12 +5268,16 @@ impl CodeReaderApp {
                                         egui::Sense::click()
                                     },
                                 );
-                                if response.hovered() {
+                                let highlighted = branch == &cursor;
+                                if response.hovered() || highlighted {
                                     ui.painter().rect_filled(
                                         row_rect.shrink2(egui::vec2(0.0, 2.0)),
                                         2.0,
                                         ui.visuals().widgets.hovered.bg_fill,
                                     );
+                                }
+                                if highlighted && (up || down) {
+                                    ui.scroll_to_rect(row_rect, None);
                                 }
                                 if selected {
                                     ui.painter().rect_filled(
@@ -5239,6 +5285,14 @@ impl CodeReaderApp {
                                         2.0,
                                         ui.visuals().selection.bg_fill,
                                     );
+                                    if highlighted {
+                                        ui.painter().rect_stroke(
+                                            row_rect.shrink2(egui::vec2(0.0, 2.0)),
+                                            2.0,
+                                            ui.visuals().widgets.hovered.fg_stroke,
+                                            egui::StrokeKind::Inside,
+                                        );
+                                    }
                                 }
 
                                 let text_color = if selected {
@@ -5274,9 +5328,13 @@ impl CodeReaderApp {
 
         if let Some(branch_name) = switch_to_branch {
             self.git_switch_branch_root = None;
+            self.git_switch_branch_cursor = None;
             self.switch_git_branch(&repository, &branch_name);
         } else if close {
             self.git_switch_branch_root = None;
+            self.git_switch_branch_cursor = None;
+        } else {
+            self.git_switch_branch_cursor = Some(cursor);
         }
     }
 
@@ -5294,10 +5352,16 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                let escape = ui
-                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                let (escape, enter) = ui.input_mut(|input| {
+                    (
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+                    )
+                });
                 if escape {
                     close = true;
+                } else if enter {
+                    discard = true;
                 }
 
                 ui.label(RichText::new("Repository").small().weak());
@@ -5313,7 +5377,11 @@ impl CodeReaderApp {
                 );
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Discard").clicked() {
+                    // Enter confirms, so mark Discard as the default button.
+                    if ui
+                        .add(egui::Button::new("Discard").stroke(ui.visuals().selection.stroke))
+                        .clicked()
+                    {
                         discard = true;
                     }
                     if ui.button("Cancel").clicked() {
