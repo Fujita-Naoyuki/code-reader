@@ -318,17 +318,18 @@ fn wheel_and_scrollbars_scroll_the_view() {
 }
 
 #[test]
-fn tab_moves_keyboard_focus_away_from_the_large_file_editor() {
+fn tab_indents_and_keeps_focus_in_the_large_file_editor() {
     let mut t = virtual_app("big.txt");
     t.click_virtual(1, 8);
-    assert!(t.harness.ctx.memory(|memory| memory.focused()).is_none());
     t.key(egui::Key::Tab);
-    // DISCREPANCY(D08): nothing holds focus in the virtual editor, so egui gives Tab's
-    // focus move to another widget instead of inserting spaces; typing then goes nowhere.
-    assert!(text(&t).starts_with("fn first_word() {\n    let alpha"));
-    assert!(t.harness.ctx.memory(|memory| memory.focused()).is_some());
+    assert!(!text(&t).starts_with("fn first_word() {\n    let alpha"));
     t.type_text("Q");
-    assert!(!text(&t).contains('Q'));
+    assert!(text(&t).contains('Q'));
+
+    // Clicking outside the editor (here: the file tree) takes the keyboard away from it.
+    t.click_first("big.txt");
+    t.type_text("Z");
+    assert!(!text(&t).contains('Z'));
 }
 
 #[test]
@@ -635,17 +636,19 @@ fn report_includes_virtual_click_diagnostics() {
 }
 
 #[test]
-fn typing_right_after_opening_from_the_tree_edits_the_top_of_the_file() {
+fn keys_go_to_the_tree_until_the_large_file_editor_is_clicked() {
     let mut t = virtual_app("big.txt");
     assert!(t.app().left.cursor_position.is_none());
+    // The tree stays active after opening the file, for typing as well as for Delete.
     t.type_text("X");
-    // DISCREPANCY(D16): without clicking into the large-file editor, typed text still goes
-    // into it (nothing holds keyboard focus), at the very start of the file...
-    assert!(text(&t).starts_with("Xfn first_word"));
-    // ...while Delete is taken by the still-active file tree and asks to delete the file.
+    assert!(text(&t).starts_with("fn first_word"));
     t.key(egui::Key::Delete);
     assert!(t.has_label("Delete File"));
     t.key(egui::Key::Escape);
+
+    t.click_virtual(0, 0);
+    t.type_text("X");
+    assert!(text(&t).starts_with("Xfn first_word"));
 }
 
 #[test]

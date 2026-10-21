@@ -12066,8 +12066,34 @@ impl EditorPane {
 
         let viewport_size = ui.available_size();
         let viewport_size = egui::vec2(viewport_size.x.max(1.0), viewport_size.y.max(1.0));
-        let (viewport_rect, response) =
-            ui.allocate_exact_size(viewport_size, egui::Sense::click_and_drag());
+        let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, egui::Sense::hover());
+        // The viewport is the focusable widget behind `text_edit_id`: keys reach the editor
+        // only while it holds focus, and the lock keeps Tab / arrows from moving focus away.
+        let response = ui.interact(viewport_rect, text_edit_id, egui::Sense::click_and_drag());
+        if response.has_focus() {
+            let pressed_outside = ui.input(|input| {
+                input.pointer.any_pressed()
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|position| !viewport_rect.contains(position))
+            });
+            if pressed_outside {
+                response.surrender_focus();
+            } else {
+                ui.memory_mut(|memory| {
+                    memory.set_focus_lock_filter(
+                        text_edit_id,
+                        egui::EventFilter {
+                            tab: true,
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            escape: false,
+                        },
+                    );
+                });
+            }
+        }
         let scrollbar_layout = virtual_scrollbar_layout(viewport_rect, total_width, total_height);
         let content_rect = scrollbar_layout.content_rect;
         let max_scroll_y = (total_height - content_rect.height()).max(0.0);
@@ -19298,7 +19324,7 @@ fn register_focused_test_node(context: &egui::Context) {
 }
 
 fn virtual_editor_can_handle_key(ui: &egui::Ui, text_edit_id: egui::Id) -> bool {
-    ui.memory(|memory| memory.focused().is_none() || memory.has_focus(text_edit_id))
+    ui.memory(|memory| memory.has_focus(text_edit_id))
 }
 
 fn consume_virtual_navigation_command(ui: &mut egui::Ui) -> Option<VirtualNavigationCommand> {
