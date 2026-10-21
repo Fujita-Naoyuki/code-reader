@@ -856,10 +856,9 @@ fn long_navigation_chains_collapse_the_breadcrumb_and_follow_renames() {
         let target = if index % 2 == 0 { &other } else { &main };
         respond(&mut t, RUST, &request, Ok(vec![location(target, 0, 7)]));
     }
-    // History is capped at the breadcrumb size, so the breadcrumb's "..." prefix for
-    // hidden older entries can never appear.
-    assert_eq!(t.app().left_navigation_history.back.len(), 4);
-    assert!(!t.has_label("..."));
+    // All six steps are kept; the breadcrumb shows the latest four after "...".
+    assert_eq!(t.app().left_navigation_history.back.len(), 6);
+    assert!(t.has_label("..."));
 
     // Renaming a file keeps history entries pointing at it.
     t.click_first("other.rs");

@@ -65,6 +65,8 @@ const MARKDOWN_SIDE_PANE_MIN_REMAINING_WIDTH: f32 = 360.0;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const NAVIGATION_BREADCRUMB_LIMIT: usize = 5;
+/// Back steps kept per pane; the breadcrumb shows only the latest ones and "..." before them.
+const NAVIGATION_HISTORY_LIMIT: usize = 50;
 const WORKSPACE_SEARCH_MAX_MATCHES: usize = 2000;
 const WORKSPACE_SEARCH_PREVIEW_CHARS: usize = 140;
 const WORKSPACE_SECTION_HEADER_HEIGHT: f32 = 24.0;
@@ -15470,9 +15472,8 @@ impl NavigationHistory {
     }
 
     fn trim_back(&mut self) {
-        let previous_limit = NAVIGATION_BREADCRUMB_LIMIT.saturating_sub(1);
-        if self.back.len() > previous_limit {
-            let drain_count = self.back.len() - previous_limit;
+        if self.back.len() > NAVIGATION_HISTORY_LIMIT {
+            let drain_count = self.back.len() - NAVIGATION_HISTORY_LIMIT;
             self.back.drain(0..drain_count);
         }
     }
