@@ -8136,7 +8136,9 @@ impl EditorPane {
 
         if self.is_csv() {
             let text = parse_csv(&self.text)
-                .map(|document| serialize_csv_for_save(&document))
+                .map(|document| {
+                    serialize_csv_for_save(&document, CsvTextStyle::of(self.text.as_str()))
+                })
                 .unwrap_or_else(|_| self.text.as_str().to_owned());
             self.replace_text(text);
         } else {
@@ -8237,7 +8239,10 @@ impl EditorPane {
         self.push_csv_undo_entry();
         self.csv_edit_history_cell = None;
         let cell_count = paste_csv_selection_from_text(&mut document, selection, text)?;
-        self.replace_text(serialize_csv(&document));
+        self.replace_text(serialize_csv(
+            &document,
+            CsvTextStyle::of(self.text.as_str()),
+        ));
         self.csv_debug_message = Some(format!("csv pasted {cell_count} cells"));
         Ok(cell_count)
     }
@@ -8254,7 +8259,10 @@ impl EditorPane {
         self.push_csv_undo_entry();
         self.csv_edit_history_cell = None;
         let (next_selection, label) = delete_csv_selection(&mut document, selection);
-        self.replace_text(serialize_csv(&document));
+        self.replace_text(serialize_csv(
+            &document,
+            CsvTextStyle::of(self.text.as_str()),
+        ));
         self.csv_selection = Some(next_selection);
         self.selected_csv_cell = None;
         self.csv_drag = None;
@@ -9079,7 +9087,10 @@ impl EditorPane {
         }
 
         if changed {
-            self.replace_text(serialize_csv(&document));
+            self.replace_text(serialize_csv(
+                &document,
+                CsvTextStyle::of(self.text.as_str()),
+            ));
         }
 
         if let Some(target) = next_focus
@@ -9093,7 +9104,10 @@ impl EditorPane {
             if needs_new_cell {
                 self.push_csv_undo_entry();
                 document.ensure_cell(target.row, target.column);
-                self.replace_text(serialize_csv(&document));
+                self.replace_text(serialize_csv(
+                    &document,
+                    CsvTextStyle::of(self.text.as_str()),
+                ));
             }
             self.selected_csv_cell = Some(target);
             self.csv_edit_history_cell = None;
@@ -19950,30 +19964,46 @@ fn parse_csv(source: &str) -> Result<CsvDocument, String> {
     Ok(CsvDocument { rows })
 }
 
-fn serialize_csv(document: &CsvDocument) -> String {
-    normalized_csv_rows(document, false)
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|field| serialize_csv_field(field))
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Row separator and final newline of a CSV file, kept when the grid rewrites it so a
+/// one-cell edit stays a one-line diff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CsvTextStyle {
+    line_ending: &'static str,
+    trailing_newline: bool,
 }
 
-fn serialize_csv_for_save(document: &CsvDocument) -> String {
-    normalized_csv_rows(document, true)
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|field| serialize_csv_field(field))
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+impl CsvTextStyle {
+    fn of(text: &str) -> Self {
+        Self {
+            line_ending: if text.contains("\r\n") { "\r\n" } else { "\n" },
+            trailing_newline: text.ends_with('\n'),
+        }
+    }
+
+    fn join(self, rows: &[Vec<String>]) -> String {
+        let mut text = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|field| serialize_csv_field(field))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect::<Vec<_>>()
+            .join(self.line_ending);
+        if self.trailing_newline && !text.is_empty() {
+            text.push_str(self.line_ending);
+        }
+        text
+    }
+}
+
+fn serialize_csv(document: &CsvDocument, style: CsvTextStyle) -> String {
+    style.join(&normalized_csv_rows(document, false))
+}
+
+fn serialize_csv_for_save(document: &CsvDocument, style: CsvTextStyle) -> String {
+    style.join(&normalized_csv_rows(document, true))
 }
 
 fn copy_csv_selection_as_csv(document: &CsvDocument, selection: CsvSelection) -> String {
@@ -20628,6 +20658,10 @@ fn csv_navigation_target(
             });
         }
 
+        // Moving never grows the table; Enter on the last row is the one explicit way to
+        // append a row.
+        let last_row = row_count.saturating_sub(1);
+        let last_column = column_count.saturating_sub(1);
         if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
             return Some(CsvCellPosition {
                 row: row + 1,
@@ -20636,16 +20670,9 @@ fn csv_navigation_target(
         }
 
         if input.consume_key(egui::Modifiers::NONE, egui::Key::Tab) {
-            if column + 1 < column_count {
-                return Some(CsvCellPosition {
-                    row,
-                    column: column + 1,
-                });
-            }
-
             return Some(CsvCellPosition {
                 row,
-                column: column + 1,
+                column: (column + 1).min(last_column),
             });
         }
 
@@ -20657,15 +20684,8 @@ fn csv_navigation_target(
         }
 
         if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-            if row + 1 >= row_count {
-                return Some(CsvCellPosition {
-                    row: row + 1,
-                    column,
-                });
-            }
-
             return Some(CsvCellPosition {
-                row: row + 1,
+                row: (row + 1).min(last_row),
                 column,
             });
         }
@@ -20681,15 +20701,9 @@ fn csv_navigation_target(
         }
 
         if cursor_index >= cell_len
+            && column < last_column
             && input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
         {
-            if column + 1 >= column_count {
-                return Some(CsvCellPosition {
-                    row,
-                    column: column + 1,
-                });
-            }
-
             return Some(CsvCellPosition {
                 row,
                 column: column + 1,
@@ -22862,7 +22876,7 @@ mod tests {
         };
 
         assert_eq!(
-            serialize_csv(&document),
+            serialize_csv(&document, CsvTextStyle::of("")),
             "plain,\"a,b\",\"with \"\"quote\"\"\",\" tail \""
         );
     }
@@ -22894,8 +22908,21 @@ mod tests {
             ],
         };
 
-        assert_eq!(serialize_csv(&document), "a,b\n,\n,");
-        assert_eq!(serialize_csv_for_save(&document), "a,b");
+        assert_eq!(serialize_csv(&document, CsvTextStyle::of("")), "a,b\n,\n,");
+        assert_eq!(
+            serialize_csv_for_save(&document, CsvTextStyle::of("")),
+            "a,b"
+        );
+    }
+
+    #[test]
+    fn serialize_csv_keeps_line_endings_and_final_newline() {
+        let document = parse_csv("a,b\r\n1,2\r\n").expect("parses");
+        let style = CsvTextStyle::of("a,b\r\n1,2\r\n");
+        assert_eq!(serialize_csv(&document, style), "a,b\r\n1,2\r\n");
+        assert_eq!(serialize_csv_for_save(&document, style), "a,b\r\n1,2\r\n");
+        let empty = CsvDocument { rows: Vec::new() };
+        assert_eq!(serialize_csv(&empty, style), "");
     }
 
     #[test]

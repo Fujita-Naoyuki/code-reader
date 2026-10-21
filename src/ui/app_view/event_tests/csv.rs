@@ -128,10 +128,10 @@ fn grid_shows_cells_and_edits_the_selected_one() {
     t.assert_status_containing("Indexed");
     t.ctrl(egui::Key::A);
     t.type_text("5");
-    // DISCREPANCY(D14): any grid edit re-serializes the file without its final newline.
     assert_eq!(
         text(&t),
-        "name,qty,note\napple,5,red\nbanana,22,\"yellow, long\""
+        "name,qty,note\napple,5,red\nbanana,22,\"yellow, long\"\n",
+        "a grid edit keeps the final newline"
     );
 
     t.ctrl(egui::Key::Z);
@@ -185,34 +185,32 @@ fn keyboard_moves_between_cells() {
 }
 
 #[test]
-fn navigating_past_the_edge_adds_rows_and_columns_to_the_file() {
+fn navigating_past_the_edge_stays_inside_the_table() {
     let mut t = csv_app();
     let g = grid(&t);
     t.click_at(g.cell(0, 2));
     t.key(egui::Key::Tab);
     assert_eq!(
         t.app().left.selected_csv_cell,
-        Some(CsvCellPosition { row: 0, column: 3 })
+        Some(CsvCellPosition { row: 0, column: 2 }),
+        "Tab on the last column stays put"
     );
-    t.ctrl(egui::Key::S);
-    // DISCREPANCY(D13): moving the cursor past the last column (Tab / ArrowRight) adds an
-    // empty column, and it is written to disk on save although nothing was typed.
-    assert_eq!(
-        t.read("data.csv"),
-        "name,qty,note,\napple,1,red,\nbanana,22,\"yellow, long\","
-    );
-
-    // Past the last row: a new row appears in the buffer (trailing empty rows are trimmed
-    // on save).
-    t.key(egui::Key::ArrowDown);
-    t.key(egui::Key::ArrowDown);
-    t.key(egui::Key::ArrowDown);
-    t.key(egui::Key::Enter);
-    assert_eq!(t.app().left.selected_csv_cell.unwrap().row, 4);
     t.key(egui::Key::End);
-    assert_eq!(t.app().left.selected_csv_cell.unwrap().column, 3);
     t.key(egui::Key::ArrowRight);
-    assert_eq!(t.app().left.selected_csv_cell.unwrap().column, 4);
+    assert_eq!(t.app().left.selected_csv_cell.unwrap().column, 2);
+    t.key(egui::Key::ArrowDown);
+    t.key(egui::Key::ArrowDown);
+    t.key(egui::Key::ArrowDown);
+    assert_eq!(t.app().left.selected_csv_cell.unwrap().row, 2);
+    t.ctrl(egui::Key::S);
+    assert_eq!(t.read("data.csv"), CSV, "moving around does not change the file");
+
+    // Enter on the last row is the explicit way to append one; it holds no data, so
+    // saving trims it again.
+    t.key(egui::Key::Enter);
+    assert_eq!(t.app().left.selected_csv_cell.unwrap().row, 3);
+    t.ctrl(egui::Key::S);
+    assert_eq!(t.read("data.csv"), CSV);
 }
 
 #[test]
@@ -280,12 +278,12 @@ fn paste_and_delete_rows_and_columns() {
 
     t.key(egui::Key::Delete);
     t.assert_status("Deleted CSV row 3.");
-    assert_eq!(text(&t), "name,qty,note\napple,1,red");
+    assert_eq!(text(&t), "name,qty,note\napple,1,red\n");
 
     t.click_at(g.column_header(1));
     t.key(egui::Key::Backspace);
     t.assert_status("Deleted CSV column B.");
-    assert_eq!(text(&t), "name,note\napple,red");
+    assert_eq!(text(&t), "name,note\napple,red\n");
 
     t.drag(g.column_header(0), g.column_header(1));
     t.key(egui::Key::Delete);
