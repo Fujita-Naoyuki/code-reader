@@ -116,30 +116,32 @@ fn definition_at_the_cursor_asks_for_references() {
 
 #[test]
 fn server_requests_and_notifications_are_answered_and_reported() {
-    let mut script = Script::default();
-    script.after_initialize = vec![
-        json!({"jsonrpc": "2.0", "id": 900, "method": "workspace/configuration",
+    let script = Script {
+        after_initialize: vec![
+            json!({"jsonrpc": "2.0", "id": 900, "method": "workspace/configuration",
                "params": {"items": [{"section": "rust-analyzer"}, {"section": "files"}]}}),
-        json!({"jsonrpc": "2.0", "id": "folders", "method": "workspace/workspaceFolders"}),
-        json!({"jsonrpc": "2.0", "id": 901, "method": "window/workDoneProgress/create",
+            json!({"jsonrpc": "2.0", "id": "folders", "method": "workspace/workspaceFolders"}),
+            json!({"jsonrpc": "2.0", "id": 901, "method": "window/workDoneProgress/create",
                "params": {"token": 7}}),
-        json!({"jsonrpc": "2.0", "method": "$/progress",
+            json!({"jsonrpc": "2.0", "method": "$/progress",
                "params": {"token": 7, "value": {"kind": "begin", "title": "Indexing",
                           "message": "crates", "percentage": 10}}}),
-        json!({"jsonrpc": "2.0", "method": "$/progress",
+            json!({"jsonrpc": "2.0", "method": "$/progress",
                "params": {"token": "t", "value": {"kind": "end"}}}),
-        json!({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "no-value"}}),
-        json!({"jsonrpc": "2.0", "method": "window/logMessage",
+            json!({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "no-value"}}),
+            json!({"jsonrpc": "2.0", "method": "window/logMessage",
                "params": {"type": 3, "message": "loading"}}),
-        json!({"jsonrpc": "2.0", "method": "window/showMessage",
+            json!({"jsonrpc": "2.0", "method": "window/showMessage",
                "params": {"type": 3, "message": "hello"}}),
-        json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
                "params": {"uri": "file:///x.rs", "diagnostics": [{}, {}]}}),
-        json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {}}),
-        json!({"jsonrpc": "2.0", "method": "rust-analyzer/status",
+            json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {}}),
+            json!({"jsonrpc": "2.0", "method": "rust-analyzer/status",
                "params": {"health": "ok", "detail": "x".repeat(400)}}),
-        json!({"jsonrpc": "2.0", "method": "custom/unknown"}),
-    ];
+            json!({"jsonrpc": "2.0", "method": "custom/unknown"}),
+        ],
+        ..Script::default()
+    };
     let mut t = rust_app(script);
     let main = t.path("src/main.rs");
     t.platform.scripted(RUST).script.lock().unwrap().definition =
@@ -205,14 +207,18 @@ fn protocol_errors_are_reported() {
 
 #[test]
 fn initialize_failures_and_missing_servers() {
-    let mut script = Script::default();
-    script.initialize_error = Some(json!({"code": -32002, "message": "not ready"}));
+    let script = Script {
+        initialize_error: Some(json!({"code": -32002, "message": "not ready"})),
+        ..Script::default()
+    };
     let mut t = rust_app(script);
     press_f12_on_helper(&mut t);
     wait(&mut t, "Rust LSP failed for `helper`. (not ready)");
 
-    let mut script = Script::default();
-    script.start_error = Some("cannot start".to_owned());
+    let script = Script {
+        start_error: Some("cannot start".to_owned()),
+        ..Script::default()
+    };
     let mut t = rust_app(script);
     press_f12_on_helper(&mut t);
     wait(&mut t, "Rust LSP failed for `helper`. (cannot start)");
@@ -235,8 +241,10 @@ fn broken_streams_become_reader_errors() {
         b"Content-Length: abc\r\n\r\n".to_vec(),
         b"Content-Length: 5\r\n\r\nnope!".to_vec(),
     ] {
-        let mut script = Script::default();
-        script.raw_after_initialize = raw;
+        let script = Script {
+            raw_after_initialize: raw,
+            ..Script::default()
+        };
         let mut t = rust_app(script);
         // Later requests restart the server and clear the last error, so the event count is
         // what records the failure.
@@ -246,8 +254,10 @@ fn broken_streams_become_reader_errors() {
     }
 
     // The server hangs up in the middle of a definition request.
-    let mut script = Script::default();
-    script.hang_up_on = Some("textDocument/definition".to_owned());
+    let script = Script {
+        hang_up_on: Some("textDocument/definition".to_owned()),
+        ..Script::default()
+    };
     let mut t = rust_app(script);
     press_f12_on_helper(&mut t);
     wait(&mut t, "Rust LSP failed for `helper`.");
