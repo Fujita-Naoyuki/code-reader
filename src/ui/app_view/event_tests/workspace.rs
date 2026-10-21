@@ -340,10 +340,7 @@ fn add_folder_adds_a_root_and_remove_button_drops_it() {
     // Two roots: each shows a remove button.
     assert_eq!(t.count_label("×"), 2);
     t.click_nth("×", 1);
-    // DISCREPANCY(D01): the "Removed folder" message is overwritten by rebuild_file_tree()
-    // in the same frame, so the user only ever sees "Discovered N files.".
-    assert!(!t.saw_status(&format!("Removed folder: {}", extra.display())));
-    t.assert_status("Discovered 2 files.");
+    t.assert_status(&format!("Removed folder: {}", extra.display()));
     assert!(!t.has_label("extra.txt"));
     assert_eq!(t.count_label("×"), 0);
 }

@@ -942,8 +942,8 @@ impl CodeReaderApp {
 
         match removed {
             Some(path) => {
-                self.status_message = format!("Removed folder: {}", path.display());
                 self.rebuild_file_tree();
+                self.status_message = format!("Removed folder: {}", path.display());
                 self.save_state();
             }
             None => {
