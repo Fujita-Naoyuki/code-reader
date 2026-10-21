@@ -1,3 +1,8 @@
+pub mod definitions;
+pub mod links;
+pub mod mermaid;
+pub mod source_spans;
+
 use std::{collections::HashMap, path::PathBuf};
 
 use markdown::{
