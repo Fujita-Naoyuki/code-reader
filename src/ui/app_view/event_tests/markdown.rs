@@ -214,24 +214,16 @@ fn outline_and_pages_panes_toggle() {
 }
 
 #[test]
-fn pages_and_outline_keyboard_navigation_cannot_be_reached() {
+fn pages_and_outline_take_the_keyboard_when_clicked_or_with_f6() {
     let mut t = md_app();
     t.click_text_label("Outline");
-    // Clicking the pane titles (the second "Pages" / "Outline" after the header toggles)
-    // never moves markdown focus there.
+    // The pane titles are the second "Pages" / "Outline" (after the header toggles).
     t.click_nth("Pages", 1);
-    t.click_nth("Outline", 1);
-    t.key(egui::Key::ArrowDown);
-    // DISCREPANCY(D11): Help lists Up/Down/Enter for "Markdown Pages" / "Markdown Outline",
-    // but no user action moves markdown focus away from the body, so those keys are dead.
     assert_eq!(
         t.app().left.markdown_focus_target,
-        MarkdownFocusTarget::Body
+        MarkdownFocusTarget::Pages
     );
-    assert!(t.has_label("1/5"));
-
-    // Driving the unreachable states directly shows what the keys would do.
-    t.app_mut().left.markdown_focus_target = MarkdownFocusTarget::Pages;
+    assert!(t.app().context_shortcuts()[0].keys == "Up/Down");
     t.key(egui::Key::ArrowDown);
     assert!(t.has_label("2/5"));
     t.key(egui::Key::ArrowUp);
@@ -242,7 +234,11 @@ fn pages_and_outline_keyboard_navigation_cannot_be_reached() {
     );
 
     t.click_nth("Next", 0);
-    t.app_mut().left.markdown_focus_target = MarkdownFocusTarget::Outline;
+    t.click_nth("Outline", 1);
+    assert_eq!(
+        t.app().left.markdown_focus_target,
+        MarkdownFocusTarget::Outline
+    );
     t.key(egui::Key::ArrowDown);
     assert_eq!(
         t.app().left.markdown_active_heading_id.as_deref(),
@@ -258,25 +254,36 @@ fn pages_and_outline_keyboard_navigation_cannot_be_reached() {
         t.app().left.markdown_focus_target,
         MarkdownFocusTarget::Body
     );
-    t.click_nth("Previous", 0);
-    t.app_mut().left.markdown_focus_target = MarkdownFocusTarget::Outline;
-    t.key(egui::Key::ArrowDown);
 
-    // Hiding a pane while it is "focused" moves focus back to the body.
-    t.app_mut().left.markdown_focus_target = MarkdownFocusTarget::Pages;
-    t.click_text_label("Pages");
+    // F6 / Shift+F6 cycle Pages -> Body -> Outline.
+    t.key(egui::Key::F6);
+    assert_eq!(
+        t.app().left.markdown_focus_target,
+        MarkdownFocusTarget::Outline
+    );
+    t.key(egui::Key::F6);
+    assert_eq!(
+        t.app().left.markdown_focus_target,
+        MarkdownFocusTarget::Pages
+    );
+    t.shift(egui::Key::F6);
+    assert_eq!(
+        t.app().left.markdown_focus_target,
+        MarkdownFocusTarget::Outline
+    );
+
+    // Hiding a pane while it has the keyboard moves it back to the body.
+    t.click_text_label("Outline");
     assert_eq!(
         t.app().left.markdown_focus_target,
         MarkdownFocusTarget::Body
     );
-    t.app_mut().left.markdown_focus_target = MarkdownFocusTarget::Outline;
+    t.key(egui::Key::F6);
     t.alt(egui::Key::Num3);
     assert_eq!(
         t.app().left.markdown_focus_target,
         MarkdownFocusTarget::Body
     );
-    t.app_mut().left.markdown_mode = MarkdownMode::Markdown;
-    t.app_mut().left.normalize_markdown_focus_target();
 }
 
 #[test]

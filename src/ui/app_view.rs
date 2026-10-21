@@ -5028,17 +5028,20 @@ impl CodeReaderApp {
                 ("Ctrl+PageUp", "Previous page"),
                 ("Ctrl+PageDown", "Next page"),
                 ("Ctrl+F", "Find rendered Markdown"),
+                ("F6 / Shift+F6", "Move to Pages / Outline"),
             ]),
             "Markdown Pages" => shortcuts(&[
                 ("Up/Down", "Select page"),
                 ("Enter", "Open page"),
                 ("Ctrl+PageUp", "Previous page"),
                 ("Ctrl+PageDown", "Next page"),
+                ("F6 / Shift+F6", "Next / previous pane"),
             ]),
             "Markdown Outline" => shortcuts(&[
                 ("Up/Down", "Select heading"),
                 ("Enter", "Jump to heading"),
                 ("Ctrl+F", "Find rendered Markdown"),
+                ("F6 / Shift+F6", "Next / previous pane"),
             ]),
             "Markdown Source" => shortcuts(&[
                 ("Alt+1/2/3", "Change Markdown mode"),
@@ -10201,7 +10204,7 @@ impl EditorPane {
     }
 
     fn markdown_page_nav_ui(&mut self, ui: &mut egui::Ui, document: &MarkdownDocument) {
-        ui.label(self.markdown_focus_label(ui, "Pages", MarkdownFocusTarget::Pages));
+        self.markdown_side_pane_title_ui(ui, "Pages", MarkdownFocusTarget::Pages);
         ui.add_space(4.0);
 
         ScrollArea::vertical()
@@ -11160,7 +11163,7 @@ impl EditorPane {
     }
 
     fn markdown_outline_ui(&mut self, ui: &mut egui::Ui, document: &MarkdownDocument) {
-        ui.label(self.markdown_focus_label(ui, "Outline", MarkdownFocusTarget::Outline));
+        self.markdown_side_pane_title_ui(ui, "Outline", MarkdownFocusTarget::Outline);
         ui.add_space(4.0);
 
         let Some(page) = document.active_or_first_page(self.markdown_active_page_id.as_deref())
@@ -11425,6 +11428,19 @@ impl EditorPane {
             return;
         }
 
+        // Shift first: consume_key(NONE, ..) ignores an extra Shift.
+        let (previous_pane, next_pane) = ui.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::SHIFT, egui::Key::F6),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::F6),
+            )
+        });
+        if next_pane || previous_pane {
+            self.cycle_markdown_focus_target(ui, next_pane);
+            ui.ctx().request_repaint();
+            return;
+        }
+
         let mut next_index = None;
         let mut next_heading_index = None;
         let mut focus_body = false;
@@ -11555,8 +11571,47 @@ impl EditorPane {
 
     fn request_markdown_focus(&mut self, ui: &mut egui::Ui, target: MarkdownFocusTarget) {
         self.markdown_focus_target = target;
+        if target != MarkdownFocusTarget::Body {
+            // Pages / Outline keys work from `markdown_focus_target` alone. Nothing holds egui
+            // focus meanwhile, so egui does not turn their Up/Down into focus moves.
+            ui.memory_mut(|memory| {
+                if let Some(focused) = memory.focused() {
+                    memory.surrender_focus(focused);
+                }
+            });
+            return;
+        }
         let focus_id = self.markdown_focus_id(ui, target);
         ui.memory_mut(|memory| memory.request_focus(focus_id));
+    }
+
+    /// Title of the Pages / Outline pane; clicking it gives that pane the keyboard.
+    fn markdown_side_pane_title_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        label: &'static str,
+        target: MarkdownFocusTarget,
+    ) {
+        let title = egui::Label::new(self.markdown_focus_label(ui, label, target))
+            .sense(egui::Sense::click());
+        if ui.add(title).clicked() {
+            self.request_markdown_focus(ui, target);
+        }
+    }
+
+    /// F6 / Shift+F6 move the keyboard between the visible Pages, Body and Outline panes.
+    fn cycle_markdown_focus_target(&mut self, ui: &mut egui::Ui, forward: bool) {
+        let targets = self.visible_markdown_focus_targets();
+        let index = targets
+            .iter()
+            .position(|target| *target == self.markdown_focus_target)
+            .unwrap_or(0);
+        let next = if forward {
+            (index + 1) % targets.len()
+        } else {
+            (index + targets.len() - 1) % targets.len()
+        };
+        self.request_markdown_focus(ui, targets[next]);
     }
 
     fn visible_markdown_focus_targets(&self) -> Vec<MarkdownFocusTarget> {
