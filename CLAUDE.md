@@ -25,7 +25,7 @@ Logic without egui is in `src/core/` and can be unit tested without a window:
 | `core/git.rs` | Running `git`, status / history parsing, diff text, push-or-publish |
 | `core/diff.rs` | Unified diff text into display rows, selection text |
 | `core/markdown/` | Document model, source-mode spans, definitions, links, Mermaid |
-| `core/lsp.rs` | Language server client (worker thread, JSON-RPC) |
+| `core/lsp/` | Language server client (worker thread, JSON-RPC); `protocol.rs` converts locations, positions and URIs |
 | `core/navigation.rs` | Back / Forward history |
 | `core/workspace_files.rs` | File kinds by path, change snapshots, new-file names |
 | `core/session.rs` | Workspace sessions and the state file |
@@ -46,10 +46,10 @@ other modules need is `pub(super)`.
 | Which dialog is in front, who gets Escape | `modal.rs` |
 | Status bar messages | `status.rs` (`status_message` for action results, `set_background_status` for notices) |
 | Regular editor, find bar | `source_editor.rs`, shared parts in `editor_style.rs` |
-| Large-file editor | `virtual_editor.rs` (frame), `virtual_input.rs` (keys), `virtual_pointer.rs` (mouse), `virtual_paint.rs` |
+| Large-file editor | `virtual_editor.rs` (frame), `virtual_input.rs` (keys), `virtual_pointer.rs` (mouse), `virtual_paint.rs`, `virtual_line_cache.rs` |
 | Markdown | `markdown_view.rs` (modes, panes), `markdown_render.rs`, `markdown_source.rs`, `markdown_search.rs` |
 | CSV grid | `csv_grid.rs` |
-| Diffs, Git history | `diff_view.rs`, `diff_selection.rs`, `git_history_view.rs` |
+| Diffs, Git history | `diff_view.rs` (header, pane state), `diff_rows.rs` (painting rows), `diff_selection.rs`, `git_history_view.rs` |
 | Git sidebar and commands | `git_panel.rs`, `git_actions.rs`, `git_windows.rs` |
 | Definitions, references | `lsp.rs` (`LspSession`, `LspLanguage`) |
 | Search Everywhere, references list, workspace search | `search.rs` |
