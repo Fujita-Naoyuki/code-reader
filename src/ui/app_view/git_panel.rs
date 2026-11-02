@@ -77,53 +77,7 @@ impl CodeReaderApp {
             .default_open(true)
             .show(ui, |ui| {
                 for repository in self.git.repositories.clone() {
-                    let tracking = repository.tracking.as_ref().and_then(|tracking| {
-                        if tracking.ahead == 0 && tracking.behind == 0 {
-                            None
-                        } else {
-                            let upstream = repository.upstream.as_deref().unwrap_or("upstream");
-                            Some((
-                                format!("{}↓ {}↑", tracking.behind, tracking.ahead),
-                                format!(
-                                    "{} commits to pull from {upstream}\n{} commits to push to {upstream}",
-                                    tracking.behind, tracking.ahead
-                                ),
-                            ))
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&repository.name));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            self.git_repository_menu(ui, &repository);
-                            if ui.button("Pull").clicked() {
-                                self.pull_git_repository(&repository);
-                            }
-                            if let Some((label, tooltip)) = tracking {
-                                ui.label(RichText::new(label).weak()).on_hover_text(tooltip);
-                            }
-
-                            let branch_label = format!("{} ▾", repository.branch);
-                            if ui
-                                .add_sized(
-                                    [72.0, ui.spacing().interact_size.y],
-                                    egui::Label::new(RichText::new(branch_label).monospace())
-                                        .sense(egui::Sense::click())
-                                        .truncate(),
-                                )
-                                .on_hover_text(format!("{}\nSwitch Branch", repository.branch))
-                                .clicked()
-                            {
-                                self.git.switch_branch_root = Some(repository.root.clone());
-                            }
-                        });
-                    });
-                    if let Some(error) = &repository.error {
-                        ui.label(
-                            RichText::new(error)
-                                .small()
-                                .color(ui.visuals().warn_fg_color),
-                        );
-                    }
+                    self.git_repository_row_ui(ui, &repository);
                 }
             });
 
@@ -131,93 +85,136 @@ impl CodeReaderApp {
             .default_open(true)
             .show(ui, |ui| {
                 for repository in self.git.repositories.clone() {
-                    let change_count = repository.changes.len();
-                    let default_open = self
-                        .git
-                        .repo_open
-                        .get(&repository.root)
-                        .copied()
-                        .unwrap_or(true);
-                    let state_id = ui.make_persistent_id(("git_repo_changes", &repository.root));
-                    let state = egui::collapsing_header::CollapsingState::load_with_default_open(
-                        ui.ctx(),
-                        state_id,
-                        default_open,
-                    );
-                    let mut open_all_diffs = false;
-                    let mut open_history = false;
-                    let header = state.show_header(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("{} ({change_count})", repository.name));
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui
-                                        .button("History")
-                                        .on_hover_text("Open Git history")
-                                        .clicked()
-                                    {
-                                        open_history = true;
-                                    }
-                                    if ui
-                                        .add_enabled(
-                                            !repository.changes.is_empty(),
-                                            egui::Button::new("All Diffs"),
-                                        )
-                                        .on_hover_text("Open all repository diffs")
-                                        .clicked()
-                                    {
-                                        open_all_diffs = true;
-                                    }
-                                },
-                            );
-                        });
-                    });
-                    self.git
-                        .repo_open
-                        .insert(repository.root.clone(), header.is_open());
-                    if open_all_diffs {
-                        self.open_git_all_diff(&repository);
-                    }
-                    if open_history {
-                        self.open_git_history(&repository);
-                    }
-                    header.body(|ui| {
-                        let mut commit = false;
-                        let mut commit_and_push = false;
-                        let message = self
-                            .git
-                            .commit_messages
-                            .entry(repository.root.clone())
-                            .or_default();
-                        ui.add(
-                            TextEdit::multiline(message)
-                                .id(ui.make_persistent_id(("git_commit_message", &repository.root)))
-                                .hint_text("Commit message")
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(4),
-                        );
-                        ui.horizontal(|ui| {
-                            if ui.button("Commit").clicked() {
-                                commit = true;
-                            }
-                            if ui.button("Commit & Push").clicked() {
-                                commit_and_push = true;
-                            }
-                        });
-
-                        if commit {
-                            self.commit_git_repository(&repository, false);
-                        }
-                        if commit_and_push {
-                            self.commit_git_repository(&repository, true);
-                        }
-
-                        self.git_changes_files_ui(ui, &repository);
-                    });
+                    self.git_repository_changes_ui(ui, &repository);
                     ui.add_space(4.0);
                 }
             });
+    }
+
+    /// One repository: name, branch, ahead / behind, Pull and the "..." menu.
+    fn git_repository_row_ui(&mut self, ui: &mut egui::Ui, repository: &GitRepositoryState) {
+        let tracking = git_tracking_label(repository);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&repository.name));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.git_repository_menu(ui, repository);
+                if ui.button("Pull").clicked() {
+                    self.pull_git_repository(repository);
+                }
+                if let Some((label, tooltip)) = tracking {
+                    ui.label(RichText::new(label).weak()).on_hover_text(tooltip);
+                }
+
+                let branch_label = format!("{} ▾", repository.branch);
+                if ui
+                    .add_sized(
+                        [72.0, ui.spacing().interact_size.y],
+                        egui::Label::new(RichText::new(branch_label).monospace())
+                            .sense(egui::Sense::click())
+                            .truncate(),
+                    )
+                    .on_hover_text(format!("{}\nSwitch Branch", repository.branch))
+                    .clicked()
+                {
+                    self.git.switch_branch_root = Some(repository.root.clone());
+                }
+            });
+        });
+        if let Some(error) = &repository.error {
+            ui.label(
+                RichText::new(error)
+                    .small()
+                    .color(ui.visuals().warn_fg_color),
+            );
+        }
+    }
+
+    /// One repository's collapsible section: its commit box and changed files.
+    fn git_repository_changes_ui(&mut self, ui: &mut egui::Ui, repository: &GitRepositoryState) {
+        let change_count = repository.changes.len();
+        let default_open = self
+            .git
+            .repo_open
+            .get(&repository.root)
+            .copied()
+            .unwrap_or(true);
+        let state_id = ui.make_persistent_id(("git_repo_changes", &repository.root));
+        let state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            state_id,
+            default_open,
+        );
+        let mut open_all_diffs = false;
+        let mut open_history = false;
+        let header = state.show_header(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(format!("{} ({change_count})", repository.name));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button("History")
+                        .on_hover_text("Open Git history")
+                        .clicked()
+                    {
+                        open_history = true;
+                    }
+                    if ui
+                        .add_enabled(
+                            !repository.changes.is_empty(),
+                            egui::Button::new("All Diffs"),
+                        )
+                        .on_hover_text("Open all repository diffs")
+                        .clicked()
+                    {
+                        open_all_diffs = true;
+                    }
+                });
+            });
+        });
+        self.git
+            .repo_open
+            .insert(repository.root.clone(), header.is_open());
+        if open_all_diffs {
+            self.open_git_all_diff(repository);
+        }
+        if open_history {
+            self.open_git_history(repository);
+        }
+        header.body(|ui| {
+            self.git_commit_box_ui(ui, repository);
+            self.git_changes_files_ui(ui, repository);
+        });
+    }
+
+    fn git_commit_box_ui(&mut self, ui: &mut egui::Ui, repository: &GitRepositoryState) {
+        let mut commit = false;
+        let mut commit_and_push = false;
+        let message = self
+            .git
+            .commit_messages
+            .entry(repository.root.clone())
+            .or_default();
+        ui.add(
+            TextEdit::multiline(message)
+                .id(ui.make_persistent_id(("git_commit_message", &repository.root)))
+                .hint_text("Commit message")
+                .desired_width(f32::INFINITY)
+                .desired_rows(4),
+        );
+        ui.horizontal(|ui| {
+            if ui.button("Commit").clicked() {
+                commit = true;
+            }
+            if ui.button("Commit & Push").clicked() {
+                commit_and_push = true;
+            }
+        });
+
+        if commit {
+            self.commit_git_repository(repository, false);
+        }
+        if commit_and_push {
+            self.commit_git_repository(repository, true);
+        }
     }
 
     pub(super) fn git_repository_menu(
@@ -438,4 +435,20 @@ impl WorkspaceGitStatus {
             Self::Untracked => Color32::from_rgb(86, 156, 214),
         }
     }
+}
+
+/// The ahead / behind label and its tooltip, when there is anything to pull or push.
+fn git_tracking_label(repository: &GitRepositoryState) -> Option<(String, String)> {
+    let tracking = repository.tracking.as_ref()?;
+    if tracking.ahead == 0 && tracking.behind == 0 {
+        return None;
+    }
+    let upstream = repository.upstream.as_deref().unwrap_or("upstream");
+    Some((
+        format!("{}↓ {}↑", tracking.behind, tracking.ahead),
+        format!(
+            "{} commits to pull from {upstream}\n{} commits to push to {upstream}",
+            tracking.behind, tracking.ahead
+        ),
+    ))
 }

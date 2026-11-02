@@ -366,92 +366,15 @@ impl CodeReaderApp {
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
         self.lsp_mut(language).debug.last_duration_ms = duration_ms;
 
-        let locations = match response.result {
+        match response.result {
+            Ok(locations) if pending.kind == LspRequestKind::Definition => {
+                self.handle_lsp_definition_locations(language, &pending, locations, duration_ms);
+            }
             Ok(locations) => {
-                self.lsp_mut(language).debug.last_status = match response.kind {
-                    LspRequestKind::WarmUp => "warmup_ok",
-                    LspRequestKind::Definition => "definition_ok",
-                    LspRequestKind::References => "references_ok",
-                    LspRequestKind::Sync => "sync_ok",
-                }
-                .to_owned();
-                self.lsp_mut(language).debug.last_error = None;
-                self.lsp_mut(language).debug.last_location_count = locations.len();
-                if response.kind == LspRequestKind::Definition {
-                    self.lsp_mut(language).debug.record_definition_status(
-                        "definition_ok",
-                        None,
-                        duration_ms,
-                        locations.len(),
-                    );
-                }
-                locations
-            }
-            Err(error) => {
-                self.lsp_mut(language).debug.last_error = Some(error.clone());
-                self.lsp_mut(language).debug.last_status = match response.kind {
-                    LspRequestKind::WarmUp => "warmup_failed",
-                    LspRequestKind::Definition => "definition_failed",
-                    LspRequestKind::References => "references_failed",
-                    LspRequestKind::Sync => "sync_failed",
-                }
-                .to_owned();
-                if pending.kind == LspRequestKind::Definition {
-                    self.lsp_mut(language).debug.record_definition_status(
-                        "definition_failed",
-                        Some(error.clone()),
-                        duration_ms,
-                        0,
-                    );
-                }
-                self.lsp.definition_candidates.clear();
-                self.close_references_overlay();
-                self.lsp.location_list_kind = LocationListKind::Definitions;
-                self.status_message = format!(
-                    "{} LSP failed for `{}`. ({error})",
-                    language.label(),
-                    pending.identifier
-                );
-                return;
-            }
-        };
-
-        match pending.kind {
-            LspRequestKind::Definition => {
-                if language == LspLanguage::Rust && locations.is_empty() {
-                    self.lsp_mut(language).debug.last_status = "definition_empty".to_owned();
-                    self.lsp_mut(language).debug.record_definition_status(
-                        "definition_empty",
-                        None,
-                        duration_ms,
-                        0,
-                    );
-                    self.lsp.definition_candidates.clear();
-                    self.lsp.location_list_kind = LocationListKind::Definitions;
-                    self.status_message = self.rust_lsp_definition_pending_message(
-                        &pending.identifier,
-                        "returned no definition",
-                    );
-                    return;
-                }
-                if locations.len() == 1
-                    && location_contains_position(
-                        &locations[0],
-                        &pending.document.path,
-                        pending.position,
-                    )
-                    && self.request_lsp_references(language, pending.clone())
-                {
-                    return;
-                }
-                self.handle_locations_with_origin(
-                    &pending.identifier,
-                    locations,
-                    LocationListKind::Definitions,
-                    pending.origin.clone(),
-                );
-            }
-            LspRequestKind::References => {
+                let debug = &mut self.lsp_mut(language).debug;
+                debug.last_status = "references_ok".to_owned();
+                debug.last_error = None;
+                debug.last_location_count = locations.len();
                 self.handle_locations_with_origin(
                     &pending.identifier,
                     locations,
@@ -459,9 +382,76 @@ impl CodeReaderApp {
                     pending.origin.clone(),
                 );
             }
-            LspRequestKind::WarmUp => {}
-            LspRequestKind::Sync => {}
+            Err(error) => self.handle_lsp_request_error(language, &pending, error, duration_ms),
         }
+    }
+
+    fn handle_lsp_definition_locations(
+        &mut self,
+        language: LspLanguage,
+        pending: &PendingLspRequest,
+        locations: Vec<Location>,
+        duration_ms: Option<f64>,
+    ) {
+        let debug = &mut self.lsp_mut(language).debug;
+        debug.last_status = "definition_ok".to_owned();
+        debug.last_error = None;
+        debug.last_location_count = locations.len();
+        debug.record_definition_status("definition_ok", None, duration_ms, locations.len());
+
+        if language == LspLanguage::Rust && locations.is_empty() {
+            let debug = &mut self.lsp_mut(language).debug;
+            debug.last_status = "definition_empty".to_owned();
+            debug.record_definition_status("definition_empty", None, duration_ms, 0);
+            self.lsp.definition_candidates.clear();
+            self.lsp.location_list_kind = LocationListKind::Definitions;
+            self.status_message = self
+                .rust_lsp_definition_pending_message(&pending.identifier, "returned no definition");
+            return;
+        }
+        // F12 on a definition itself means "show who uses it".
+        if locations.len() == 1
+            && location_contains_position(&locations[0], &pending.document.path, pending.position)
+            && self.request_lsp_references(language, pending.clone())
+        {
+            return;
+        }
+        self.handle_locations_with_origin(
+            &pending.identifier,
+            locations,
+            LocationListKind::Definitions,
+            pending.origin.clone(),
+        );
+    }
+
+    fn handle_lsp_request_error(
+        &mut self,
+        language: LspLanguage,
+        pending: &PendingLspRequest,
+        error: String,
+        duration_ms: Option<f64>,
+    ) {
+        let debug = &mut self.lsp_mut(language).debug;
+        debug.last_error = Some(error.clone());
+        if pending.kind == LspRequestKind::Definition {
+            debug.last_status = "definition_failed".to_owned();
+            debug.record_definition_status(
+                "definition_failed",
+                Some(error.clone()),
+                duration_ms,
+                0,
+            );
+        } else {
+            debug.last_status = "references_failed".to_owned();
+        }
+        self.lsp.definition_candidates.clear();
+        self.close_references_overlay();
+        self.lsp.location_list_kind = LocationListKind::Definitions;
+        self.status_message = format!(
+            "{} LSP failed for `{}`. ({error})",
+            language.label(),
+            pending.identifier
+        );
     }
 
     pub(super) fn handle_lsp_warmup_response(

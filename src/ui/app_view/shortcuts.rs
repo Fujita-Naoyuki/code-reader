@@ -23,116 +23,79 @@ impl CodeReaderApp {
                 });
                 ui.separator();
 
-                let row_height = 24.0;
-                let shortcut_width = 164.0;
-                let column_gap = 20.0;
-                let body_font = TextStyle::Body.resolve(ui.style());
-                let monospace_font = TextStyle::Monospace.resolve(ui.style());
-                let weak_text_color = ui.visuals().weak_text_color();
-                let draw_left_text = |ui: &egui::Ui,
-                                      rect: egui::Rect,
-                                      text: &str,
-                                      font: egui::FontId,
-                                      color: egui::Color32| {
-                    ui.painter().with_clip_rect(rect).text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        text,
-                        font,
-                        color,
-                    );
-                };
-
                 ScrollArea::vertical()
                     .id_salt("shortcuts_help_groups")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for (group_index, group) in groups.into_iter().enumerate() {
-                            let row_width = ui.available_width();
+                        for (group_index, group) in groups.iter().enumerate() {
                             if group_index > 0 {
                                 ui.add_space(10.0);
                             }
-
-                            let (group_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(row_width, row_height),
-                                egui::Sense::hover(),
-                            );
-                            ui.painter().rect_filled(
-                                group_rect.shrink2(egui::vec2(0.0, 2.0)),
-                                2.0,
-                                ui.visuals().extreme_bg_color,
-                            );
-                            draw_left_text(
-                                ui,
-                                group_rect.shrink2(egui::vec2(6.0, 0.0)),
-                                group.title,
-                                body_font.clone(),
-                                ui.visuals().text_color(),
-                            );
-                            ui.add_space(4.0);
-
-                            let (header_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(row_width, row_height),
-                                egui::Sense::hover(),
-                            );
-                            let shortcut_header_rect = egui::Rect::from_min_size(
-                                header_rect.min,
-                                egui::vec2(shortcut_width, row_height),
-                            );
-                            let action_header_rect = egui::Rect::from_min_max(
-                                egui::pos2(
-                                    shortcut_header_rect.right() + column_gap,
-                                    header_rect.top(),
-                                ),
-                                header_rect.right_bottom(),
-                            );
-                            draw_left_text(
-                                ui,
-                                shortcut_header_rect,
-                                "Shortcut",
-                                body_font.clone(),
-                                weak_text_color,
-                            );
-                            draw_left_text(
-                                ui,
-                                action_header_rect,
-                                "Action",
-                                body_font.clone(),
-                                weak_text_color,
-                            );
-                            ui.separator();
-
-                            for shortcut in group.shortcuts {
-                                let (row_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(row_width, row_height),
-                                    egui::Sense::hover(),
-                                );
-                                let shortcut_rect = egui::Rect::from_min_size(
-                                    row_rect.min,
-                                    egui::vec2(shortcut_width, row_height),
-                                );
-                                let action_rect = egui::Rect::from_min_max(
-                                    egui::pos2(shortcut_rect.right() + column_gap, row_rect.top()),
-                                    row_rect.right_bottom(),
-                                );
-                                draw_left_text(
-                                    ui,
-                                    shortcut_rect,
-                                    shortcut.keys,
-                                    monospace_font.clone(),
-                                    ui.visuals().text_color(),
-                                );
-                                draw_left_text(
-                                    ui,
-                                    action_rect,
-                                    shortcut.label,
-                                    body_font.clone(),
-                                    ui.visuals().text_color(),
-                                );
-                            }
+                            help_group_ui(ui, group);
                             ui.add_space(8.0);
                         }
                     });
             });
+    }
+}
+
+const HELP_ROW_HEIGHT: f32 = 24.0;
+
+/// A Help row split into its Shortcut and Action cells.
+fn help_row_cells(ui: &mut egui::Ui) -> (egui::Rect, egui::Rect) {
+    const SHORTCUT_WIDTH: f32 = 164.0;
+    const COLUMN_GAP: f32 = 20.0;
+    let (row_rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), HELP_ROW_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let shortcut_rect =
+        egui::Rect::from_min_size(row_rect.min, egui::vec2(SHORTCUT_WIDTH, HELP_ROW_HEIGHT));
+    let action_rect = egui::Rect::from_min_max(
+        egui::pos2(shortcut_rect.right() + COLUMN_GAP, row_rect.top()),
+        row_rect.right_bottom(),
+    );
+    (shortcut_rect, action_rect)
+}
+
+fn help_group_ui(ui: &mut egui::Ui, group: &ShortcutGroup) {
+    let body_font = TextStyle::Body.resolve(ui.style());
+    let monospace_font = TextStyle::Monospace.resolve(ui.style());
+    let text_color = ui.visuals().text_color();
+    let weak_text_color = ui.visuals().weak_text_color();
+
+    let (group_rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), HELP_ROW_HEIGHT),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect_filled(
+        group_rect.shrink2(egui::vec2(0.0, 2.0)),
+        2.0,
+        ui.visuals().extreme_bg_color,
+    );
+    paint_row_text(
+        ui,
+        group_rect.shrink2(egui::vec2(6.0, 0.0)),
+        group.title,
+        &body_font,
+        text_color,
+    );
+    ui.add_space(4.0);
+
+    let (shortcut_header, action_header) = help_row_cells(ui);
+    paint_row_text(ui, shortcut_header, "Shortcut", &body_font, weak_text_color);
+    paint_row_text(ui, action_header, "Action", &body_font, weak_text_color);
+    ui.separator();
+
+    for shortcut in &group.shortcuts {
+        let (shortcut_rect, action_rect) = help_row_cells(ui);
+        paint_row_text(
+            ui,
+            shortcut_rect,
+            shortcut.keys,
+            &monospace_font,
+            text_color,
+        );
+        paint_row_text(ui, action_rect, shortcut.label, &body_font, text_color);
     }
 }

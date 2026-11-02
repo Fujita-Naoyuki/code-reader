@@ -166,10 +166,39 @@ impl CodeReaderApp {
         self.status_message = format!("Workspace search started: {query}");
     }
 
+    /// The results, grouped by file. Returns the match clicked.
+    fn workspace_search_results_ui(&mut self, ui: &mut egui::Ui) -> Option<Location> {
+        let mut open_location = None;
+        let roots = self
+            .current_session()
+            .map(|session| session.root_folders.clone())
+            .unwrap_or_default();
+        let results = self.search.workspace.results.clone();
+        ScrollArea::vertical()
+            .id_salt("workspace_search_results")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                if self.search.workspace.searching {
+                    ui.label(RichText::new("Searching...").weak());
+                    return;
+                }
+                if !self.search.workspace.searched_query.is_empty() && results.is_empty() {
+                    ui.label(RichText::new("No results").weak());
+                    return;
+                }
+
+                for file_result in &results {
+                    if let Some(location) = workspace_search_file_ui(ui, file_result, &roots) {
+                        open_location = Some(location);
+                    }
+                }
+            });
+        open_location
+    }
+
     pub(super) fn workspace_search_ui(&mut self, ui: &mut egui::Ui) {
         let mut run_search = false;
         let mut close_search = false;
-        let mut open_location = None;
 
         let input_id = ui.id().with("workspace_search_query");
         let input_had_focus = ui.memory(|memory| memory.has_focus(input_id));
@@ -227,61 +256,7 @@ impl CodeReaderApp {
         };
         ui.label(RichText::new(result_label).weak());
 
-        let roots = self
-            .current_session()
-            .map(|session| session.root_folders.clone())
-            .unwrap_or_default();
-        let results = self.search.workspace.results.clone();
-        ScrollArea::vertical()
-            .id_salt("workspace_search_results")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                if self.search.workspace.searching {
-                    ui.label(RichText::new("Searching...").weak());
-                    return;
-                }
-                if !self.search.workspace.searched_query.is_empty() && results.is_empty() {
-                    ui.label(RichText::new("No results").weak());
-                    return;
-                }
-
-                for file_result in results {
-                    let label = format!(
-                        "{} ({})",
-                        workspace_search_display_path(&file_result.path, &roots),
-                        file_result.matches.len()
-                    );
-                    ui.push_id(&file_result.path, |ui| {
-                        egui::CollapsingHeader::new(RichText::new(label).monospace())
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                for (match_index, search_match) in
-                                    file_result.matches.iter().enumerate()
-                                {
-                                    let line_label = format!(
-                                        "{:>5}: {}",
-                                        search_match.position.line + 1,
-                                        search_match.preview
-                                    );
-                                    let clicked = ui
-                                        .push_id(match_index, |ui| {
-                                            ui.button(RichText::new(line_label).monospace())
-                                                .clicked()
-                                        })
-                                        .inner;
-                                    if clicked {
-                                        let range = Range::new(
-                                            search_match.position,
-                                            search_match.position,
-                                        );
-                                        open_location =
-                                            Some(Location::new(file_result.path.clone(), range));
-                                    }
-                                }
-                            });
-                    });
-                }
-            });
+        let open_location = self.workspace_search_results_ui(ui);
 
         if run_search {
             self.run_workspace_search();
@@ -963,6 +938,43 @@ fn search_result_row_ui(
     );
     paint_row_text(ui, detail_rect, &result.detail, &body_font, detail_color);
     response
+}
+
+/// One file's matches in the workspace search results. Returns the match clicked.
+fn workspace_search_file_ui(
+    ui: &mut egui::Ui,
+    file_result: &WorkspaceSearchFileResult,
+    roots: &[PathBuf],
+) -> Option<Location> {
+    let mut open_location = None;
+    let label = format!(
+        "{} ({})",
+        workspace_search_display_path(&file_result.path, roots),
+        file_result.matches.len()
+    );
+    ui.push_id(&file_result.path, |ui| {
+        egui::CollapsingHeader::new(RichText::new(label).monospace())
+            .default_open(true)
+            .show(ui, |ui| {
+                for (match_index, search_match) in file_result.matches.iter().enumerate() {
+                    let line_label = format!(
+                        "{:>5}: {}",
+                        search_match.position.line + 1,
+                        search_match.preview
+                    );
+                    let clicked = ui
+                        .push_id(match_index, |ui| {
+                            ui.button(RichText::new(line_label).monospace()).clicked()
+                        })
+                        .inner;
+                    if clicked {
+                        let range = Range::new(search_match.position, search_match.position);
+                        open_location = Some(Location::new(file_result.path.clone(), range));
+                    }
+                }
+            });
+    });
+    open_location
 }
 
 #[cfg(test)]
