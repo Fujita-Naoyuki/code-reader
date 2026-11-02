@@ -42,15 +42,15 @@ impl CodeReaderApp {
     }
 
     pub(super) fn ensure_go_lsp_client(&mut self) {
-        if self.go_lsp_client.is_some() {
+        if self.go_lsp.client.is_some() {
             return;
         }
         let roots = self
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        self.go_lsp_client = Some(platform::current().start_lsp(LspServerConfig::go(roots)));
-        self.go_lsp_debug.last_status = "starting".to_owned();
+        self.go_lsp.client = Some(platform::current().start_lsp(LspServerConfig::go(roots)));
+        self.go_lsp.debug.last_status = "starting".to_owned();
     }
 
     pub(super) fn sync_open_go_documents_to_lsp(&mut self) {
@@ -76,28 +76,30 @@ impl CodeReaderApp {
 
     pub(super) fn sync_go_document_to_lsp(&mut self, document: Document) {
         let text_hash = stable_hash(document.text.as_str());
-        if self.go_lsp_synced_hashes.get(&document.path) == Some(&text_hash) {
+        if self.go_lsp.synced_hashes.get(&document.path) == Some(&text_hash) {
             return;
         }
 
         self.ensure_go_lsp_client();
         let result = self
-            .go_lsp_client
+            .go_lsp
+            .client
             .as_mut()
             .expect("Go LSP client is initialized")
             .sync_document(document.clone());
 
         match result {
             Ok(request_id) => {
-                self.go_lsp_synced_hashes
+                self.go_lsp
+                    .synced_hashes
                     .insert(document.path.clone(), text_hash);
                 self.record_go_lsp_request_started(request_id, LspRequestKind::Sync);
-                self.go_lsp_debug.sync_count += 1;
-                self.go_lsp_debug.last_status = format!("sync_queued {}", document.path.display());
+                self.go_lsp.debug.sync_count += 1;
+                self.go_lsp.debug.last_status = format!("sync_queued {}", document.path.display());
             }
             Err(error) => {
-                self.go_lsp_debug.last_status = "sync_queue_failed".to_owned();
-                self.go_lsp_debug.last_error = Some(error);
+                self.go_lsp.debug.last_status = "sync_queue_failed".to_owned();
+                self.go_lsp.debug.last_error = Some(error);
             }
         }
     }
@@ -108,10 +110,11 @@ impl CodeReaderApp {
         kind: LspRequestKind,
     ) -> Instant {
         let started_at = Instant::now();
-        self.go_lsp_request_started_at
+        self.go_lsp
+            .request_started_at
             .insert(request_id, started_at);
-        self.go_lsp_debug.last_request_id = Some(request_id);
-        self.go_lsp_debug.last_kind = Some(kind);
+        self.go_lsp.debug.last_request_id = Some(request_id);
+        self.go_lsp.debug.last_kind = Some(kind);
         started_at
     }
 
@@ -124,14 +127,14 @@ impl CodeReaderApp {
         self.ensure_go_lsp_client();
         let origin = self.focused_editor().navigation_point();
 
-        let Some(client) = &mut self.go_lsp_client else {
+        let Some(client) = &mut self.go_lsp.client else {
             return false;
         };
         match client.request_definition(document.clone(), position) {
             Ok(request_id) => {
                 let started_at =
                     self.record_go_lsp_request_started(request_id, LspRequestKind::Definition);
-                self.pending_go_lsp_request = Some(PendingGoLspRequest {
+                self.go_lsp.pending = Some(PendingLspRequest {
                     request_id,
                     kind: LspRequestKind::Definition,
                     document,
@@ -142,17 +145,18 @@ impl CodeReaderApp {
                 });
                 self.definition_candidates.clear();
                 self.location_list_kind = LocationListKind::Definitions;
-                self.go_lsp_debug.definition_count += 1;
-                self.go_lsp_debug.last_status = "definition_queued".to_owned();
-                self.go_lsp_debug
+                self.go_lsp.debug.definition_count += 1;
+                self.go_lsp.debug.last_status = "definition_queued".to_owned();
+                self.go_lsp
+                    .debug
                     .record_definition_status("definition_queued", None, None, 0);
                 self.status_message = format!("Resolving `{identifier}` with gopls...");
                 true
             }
             Err(error) => {
-                self.go_lsp_debug.last_status = "definition_queue_failed".to_owned();
-                self.go_lsp_debug.last_error = Some(error.clone());
-                self.go_lsp_debug.record_definition_status(
+                self.go_lsp.debug.last_status = "definition_queue_failed".to_owned();
+                self.go_lsp.debug.last_error = Some(error.clone());
+                self.go_lsp.debug.record_definition_status(
                     "definition_queue_failed",
                     Some(error.clone()),
                     None,
@@ -166,8 +170,8 @@ impl CodeReaderApp {
         }
     }
 
-    pub(super) fn request_go_lsp_references(&mut self, pending: PendingGoLspRequest) -> bool {
-        let Some(client) = &mut self.go_lsp_client else {
+    pub(super) fn request_go_lsp_references(&mut self, pending: PendingLspRequest) -> bool {
+        let Some(client) = &mut self.go_lsp.client else {
             return false;
         };
         match client.request_references(pending.document.clone(), pending.position) {
@@ -175,7 +179,7 @@ impl CodeReaderApp {
                 let started_at =
                     self.record_go_lsp_request_started(request_id, LspRequestKind::References);
                 let identifier = pending.identifier.clone();
-                self.pending_go_lsp_request = Some(PendingGoLspRequest {
+                self.go_lsp.pending = Some(PendingLspRequest {
                     request_id,
                     kind: LspRequestKind::References,
                     document: pending.document,
@@ -184,15 +188,15 @@ impl CodeReaderApp {
                     origin: pending.origin,
                     started_at,
                 });
-                self.go_lsp_debug.reference_count += 1;
-                self.go_lsp_debug.last_status = "references_queued".to_owned();
+                self.go_lsp.debug.reference_count += 1;
+                self.go_lsp.debug.last_status = "references_queued".to_owned();
                 self.status_message =
                     format!("Finding references for `{identifier}` with gopls...");
                 true
             }
             Err(error) => {
-                self.go_lsp_debug.last_status = "references_queue_failed".to_owned();
-                self.go_lsp_debug.last_error = Some(error.clone());
+                self.go_lsp.debug.last_status = "references_queue_failed".to_owned();
+                self.go_lsp.debug.last_error = Some(error.clone());
                 self.status_message = format!("Go references request failed. ({error})");
                 false
             }
@@ -203,12 +207,12 @@ impl CodeReaderApp {
         self.sync_open_go_documents_to_lsp();
 
         let mut responses = Vec::new();
-        if let Some(client) = &self.go_lsp_client {
+        if let Some(client) = &self.go_lsp.client {
             while let Some(event) = client.try_recv() {
                 match event {
                     LspClientEvent::Response(response) => responses.push(response),
                     LspClientEvent::ServerEvent(event) => {
-                        self.go_lsp_debug.record_server_event(&event);
+                        self.go_lsp.debug.record_server_event(&event);
                     }
                 }
             }
@@ -218,7 +222,7 @@ impl CodeReaderApp {
             self.handle_go_lsp_response(response);
         }
 
-        let Some(pending) = self.pending_go_lsp_request.clone() else {
+        let Some(pending) = self.go_lsp.pending.clone() else {
             return;
         };
         if pending.started_at.elapsed() < GO_LSP_REQUEST_TIMEOUT {
@@ -226,20 +230,20 @@ impl CodeReaderApp {
             return;
         }
 
-        self.pending_go_lsp_request = None;
-        self.go_lsp_request_started_at.remove(&pending.request_id);
-        self.go_lsp_debug.timeout_count += 1;
-        self.go_lsp_debug.last_duration_ms =
+        self.go_lsp.pending = None;
+        self.go_lsp.request_started_at.remove(&pending.request_id);
+        self.go_lsp.debug.timeout_count += 1;
+        self.go_lsp.debug.last_duration_ms =
             Some(pending.started_at.elapsed().as_secs_f64() * 1000.0);
         match pending.kind {
             LspRequestKind::WarmUp => {}
             LspRequestKind::Definition => {
-                self.go_lsp_debug.last_status = "definition_timeout".to_owned();
-                self.go_lsp_debug.last_location_count = 0;
-                self.go_lsp_debug.record_definition_status(
+                self.go_lsp.debug.last_status = "definition_timeout".to_owned();
+                self.go_lsp.debug.last_location_count = 0;
+                self.go_lsp.debug.record_definition_status(
                     "definition_timeout",
                     None,
-                    self.go_lsp_debug.last_duration_ms,
+                    self.go_lsp.debug.last_duration_ms,
                     0,
                 );
                 self.definition_candidates.clear();
@@ -253,7 +257,7 @@ impl CodeReaderApp {
                 self.definition_candidates.clear();
                 self.close_references_overlay();
                 self.location_list_kind = LocationListKind::References;
-                self.go_lsp_debug.last_status = "references_timeout".to_owned();
+                self.go_lsp.debug.last_status = "references_timeout".to_owned();
                 self.status_message =
                     format!("gopls references timed out for `{}`.", pending.identifier);
             }
@@ -267,32 +271,33 @@ impl CodeReaderApp {
             return;
         }
 
-        let Some(pending) = self.pending_go_lsp_request.clone() else {
+        let Some(pending) = self.go_lsp.pending.clone() else {
             return;
         };
         if response.request_id != pending.request_id || response.kind != pending.kind {
             return;
         }
-        self.pending_go_lsp_request = None;
+        self.go_lsp.pending = None;
         let duration_ms = self
-            .go_lsp_request_started_at
+            .go_lsp
+            .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.go_lsp_debug.last_duration_ms = duration_ms;
+        self.go_lsp.debug.last_duration_ms = duration_ms;
 
         let locations = match response.result {
             Ok(locations) => {
-                self.go_lsp_debug.last_status = match response.kind {
+                self.go_lsp.debug.last_status = match response.kind {
                     LspRequestKind::WarmUp => "warmup_ok",
                     LspRequestKind::Definition => "definition_ok",
                     LspRequestKind::References => "references_ok",
                     LspRequestKind::Sync => "sync_ok",
                 }
                 .to_owned();
-                self.go_lsp_debug.last_error = None;
-                self.go_lsp_debug.last_location_count = locations.len();
+                self.go_lsp.debug.last_error = None;
+                self.go_lsp.debug.last_location_count = locations.len();
                 if response.kind == LspRequestKind::Definition {
-                    self.go_lsp_debug.record_definition_status(
+                    self.go_lsp.debug.record_definition_status(
                         "definition_ok",
                         None,
                         duration_ms,
@@ -302,8 +307,8 @@ impl CodeReaderApp {
                 locations
             }
             Err(error) => {
-                self.go_lsp_debug.last_error = Some(error.clone());
-                self.go_lsp_debug.last_status = match response.kind {
+                self.go_lsp.debug.last_error = Some(error.clone());
+                self.go_lsp.debug.last_status = match response.kind {
                     LspRequestKind::WarmUp => "warmup_failed",
                     LspRequestKind::Definition => "definition_failed",
                     LspRequestKind::References => "references_failed",
@@ -311,7 +316,7 @@ impl CodeReaderApp {
                 }
                 .to_owned();
                 if pending.kind == LspRequestKind::Definition {
-                    self.go_lsp_debug.record_definition_status(
+                    self.go_lsp.debug.record_definition_status(
                         "definition_failed",
                         Some(error.clone()),
                         duration_ms,
@@ -360,36 +365,37 @@ impl CodeReaderApp {
     }
 
     pub(super) fn handle_go_lsp_sync_response(&mut self, response: LspLocationResponse) {
-        self.go_lsp_debug.last_duration_ms = self
-            .go_lsp_request_started_at
+        self.go_lsp.debug.last_duration_ms = self
+            .go_lsp
+            .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.go_lsp_debug.last_request_id = Some(response.request_id);
-        self.go_lsp_debug.last_kind = Some(response.kind);
+        self.go_lsp.debug.last_request_id = Some(response.request_id);
+        self.go_lsp.debug.last_kind = Some(response.kind);
         match response.result {
             Ok(locations) => {
-                self.go_lsp_debug.last_status = "sync_ok".to_owned();
-                self.go_lsp_debug.last_error = None;
-                self.go_lsp_debug.last_location_count = locations.len();
+                self.go_lsp.debug.last_status = "sync_ok".to_owned();
+                self.go_lsp.debug.last_error = None;
+                self.go_lsp.debug.last_location_count = locations.len();
             }
             Err(error) => {
-                self.go_lsp_debug.last_status = "sync_failed".to_owned();
-                self.go_lsp_debug.last_error = Some(error);
+                self.go_lsp.debug.last_status = "sync_failed".to_owned();
+                self.go_lsp.debug.last_error = Some(error);
             }
         }
     }
 
     pub(super) fn ensure_rust_lsp_client(&mut self) {
-        if self.rust_lsp_client.is_some() {
+        if self.rust_lsp.client.is_some() {
             return;
         }
         let roots = self
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        self.rust_lsp_client =
+        self.rust_lsp.client =
             Some(platform::current().start_lsp(LspServerConfig::rust_analyzer(roots)));
-        self.rust_lsp_debug.mark_started();
+        self.rust_lsp.debug.mark_started();
     }
 
     pub(super) fn warm_up_rust_lsp_for_workspace(&mut self) {
@@ -398,19 +404,19 @@ impl CodeReaderApp {
         }
 
         self.ensure_rust_lsp_client();
-        let Some(client) = &mut self.rust_lsp_client else {
+        let Some(client) = &mut self.rust_lsp.client else {
             return;
         };
 
         match client.warm_up() {
             Ok(request_id) => {
                 self.record_rust_lsp_request_started(request_id, LspRequestKind::WarmUp);
-                self.rust_lsp_debug.warmup_count += 1;
-                self.rust_lsp_debug.last_status = "warmup_queued".to_owned();
+                self.rust_lsp.debug.warmup_count += 1;
+                self.rust_lsp.debug.last_status = "warmup_queued".to_owned();
             }
             Err(error) => {
-                self.rust_lsp_debug.last_status = "warmup_queue_failed".to_owned();
-                self.rust_lsp_debug.last_error = Some(error);
+                self.rust_lsp.debug.last_status = "warmup_queue_failed".to_owned();
+                self.rust_lsp.debug.last_error = Some(error);
             }
         }
     }
@@ -445,29 +451,31 @@ impl CodeReaderApp {
 
     pub(super) fn sync_rust_document_to_lsp(&mut self, document: Document) {
         let text_hash = stable_hash(document.text.as_str());
-        if self.rust_lsp_synced_hashes.get(&document.path) == Some(&text_hash) {
+        if self.rust_lsp.synced_hashes.get(&document.path) == Some(&text_hash) {
             return;
         }
 
         self.ensure_rust_lsp_client();
         let result = self
-            .rust_lsp_client
+            .rust_lsp
+            .client
             .as_mut()
             .expect("Rust LSP client is initialized")
             .sync_document(document.clone());
 
         match result {
             Ok(request_id) => {
-                self.rust_lsp_synced_hashes
+                self.rust_lsp
+                    .synced_hashes
                     .insert(document.path.clone(), text_hash);
                 self.record_rust_lsp_request_started(request_id, LspRequestKind::Sync);
-                self.rust_lsp_debug.sync_count += 1;
-                self.rust_lsp_debug.last_status =
+                self.rust_lsp.debug.sync_count += 1;
+                self.rust_lsp.debug.last_status =
                     format!("sync_queued {}", document.path.display());
             }
             Err(error) => {
-                self.rust_lsp_debug.last_status = "sync_queue_failed".to_owned();
-                self.rust_lsp_debug.last_error = Some(error);
+                self.rust_lsp.debug.last_status = "sync_queue_failed".to_owned();
+                self.rust_lsp.debug.last_error = Some(error);
             }
         }
     }
@@ -478,10 +486,11 @@ impl CodeReaderApp {
         kind: LspRequestKind,
     ) -> Instant {
         let started_at = Instant::now();
-        self.rust_lsp_request_started_at
+        self.rust_lsp
+            .request_started_at
             .insert(request_id, started_at);
-        self.rust_lsp_debug.last_request_id = Some(request_id);
-        self.rust_lsp_debug.last_kind = Some(kind);
+        self.rust_lsp.debug.last_request_id = Some(request_id);
+        self.rust_lsp.debug.last_kind = Some(kind);
         started_at
     }
 
@@ -494,14 +503,14 @@ impl CodeReaderApp {
         self.ensure_rust_lsp_client();
         let origin = self.focused_editor().navigation_point();
 
-        let Some(client) = &mut self.rust_lsp_client else {
+        let Some(client) = &mut self.rust_lsp.client else {
             return false;
         };
         match client.request_definition(document.clone(), position) {
             Ok(request_id) => {
                 let started_at =
                     self.record_rust_lsp_request_started(request_id, LspRequestKind::Definition);
-                self.pending_rust_lsp_request = Some(PendingGoLspRequest {
+                self.rust_lsp.pending = Some(PendingLspRequest {
                     request_id,
                     kind: LspRequestKind::Definition,
                     document,
@@ -512,17 +521,18 @@ impl CodeReaderApp {
                 });
                 self.definition_candidates.clear();
                 self.location_list_kind = LocationListKind::Definitions;
-                self.rust_lsp_debug.definition_count += 1;
-                self.rust_lsp_debug.last_status = "definition_queued".to_owned();
-                self.rust_lsp_debug
+                self.rust_lsp.debug.definition_count += 1;
+                self.rust_lsp.debug.last_status = "definition_queued".to_owned();
+                self.rust_lsp
+                    .debug
                     .record_definition_status("definition_queued", None, None, 0);
                 self.status_message = format!("Resolving `{identifier}` with rust-analyzer...");
                 true
             }
             Err(error) => {
-                self.rust_lsp_debug.last_status = "definition_queue_failed".to_owned();
-                self.rust_lsp_debug.last_error = Some(error.clone());
-                self.rust_lsp_debug.record_definition_status(
+                self.rust_lsp.debug.last_status = "definition_queue_failed".to_owned();
+                self.rust_lsp.debug.last_error = Some(error.clone());
+                self.rust_lsp.debug.record_definition_status(
                     "definition_queue_failed",
                     Some(error.clone()),
                     None,
@@ -534,8 +544,8 @@ impl CodeReaderApp {
         }
     }
 
-    pub(super) fn request_rust_lsp_references(&mut self, pending: PendingGoLspRequest) -> bool {
-        let Some(client) = &mut self.rust_lsp_client else {
+    pub(super) fn request_rust_lsp_references(&mut self, pending: PendingLspRequest) -> bool {
+        let Some(client) = &mut self.rust_lsp.client else {
             return false;
         };
         match client.request_references(pending.document.clone(), pending.position) {
@@ -543,7 +553,7 @@ impl CodeReaderApp {
                 let started_at =
                     self.record_rust_lsp_request_started(request_id, LspRequestKind::References);
                 let identifier = pending.identifier.clone();
-                self.pending_rust_lsp_request = Some(PendingGoLspRequest {
+                self.rust_lsp.pending = Some(PendingLspRequest {
                     request_id,
                     kind: LspRequestKind::References,
                     document: pending.document,
@@ -552,15 +562,15 @@ impl CodeReaderApp {
                     origin: pending.origin,
                     started_at,
                 });
-                self.rust_lsp_debug.reference_count += 1;
-                self.rust_lsp_debug.last_status = "references_queued".to_owned();
+                self.rust_lsp.debug.reference_count += 1;
+                self.rust_lsp.debug.last_status = "references_queued".to_owned();
                 self.status_message =
                     format!("Finding references for `{identifier}` with rust-analyzer...");
                 true
             }
             Err(error) => {
-                self.rust_lsp_debug.last_status = "references_queue_failed".to_owned();
-                self.rust_lsp_debug.last_error = Some(error.clone());
+                self.rust_lsp.debug.last_status = "references_queue_failed".to_owned();
+                self.rust_lsp.debug.last_error = Some(error.clone());
                 self.status_message = format!("Rust references request failed. ({error})");
                 false
             }
@@ -571,12 +581,12 @@ impl CodeReaderApp {
         self.sync_open_rust_documents_to_lsp();
 
         let mut responses = Vec::new();
-        if let Some(client) = &self.rust_lsp_client {
+        if let Some(client) = &self.rust_lsp.client {
             while let Some(event) = client.try_recv() {
                 match event {
                     LspClientEvent::Response(response) => responses.push(response),
                     LspClientEvent::ServerEvent(event) => {
-                        self.rust_lsp_debug.record_server_event(&event);
+                        self.rust_lsp.debug.record_server_event(&event);
                     }
                 }
             }
@@ -586,7 +596,7 @@ impl CodeReaderApp {
             self.handle_rust_lsp_response(response);
         }
 
-        let Some(pending) = self.pending_rust_lsp_request.clone() else {
+        let Some(pending) = self.rust_lsp.pending.clone() else {
             return;
         };
         if pending.started_at.elapsed() < RUST_LSP_REQUEST_TIMEOUT {
@@ -594,19 +604,19 @@ impl CodeReaderApp {
             return;
         }
 
-        self.pending_rust_lsp_request = None;
-        self.rust_lsp_request_started_at.remove(&pending.request_id);
-        self.rust_lsp_debug.timeout_count += 1;
-        self.rust_lsp_debug.last_duration_ms =
+        self.rust_lsp.pending = None;
+        self.rust_lsp.request_started_at.remove(&pending.request_id);
+        self.rust_lsp.debug.timeout_count += 1;
+        self.rust_lsp.debug.last_duration_ms =
             Some(pending.started_at.elapsed().as_secs_f64() * 1000.0);
         match pending.kind {
             LspRequestKind::WarmUp => {}
             LspRequestKind::Definition => {
-                self.rust_lsp_debug.last_status = "definition_timeout".to_owned();
-                self.rust_lsp_debug.record_definition_status(
+                self.rust_lsp.debug.last_status = "definition_timeout".to_owned();
+                self.rust_lsp.debug.record_definition_status(
                     "definition_timeout",
                     None,
-                    self.rust_lsp_debug.last_duration_ms,
+                    self.rust_lsp.debug.last_duration_ms,
                     0,
                 );
                 self.definition_candidates.clear();
@@ -620,7 +630,7 @@ impl CodeReaderApp {
                 self.definition_candidates.clear();
                 self.close_references_overlay();
                 self.location_list_kind = LocationListKind::References;
-                self.rust_lsp_debug.last_status = "references_timeout".to_owned();
+                self.rust_lsp.debug.last_status = "references_timeout".to_owned();
                 self.status_message = format!(
                     "rust-analyzer references timed out for `{}`.",
                     pending.identifier
@@ -640,32 +650,33 @@ impl CodeReaderApp {
             return;
         }
 
-        let Some(pending) = self.pending_rust_lsp_request.clone() else {
+        let Some(pending) = self.rust_lsp.pending.clone() else {
             return;
         };
         if response.request_id != pending.request_id || response.kind != pending.kind {
             return;
         }
-        self.pending_rust_lsp_request = None;
+        self.rust_lsp.pending = None;
         let duration_ms = self
-            .rust_lsp_request_started_at
+            .rust_lsp
+            .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.rust_lsp_debug.last_duration_ms = duration_ms;
+        self.rust_lsp.debug.last_duration_ms = duration_ms;
 
         let locations = match response.result {
             Ok(locations) => {
-                self.rust_lsp_debug.last_status = match response.kind {
+                self.rust_lsp.debug.last_status = match response.kind {
                     LspRequestKind::WarmUp => "warmup_ok",
                     LspRequestKind::Definition => "definition_ok",
                     LspRequestKind::References => "references_ok",
                     LspRequestKind::Sync => "sync_ok",
                 }
                 .to_owned();
-                self.rust_lsp_debug.last_error = None;
-                self.rust_lsp_debug.last_location_count = locations.len();
+                self.rust_lsp.debug.last_error = None;
+                self.rust_lsp.debug.last_location_count = locations.len();
                 if response.kind == LspRequestKind::Definition {
-                    self.rust_lsp_debug.record_definition_status(
+                    self.rust_lsp.debug.record_definition_status(
                         "definition_ok",
                         None,
                         duration_ms,
@@ -675,8 +686,8 @@ impl CodeReaderApp {
                 locations
             }
             Err(error) => {
-                self.rust_lsp_debug.last_error = Some(error.clone());
-                self.rust_lsp_debug.last_status = match response.kind {
+                self.rust_lsp.debug.last_error = Some(error.clone());
+                self.rust_lsp.debug.last_status = match response.kind {
                     LspRequestKind::WarmUp => "warmup_failed",
                     LspRequestKind::Definition => "definition_failed",
                     LspRequestKind::References => "references_failed",
@@ -684,7 +695,7 @@ impl CodeReaderApp {
                 }
                 .to_owned();
                 if pending.kind == LspRequestKind::Definition {
-                    self.rust_lsp_debug.record_definition_status(
+                    self.rust_lsp.debug.record_definition_status(
                         "definition_failed",
                         Some(error.clone()),
                         duration_ms,
@@ -703,8 +714,8 @@ impl CodeReaderApp {
         match pending.kind {
             LspRequestKind::Definition => {
                 if locations.is_empty() {
-                    self.rust_lsp_debug.last_status = "definition_empty".to_owned();
-                    self.rust_lsp_debug.record_definition_status(
+                    self.rust_lsp.debug.last_status = "definition_empty".to_owned();
+                    self.rust_lsp.debug.record_definition_status(
                         "definition_empty",
                         None,
                         duration_ms,
@@ -749,41 +760,43 @@ impl CodeReaderApp {
     }
 
     pub(super) fn handle_rust_lsp_warmup_response(&mut self, response: LspLocationResponse) {
-        self.rust_lsp_debug.last_duration_ms = self
-            .rust_lsp_request_started_at
+        self.rust_lsp.debug.last_duration_ms = self
+            .rust_lsp
+            .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.rust_lsp_debug.last_request_id = Some(response.request_id);
-        self.rust_lsp_debug.last_kind = Some(response.kind);
+        self.rust_lsp.debug.last_request_id = Some(response.request_id);
+        self.rust_lsp.debug.last_kind = Some(response.kind);
         match response.result {
             Ok(locations) => {
-                self.rust_lsp_debug.last_status = "warmup_ok".to_owned();
-                self.rust_lsp_debug.last_error = None;
-                self.rust_lsp_debug.last_location_count = locations.len();
+                self.rust_lsp.debug.last_status = "warmup_ok".to_owned();
+                self.rust_lsp.debug.last_error = None;
+                self.rust_lsp.debug.last_location_count = locations.len();
             }
             Err(error) => {
-                self.rust_lsp_debug.last_status = "warmup_failed".to_owned();
-                self.rust_lsp_debug.last_error = Some(error);
+                self.rust_lsp.debug.last_status = "warmup_failed".to_owned();
+                self.rust_lsp.debug.last_error = Some(error);
             }
         }
     }
 
     pub(super) fn handle_rust_lsp_sync_response(&mut self, response: LspLocationResponse) {
-        self.rust_lsp_debug.last_duration_ms = self
-            .rust_lsp_request_started_at
+        self.rust_lsp.debug.last_duration_ms = self
+            .rust_lsp
+            .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.rust_lsp_debug.last_request_id = Some(response.request_id);
-        self.rust_lsp_debug.last_kind = Some(response.kind);
+        self.rust_lsp.debug.last_request_id = Some(response.request_id);
+        self.rust_lsp.debug.last_kind = Some(response.kind);
         match response.result {
             Ok(locations) => {
-                self.rust_lsp_debug.last_status = "sync_ok".to_owned();
-                self.rust_lsp_debug.last_error = None;
-                self.rust_lsp_debug.last_location_count = locations.len();
+                self.rust_lsp.debug.last_status = "sync_ok".to_owned();
+                self.rust_lsp.debug.last_error = None;
+                self.rust_lsp.debug.last_location_count = locations.len();
             }
             Err(error) => {
-                self.rust_lsp_debug.last_status = "sync_failed".to_owned();
-                self.rust_lsp_debug.last_error = Some(error);
+                self.rust_lsp.debug.last_status = "sync_failed".to_owned();
+                self.rust_lsp.debug.last_error = Some(error);
             }
         }
     }
@@ -796,9 +809,9 @@ impl CodeReaderApp {
         let mut message = format!(
             "rust-analyzer {reason} for `{identifier}`. It may still be indexing workspace/dependencies; wait a moment and retry F12."
         );
-        if !self.rust_lsp_debug.initialized {
+        if !self.rust_lsp.debug.initialized {
             message.push_str(" Current state: starting.");
-        } else if let Some(server_message) = &self.rust_lsp_debug.last_server_message
+        } else if let Some(server_message) = &self.rust_lsp.debug.last_server_message
             && !server_message.is_empty()
         {
             message.push_str(&format!(" Last server message: {server_message}"));
@@ -807,8 +820,8 @@ impl CodeReaderApp {
     }
 
     pub(super) fn rust_lsp_readiness_status_message(&self) -> Option<String> {
-        self.rust_lsp_client.as_ref()?;
-        if !self.has_open_workspace_rust_document() && self.pending_rust_lsp_request.is_none() {
+        self.rust_lsp.client.as_ref()?;
+        if !self.has_open_workspace_rust_document() && self.rust_lsp.pending.is_none() {
             return None;
         }
 
@@ -817,33 +830,33 @@ impl CodeReaderApp {
     }
 
     pub(super) fn rust_lsp_readiness_status(&self) -> RustLspReadinessStatus {
-        if self.rust_lsp_client.is_none() {
+        if self.rust_lsp.client.is_none() {
             return RustLspReadinessStatus::NotStarted;
         }
 
-        if self.rust_lsp_debug.reader_error_count > 0
-            && self.rust_lsp_debug.last_status == "reader_error"
+        if self.rust_lsp.debug.reader_error_count > 0
+            && self.rust_lsp.debug.last_status == "reader_error"
         {
             return RustLspReadinessStatus::Error;
         }
 
-        if !self.rust_lsp_debug.initialized {
+        if !self.rust_lsp.debug.initialized {
             return RustLspReadinessStatus::WarmingUp("starting");
         }
 
-        if self.rust_lsp_debug.active_progress_count > 0 {
+        if self.rust_lsp.debug.active_progress_count > 0 {
             return RustLspReadinessStatus::WarmingUp("indexing");
         }
 
-        if self.rust_lsp_debug.last_definition_success_at.is_some() {
+        if self.rust_lsp.debug.last_definition_success_at.is_some() {
             return RustLspReadinessStatus::Ready("definition");
         }
 
-        if self.rust_lsp_debug.last_diagnostics_at.is_some() {
+        if self.rust_lsp.debug.last_diagnostics_at.is_some() {
             return RustLspReadinessStatus::Ready("diagnostics");
         }
 
-        if self.rust_lsp_debug.sync_count > 0 || self.rust_lsp_debug.warmup_count > 0 {
+        if self.rust_lsp.debug.sync_count > 0 || self.rust_lsp.debug.warmup_count > 0 {
             return RustLspReadinessStatus::WarmingUp("workspace/dependencies");
         }
 
@@ -854,12 +867,12 @@ impl CodeReaderApp {
         format!(
             "rust_lsp_readiness={} active_progress={} started_age_ms={} initialized_age_ms={} last_progress_age_ms={} last_diagnostics_age_ms={} last_definition_success_age_ms={}",
             self.rust_lsp_readiness_status().report_label(),
-            self.rust_lsp_debug.active_progress_count,
-            debug_instant_age_ms(self.rust_lsp_debug.started_at),
-            debug_instant_age_ms(self.rust_lsp_debug.initialized_at),
-            debug_instant_age_ms(self.rust_lsp_debug.last_progress_at),
-            debug_instant_age_ms(self.rust_lsp_debug.last_diagnostics_at),
-            debug_instant_age_ms(self.rust_lsp_debug.last_definition_success_at)
+            self.rust_lsp.debug.active_progress_count,
+            debug_instant_age_ms(self.rust_lsp.debug.started_at),
+            debug_instant_age_ms(self.rust_lsp.debug.initialized_at),
+            debug_instant_age_ms(self.rust_lsp.debug.last_progress_at),
+            debug_instant_age_ms(self.rust_lsp.debug.last_diagnostics_at),
+            debug_instant_age_ms(self.rust_lsp.debug.last_definition_success_at)
         )
     }
 
@@ -1155,8 +1168,18 @@ impl LocationListKind {
     }
 }
 
+/// One language server: its client and what is in flight.
+#[derive(Default)]
+pub(super) struct LspSession {
+    pub(super) client: Option<LspClient>,
+    pub(super) pending: Option<PendingLspRequest>,
+    pub(super) synced_hashes: HashMap<PathBuf, u64>,
+    pub(super) request_started_at: HashMap<u64, Instant>,
+    pub(super) debug: LspDebugState,
+}
+
 #[derive(Debug, Clone)]
-pub(super) struct PendingGoLspRequest {
+pub(super) struct PendingLspRequest {
     pub(super) request_id: u64,
     pub(super) kind: LspRequestKind,
     pub(super) document: Document,

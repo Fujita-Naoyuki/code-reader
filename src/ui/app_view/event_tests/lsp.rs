@@ -61,7 +61,7 @@ fn rust_workspace_warms_up_rust_analyzer_and_syncs_open_files() {
         .expect("warm-up request");
     t.platform.lsp_respond(RUST, warmup, Ok(Vec::new()));
     t.step();
-    assert_eq!(t.app().rust_lsp_debug.last_status, "warmup_ok");
+    assert_eq!(t.app().rust_lsp.debug.last_status, "warmup_ok");
 
     t.click_first("main.rs");
     let sync = t
@@ -74,14 +74,14 @@ fn rust_workspace_warms_up_rust_analyzer_and_syncs_open_files() {
     t.platform
         .lsp_respond(RUST, &sync, Err("sync broke".to_owned()));
     t.step();
-    assert_eq!(t.app().rust_lsp_debug.last_status, "sync_failed");
+    assert_eq!(t.app().rust_lsp.debug.last_status, "sync_failed");
     t.platform.lsp_respond(
         RUST,
         &sync,
         Ok(vec![location(&t.path("src/main.rs"), 0, 0)]),
     );
     t.step();
-    assert_eq!(t.app().rust_lsp_debug.last_status, "sync_ok");
+    assert_eq!(t.app().rust_lsp.debug.last_status, "sync_ok");
 
     // An unchanged document is not re-sent.
     t.steps(3);
@@ -96,7 +96,7 @@ fn rust_workspace_warms_up_rust_analyzer_and_syncs_open_files() {
     t.platform
         .lsp_respond(RUST, warmup, Err("no cargo".to_owned()));
     t.step();
-    assert_eq!(t.app().rust_lsp_debug.last_status, "warmup_failed");
+    assert_eq!(t.app().rust_lsp.debug.last_status, "warmup_failed");
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn f12_jumps_to_a_single_rust_definition_and_back_forward_navigate() {
     t.assert_status("Jumped to definition of `helper`.");
     assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 3)));
     assert_eq!(t.app().left_navigation_history.back.len(), 1);
-    assert!(t.app().rust_lsp_debug.last_definition_success_at.is_some());
+    assert!(t.app().rust_lsp.debug.last_definition_success_at.is_some());
 
     t.alt(egui::Key::ArrowLeft);
     t.assert_status("Returned to previous location.");
@@ -273,7 +273,7 @@ fn rust_definition_errors_empty_results_and_stale_responses() {
     let mut stale = request.clone();
     stale.request_id += 1000;
     respond(&mut t, RUST, &stale, Ok(Vec::new()));
-    assert!(t.app().pending_rust_lsp_request.is_some());
+    assert!(t.app().rust_lsp.pending.is_some());
 
     respond(&mut t, RUST, &request, Ok(Vec::new()));
     t.assert_status_containing("rust-analyzer returned no definition for `helper`.");
@@ -315,7 +315,7 @@ fn rust_definition_errors_empty_results_and_stale_responses() {
     respond(&mut t, RUST, &request, Err("boom".to_owned()));
     t.assert_status("Rust LSP failed for `helper`. (boom)");
     assert_eq!(
-        t.app().rust_lsp_debug.last_definition_status,
+        t.app().rust_lsp.debug.last_definition_status,
         "definition_failed"
     );
 }
@@ -324,14 +324,11 @@ fn rust_definition_errors_empty_results_and_stale_responses() {
 fn rust_definition_and_references_time_out() {
     let mut t = rust_app();
     f12_on_helper(&mut t);
-    t.app_mut()
-        .pending_rust_lsp_request
-        .as_mut()
-        .unwrap()
-        .started_at = Instant::now() - Duration::from_secs(10);
+    t.app_mut().rust_lsp.pending.as_mut().unwrap().started_at =
+        Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status_containing("rust-analyzer did not answer before timeout for `helper`.");
-    assert_eq!(t.app().rust_lsp_debug.timeout_count, 1);
+    assert_eq!(t.app().rust_lsp.debug.timeout_count, 1);
 
     let request = {
         t.key(egui::Key::F12);
@@ -343,11 +340,8 @@ fn rust_definition_and_references_time_out() {
     };
     let main = t.path("src/main.rs");
     respond(&mut t, RUST, &request, Ok(vec![location(&main, 5, 17)]));
-    t.app_mut()
-        .pending_rust_lsp_request
-        .as_mut()
-        .unwrap()
-        .started_at = Instant::now() - Duration::from_secs(10);
+    t.app_mut().rust_lsp.pending.as_mut().unwrap().started_at =
+        Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status("rust-analyzer references timed out for `helper`.");
     assert_eq!(t.app().location_list_kind, LocationListKind::References);
@@ -362,13 +356,13 @@ fn rust_requests_fail_when_the_server_is_gone() {
     t.key(egui::Key::F12);
     t.assert_status("Rust LSP unavailable. (rust-analyzer LSP worker is not running.)");
     assert_eq!(
-        t.app().rust_lsp_debug.last_status,
+        t.app().rust_lsp.debug.last_status,
         "definition_queue_failed"
     );
 
     // Editing re-syncs the document, which fails the same way.
     t.type_text("x");
-    assert_eq!(t.app().rust_lsp_debug.last_status, "sync_queue_failed");
+    assert_eq!(t.app().rust_lsp.debug.last_status, "sync_queue_failed");
 }
 
 #[test]
@@ -590,7 +584,7 @@ fn go_definition_references_and_errors() {
         server_event(LspServerEventKind::Initialized, "initialized"),
     );
     t.step();
-    assert!(t.app().go_lsp_debug.initialized);
+    assert!(t.app().go_lsp.debug.initialized);
     let sync = crate::core::lsp::LspTestRequest {
         request_id: 999,
         kind: LspRequestKind::Sync,
@@ -599,32 +593,26 @@ fn go_definition_references_and_errors() {
     };
     t.platform.lsp_respond(GO, &sync, Ok(Vec::new()));
     t.step();
-    assert_eq!(t.app().go_lsp_debug.last_status, "sync_ok");
+    assert_eq!(t.app().go_lsp.debug.last_status, "sync_ok");
     t.platform.lsp_respond(GO, &sync, Err("bad".to_owned()));
     t.step();
-    assert_eq!(t.app().go_lsp_debug.last_status, "sync_failed");
+    assert_eq!(t.app().go_lsp.debug.last_status, "sync_failed");
 }
 
 #[test]
 fn go_requests_time_out_and_fail_without_a_server() {
     let mut t = go_app();
     go_f12(&mut t);
-    t.app_mut()
-        .pending_go_lsp_request
-        .as_mut()
-        .unwrap()
-        .started_at = Instant::now() - Duration::from_secs(10);
+    t.app_mut().go_lsp.pending.as_mut().unwrap().started_at =
+        Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status("gopls timed out for `helper`. Wait a moment and retry F12.");
 
     let request = go_f12(&mut t);
     let target = location(&t.path("main.go"), 7, 9);
     respond(&mut t, GO, &request, Ok(vec![target]));
-    t.app_mut()
-        .pending_go_lsp_request
-        .as_mut()
-        .unwrap()
-        .started_at = Instant::now() - Duration::from_secs(10);
+    t.app_mut().go_lsp.pending.as_mut().unwrap().started_at =
+        Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status("gopls references timed out for `helper`.");
 
@@ -632,7 +620,7 @@ fn go_requests_time_out_and_fail_without_a_server() {
     t.platform.stop_lsp_servers();
     t.click_text(0, 0);
     t.type_text("// ");
-    assert_eq!(t.app().go_lsp_debug.last_status, "sync_queue_failed");
+    assert_eq!(t.app().go_lsp.debug.last_status, "sync_queue_failed");
     t.key(egui::Key::F12);
     t.assert_status("Go LSP unavailable. (gopls LSP worker is not running.)");
 }
@@ -673,15 +661,9 @@ fn late_and_unexpected_go_responses_are_ignored() {
     let mut stale = request.clone();
     stale.request_id += 50;
     respond(&mut t, GO, &stale, Ok(Vec::new()));
-    assert!(
-        t.app().pending_go_lsp_request.is_some(),
-        "other ids are ignored"
-    );
-    t.app_mut()
-        .pending_go_lsp_request
-        .as_mut()
-        .unwrap()
-        .started_at = Instant::now() - Duration::from_secs(10);
+    assert!(t.app().go_lsp.pending.is_some(), "other ids are ignored");
+    t.app_mut().go_lsp.pending.as_mut().unwrap().started_at =
+        Instant::now() - Duration::from_secs(10);
     t.step();
     // The real answer arrives after the timeout: nothing is pending any more.
     t.app_mut().status_message = "after timeout".to_owned();
@@ -736,8 +718,8 @@ fn rust_warm_up_fails_when_the_server_cannot_start() {
         .file("src/main.rs", MAIN_RS)
         .dead_language_servers()
         .build();
-    assert_eq!(t.app().rust_lsp_debug.last_status, "warmup_queue_failed");
-    assert!(t.app().rust_lsp_debug.last_error.is_some());
+    assert_eq!(t.app().rust_lsp.debug.last_status, "warmup_queue_failed");
+    assert!(t.app().rust_lsp.debug.last_error.is_some());
 }
 
 #[test]
@@ -875,11 +857,8 @@ fn long_navigation_chains_collapse_the_breadcrumb_and_follow_renames() {
 fn late_rust_responses_after_a_timeout_are_ignored() {
     let mut t = rust_app();
     let request = f12_on_helper(&mut t);
-    t.app_mut()
-        .pending_rust_lsp_request
-        .as_mut()
-        .unwrap()
-        .started_at = Instant::now() - Duration::from_secs(10);
+    t.app_mut().rust_lsp.pending.as_mut().unwrap().started_at =
+        Instant::now() - Duration::from_secs(10);
     t.step();
     t.app_mut().status_message = "after timeout".to_owned();
     let target = location(&t.path("src/main.rs"), 0, 3);

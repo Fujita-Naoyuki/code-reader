@@ -58,7 +58,7 @@ fn definition_round_trip_over_json_rpc() {
             "{methods:?}"
         );
     }
-    assert!(t.app().rust_lsp_debug.initialized);
+    assert!(t.app().rust_lsp.debug.initialized);
 
     // Editing sends didChange before the next request.
     t.alt(egui::Key::ArrowLeft);
@@ -149,8 +149,8 @@ fn server_requests_and_notifications_are_answered_and_reported() {
     press_f12_on_helper(&mut t);
     wait(&mut t, "Jumped to definition of `helper`.");
     t.wait_until("server events", |app| {
-        app.rust_lsp_debug.diagnostics_count == 0
-            && app.rust_lsp_debug.server_notification_count >= 8
+        app.rust_lsp.debug.diagnostics_count == 0
+            && app.rust_lsp.debug.server_notification_count >= 8
     });
 
     let received = t.platform.scripted(RUST).received.lock().unwrap().clone();
@@ -169,8 +169,8 @@ fn server_requests_and_notifications_are_answered_and_reported() {
             .starts_with("file://")
     );
     assert_eq!(reply(json!(901))["result"], Value::Null);
-    assert!(t.app().rust_lsp_debug.server_request_count >= 3);
-    assert!(t.app().rust_lsp_debug.progress_count >= 3);
+    assert!(t.app().rust_lsp.debug.server_request_count >= 3);
+    assert!(t.app().rust_lsp.debug.progress_count >= 3);
 
     t.click("Report");
     let report = t.platform.clipboard_text().unwrap();
@@ -249,7 +249,7 @@ fn broken_streams_become_reader_errors() {
         // Later requests restart the server and clear the last error, so the event count is
         // what records the failure.
         t.wait_until("reader error", |app| {
-            app.rust_lsp_debug.reader_error_count > 0
+            app.rust_lsp.debug.reader_error_count > 0
         });
     }
 
@@ -271,7 +271,7 @@ fn broken_streams_become_reader_errors() {
     wait(&mut t, "Jumped to definition of `helper`.");
     t.platform.scripted(RUST).hang_up();
     t.wait_until("reader error", |app| {
-        app.rust_lsp_debug.reader_error_count > 0
+        app.rust_lsp.debug.reader_error_count > 0
     });
 }
 
@@ -374,7 +374,7 @@ fn notifications_that_arrive_before_an_answer_are_processed_first() {
     press_f12_on_helper(&mut t);
     wait(&mut t, "Jumped to definition of `helper`.");
     assert_eq!(
-        t.app().rust_lsp_debug.last_server_message.as_deref(),
+        t.app().rust_lsp.debug.last_server_message.as_deref(),
         None,
         "the request after the log message carries no message"
     );

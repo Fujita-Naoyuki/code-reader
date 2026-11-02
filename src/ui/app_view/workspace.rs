@@ -277,16 +277,8 @@ impl CodeReaderApp {
         self.bump_search_index_revision();
         self.next_workspace_change_poll = Instant::now() + WORKSPACE_CHANGE_POLL_INTERVAL;
         self.workspace_change_receiver = None;
-        self.go_lsp_client = None;
-        self.pending_go_lsp_request = None;
-        self.go_lsp_synced_hashes.clear();
-        self.go_lsp_request_started_at.clear();
-        self.go_lsp_debug = LspDebugState::default();
-        self.rust_lsp_client = None;
-        self.pending_rust_lsp_request = None;
-        self.rust_lsp_synced_hashes.clear();
-        self.rust_lsp_request_started_at.clear();
-        self.rust_lsp_debug = LspDebugState::default();
+        self.go_lsp = LspSession::default();
+        self.rust_lsp = LspSession::default();
         self.symbol_index_receiver = Some(start_symbol_indexing(
             self.file_tree.files.clone(),
             self.language_registry.clone(),

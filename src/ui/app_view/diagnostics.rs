@@ -78,56 +78,56 @@ impl CodeReaderApp {
         ));
         lines.push(format!(
             "go_lsp={} initialized={} pending={} status={} last_kind={} last_request={} last_ms={} locations={} warmups={} syncs={} definitions={} references={} fallbacks={} timeouts={} error={} definition_status={} definition_ms={} definition_locations={} definition_error={} server_req={} server_notif={} reader_errors={} progress={} diagnostics={} last_server={}:{} server_message={}",
-            self.go_lsp_client.is_some(),
-            self.go_lsp_debug.initialized,
-            self.pending_go_lsp_request
+            self.go_lsp.client.is_some(),
+            self.go_lsp.debug.initialized,
+            self.go_lsp.pending
                 .as_ref()
                 .map(|request| format!("{:?}#{}", request.kind, request.request_id))
                 .unwrap_or_else(|| "none".to_owned()),
-            debug_or_none(&self.go_lsp_debug.last_status),
-            self.go_lsp_debug
+            debug_or_none(&self.go_lsp.debug.last_status),
+            self.go_lsp.debug
                 .last_kind
                 .map(|kind| format!("{kind:?}"))
                 .unwrap_or_else(|| "none".to_owned()),
-            self.go_lsp_debug
+            self.go_lsp.debug
                 .last_request_id
                 .map(|request_id| request_id.to_string())
                 .unwrap_or_else(|| "none".to_owned()),
-            self.go_lsp_debug
+            self.go_lsp.debug
                 .last_duration_ms
                 .map(|duration| format!("{duration:.2}"))
                 .unwrap_or_else(|| "none".to_owned()),
-            self.go_lsp_debug.last_location_count,
-            self.go_lsp_debug.warmup_count,
-            self.go_lsp_debug.sync_count,
-            self.go_lsp_debug.definition_count,
-            self.go_lsp_debug.reference_count,
-            self.go_lsp_debug.fallback_count,
-            self.go_lsp_debug.timeout_count,
-            self.go_lsp_debug
+            self.go_lsp.debug.last_location_count,
+            self.go_lsp.debug.warmup_count,
+            self.go_lsp.debug.sync_count,
+            self.go_lsp.debug.definition_count,
+            self.go_lsp.debug.reference_count,
+            self.go_lsp.debug.fallback_count,
+            self.go_lsp.debug.timeout_count,
+            self.go_lsp.debug
                 .last_error
                 .as_deref()
                 .map(debug_or_none)
                 .unwrap_or_else(|| "none".to_owned()),
-            debug_or_none(&self.go_lsp_debug.last_definition_status),
-            self.go_lsp_debug
+            debug_or_none(&self.go_lsp.debug.last_definition_status),
+            self.go_lsp.debug
                 .last_definition_duration_ms
                 .map(|duration| format!("{duration:.2}"))
                 .unwrap_or_else(|| "none".to_owned()),
-            self.go_lsp_debug.last_definition_location_count,
-            self.go_lsp_debug
+            self.go_lsp.debug.last_definition_location_count,
+            self.go_lsp.debug
                 .last_definition_error
                 .as_deref()
                 .map(debug_or_none)
                 .unwrap_or_else(|| "none".to_owned()),
-            self.go_lsp_debug.server_request_count,
-            self.go_lsp_debug.server_notification_count,
-            self.go_lsp_debug.reader_error_count,
-            self.go_lsp_debug.progress_count,
-            self.go_lsp_debug.diagnostics_count,
-            debug_or_none(&self.go_lsp_debug.last_server_kind),
-            debug_or_none(&self.go_lsp_debug.last_server_method),
-            self.go_lsp_debug
+            self.go_lsp.debug.server_request_count,
+            self.go_lsp.debug.server_notification_count,
+            self.go_lsp.debug.reader_error_count,
+            self.go_lsp.debug.progress_count,
+            self.go_lsp.debug.diagnostics_count,
+            debug_or_none(&self.go_lsp.debug.last_server_kind),
+            debug_or_none(&self.go_lsp.debug.last_server_method),
+            self.go_lsp.debug
                 .last_server_message
                 .as_deref()
                 .map(debug_or_none)
@@ -135,56 +135,56 @@ impl CodeReaderApp {
         ));
         lines.push(format!(
             "rust_lsp={} initialized={} pending={} status={} last_kind={} last_request={} last_ms={} locations={} warmups={} syncs={} definitions={} references={} fallbacks={} timeouts={} error={} definition_status={} definition_ms={} definition_locations={} definition_error={} server_req={} server_notif={} reader_errors={} progress={} diagnostics={} last_server={}:{} server_message={}",
-            self.rust_lsp_client.is_some(),
-            self.rust_lsp_debug.initialized,
-            self.pending_rust_lsp_request
+            self.rust_lsp.client.is_some(),
+            self.rust_lsp.debug.initialized,
+            self.rust_lsp.pending
                 .as_ref()
                 .map(|request| format!("{:?}#{}", request.kind, request.request_id))
                 .unwrap_or_else(|| "none".to_owned()),
-            debug_or_none(&self.rust_lsp_debug.last_status),
-            self.rust_lsp_debug
+            debug_or_none(&self.rust_lsp.debug.last_status),
+            self.rust_lsp.debug
                 .last_kind
                 .map(|kind| format!("{kind:?}"))
                 .unwrap_or_else(|| "none".to_owned()),
-            self.rust_lsp_debug
+            self.rust_lsp.debug
                 .last_request_id
                 .map(|request_id| request_id.to_string())
                 .unwrap_or_else(|| "none".to_owned()),
-            self.rust_lsp_debug
+            self.rust_lsp.debug
                 .last_duration_ms
                 .map(|duration| format!("{duration:.2}"))
                 .unwrap_or_else(|| "none".to_owned()),
-            self.rust_lsp_debug.last_location_count,
-            self.rust_lsp_debug.warmup_count,
-            self.rust_lsp_debug.sync_count,
-            self.rust_lsp_debug.definition_count,
-            self.rust_lsp_debug.reference_count,
-            self.rust_lsp_debug.fallback_count,
-            self.rust_lsp_debug.timeout_count,
-            self.rust_lsp_debug
+            self.rust_lsp.debug.last_location_count,
+            self.rust_lsp.debug.warmup_count,
+            self.rust_lsp.debug.sync_count,
+            self.rust_lsp.debug.definition_count,
+            self.rust_lsp.debug.reference_count,
+            self.rust_lsp.debug.fallback_count,
+            self.rust_lsp.debug.timeout_count,
+            self.rust_lsp.debug
                 .last_error
                 .as_deref()
                 .map(debug_or_none)
                 .unwrap_or_else(|| "none".to_owned()),
-            debug_or_none(&self.rust_lsp_debug.last_definition_status),
-            self.rust_lsp_debug
+            debug_or_none(&self.rust_lsp.debug.last_definition_status),
+            self.rust_lsp.debug
                 .last_definition_duration_ms
                 .map(|duration| format!("{duration:.2}"))
                 .unwrap_or_else(|| "none".to_owned()),
-            self.rust_lsp_debug.last_definition_location_count,
-            self.rust_lsp_debug
+            self.rust_lsp.debug.last_definition_location_count,
+            self.rust_lsp.debug
                 .last_definition_error
                 .as_deref()
                 .map(debug_or_none)
                 .unwrap_or_else(|| "none".to_owned()),
-            self.rust_lsp_debug.server_request_count,
-            self.rust_lsp_debug.server_notification_count,
-            self.rust_lsp_debug.reader_error_count,
-            self.rust_lsp_debug.progress_count,
-            self.rust_lsp_debug.diagnostics_count,
-            debug_or_none(&self.rust_lsp_debug.last_server_kind),
-            debug_or_none(&self.rust_lsp_debug.last_server_method),
-            self.rust_lsp_debug
+            self.rust_lsp.debug.server_request_count,
+            self.rust_lsp.debug.server_notification_count,
+            self.rust_lsp.debug.reader_error_count,
+            self.rust_lsp.debug.progress_count,
+            self.rust_lsp.debug.diagnostics_count,
+            debug_or_none(&self.rust_lsp.debug.last_server_kind),
+            debug_or_none(&self.rust_lsp.debug.last_server_method),
+            self.rust_lsp.debug
                 .last_server_message
                 .as_deref()
                 .map(debug_or_none)
