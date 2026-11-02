@@ -246,14 +246,14 @@ src/
 
 | 指標 | 開始時 | 目標 | 結果 | 達成 |
 |---|---|---|---|---|
-| 最大ファイル行数（テストを含む） | 23,796 | 1,200 以下 | 1,223（`core/lsp.rs`。次点は 1,194） | ほぼ達成 |
-| `app_view.rs` | 23,796 | 骨組みのみ | 966 | 達成 |
-| 200 行超の関数 | 11 | — | 5 | — |
-| 100 行超の関数 | 38 | 5 以下 | 25 | **未達** |
+| 最大ファイル行数（テストを含む） | 23,796 | 1,200 以下 | 1,291（`virtual_editor.rs`。次点は `core/lsp.rs` の 1,223、`diff_view.rs` の 1,215） | **未達** |
+| `app_view.rs` | 23,796 | 骨組みのみ | 884 | 達成 |
+| 200 行超の関数 | 11 | — | 0 | — |
+| 100 行超の関数 | 38 | 5 以下 | 0 | 達成 |
 | `CodeReaderApp` / `EditorPane` の直接フィールド数 | 69 / 66 | 20 / 15 以下 | 20 / 17 | ほぼ達成 |
 | clippy 警告 | 57 | 0 | 0（`-D warnings` で検証） | 達成 |
 | `allow(dead_code)` / `allow(too_many_arguments)` | 1 / 8 | 0 / 0 | 0 / 0 | 達成 |
-| テスト | 386 件・95.4% | 全件通過・95% 以上 | 385 件・97.58% | 達成 |
+| テスト | 386 件・95.4% | 全件通過・95% 以上 | 385 件・97.56% | 達成 |
 | キー割り当ての定義元 | 3 か所 | 1 か所 | 表示は 1 か所、処理は機能ごと | 一部 |
 
 カバレッジが上がったのは、主に未カバーだった未使用コードを削除したためです。テスト数の増減は、削除したコードのテストを除き、ステータスと Esc のテストを追加した結果です。
@@ -264,9 +264,4 @@ src/
 - **`EditorContent`（3-3）：** `path`・`read_only`・差分・履歴を enum にまとめたが、Markdown・CSV・大容量エディタの状態は `File` の中に入れず、ペイン直下の構造体のまま。これらのビューはペインのテキストと一緒に状態を読み書きし、ペインのメソッドを呼び返すため、`File` の中へ移すにはビューの書き直しが必要になる。完了条件の「差分・履歴・空のペインではファイル用の状態が型として存在しない」は満たしていない。
 - **キー割り当て（4-1）：** Help とステータスバーは `keymap.rs` の表から作るようにしたが、キーの処理そのものは各機能のまま。処理は egui の入力の消費順と各画面の状態に結びついていて、表から生成すると挙動が変わるおそれがある。処理を変えるときは表の行も直す必要がある。
 - **`Modal`（4-2）：** 開いている UI を保持する状態を 1 つの enum にはせず、既存のフィールドから最前面を求める `top_dialog()` にした。優先順位と Esc の配分は 1 か所になったが、複数のダイアログが同時に開ける状態自体は残っている。
-- **長い関数（3-4）：** 上の表のとおり未達。残りの大半はウィンドウや描画の 1 つのクロージャが長いもの。
-
-### 残っている 100 行超の関数
-
-`virtual_source_editor_ui`、`source_editor_ui`、`show_recent_workspaces_window`、`show_workspace_file_dialog`、`show_git_switch_branch_window`、`show_search_overlay`、`markdown_inline_widgets_ui`、`show_references_overlay`、`markdown_source_ui`、`diff_view_ui`、`markdown_render_node_ui`、`git_ui`、`git_history_row_ui`、`markdown_ui`、`debug_report_lines`、`virtual_editor_click_input`、`show_shortcuts_help_window`、`csv_ui`、`workspace_search_ui`、`handle_lsp_response`、`markdown_search_ui`、`show_git_commit_details_window`、`source_search_ui`、`parse_diff_display_rows`、`handle_virtual_pointer`
-
+- **長い関数（3-4）：** 100 行超は 0 になったが、80 行超は 41 個残っている。関数を分けた分だけ 3 ファイルが 1,200 行を超えた。
