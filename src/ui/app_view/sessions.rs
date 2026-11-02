@@ -366,11 +366,6 @@ impl CodeReaderApp {
     /// One workspace: its name, age, roots and delete controls. Returns true when clicking
     /// it switched to that workspace.
     fn recent_workspace_row_ui(&mut self, ui: &mut egui::Ui, session: &WorkspaceSession) -> bool {
-        const NAME_WIDTH: f32 = 180.0;
-        const AGE_WIDTH: f32 = 76.0;
-        const ROW_HEIGHT: f32 = 22.0;
-        const COLUMN_GAP: f32 = 16.0;
-
         let is_current = session.id == self.app_state.current_session_id;
         let is_pending_delete = self.session_edit.pending_delete_id.as_deref() == Some(&session.id);
         let can_delete = !is_current && self.app_state.sessions.len() > 1;
@@ -379,41 +374,25 @@ impl CodeReaderApp {
         } else {
             session.display_name.clone()
         };
-        let row_width = ui.available_width();
         let row_text_color = ui.visuals().weak_text_color();
         let body_font = TextStyle::Body.resolve(ui.style());
-
-        let (row_rect, _) =
-            ui.allocate_exact_size(egui::vec2(row_width, ROW_HEIGHT), egui::Sense::hover());
-        let name_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(NAME_WIDTH, ROW_HEIGHT));
-        let age_rect = egui::Rect::from_min_size(
-            egui::pos2(name_rect.right() + COLUMN_GAP, row_rect.top()),
-            egui::vec2(AGE_WIDTH, ROW_HEIGHT),
-        );
-        let delete_rect = egui::Rect::from_min_size(
-            egui::pos2(row_rect.right() - 22.0, row_rect.top() + 1.0),
-            egui::vec2(22.0, ROW_HEIGHT - 2.0),
-        );
-        let path_rect = egui::Rect::from_min_max(
-            egui::pos2(age_rect.right() + COLUMN_GAP, row_rect.top()),
-            egui::pos2(delete_rect.left() - 8.0, row_rect.bottom()),
-        );
+        let rects = RecentWorkspaceRowRects::allocate(ui);
 
         let name_response = ui.interact(
-            name_rect,
+            rects.name,
             ui.make_persistent_id(("recent_workspace", &session.id)),
             egui::Sense::click(),
         );
         if name_response.hovered() {
             ui.painter().rect_filled(
-                name_rect.shrink2(egui::vec2(0.0, 2.0)),
+                rects.name.shrink2(egui::vec2(0.0, 2.0)),
                 2.0,
                 ui.visuals().widgets.hovered.bg_fill,
             );
         }
         if is_current {
             ui.painter().rect_filled(
-                name_rect.shrink2(egui::vec2(0.0, 2.0)),
+                rects.name.shrink2(egui::vec2(0.0, 2.0)),
                 2.0,
                 ui.visuals().selection.bg_fill,
             );
@@ -431,64 +410,60 @@ impl CodeReaderApp {
         };
         paint_row_text(
             ui,
-            name_rect.shrink2(egui::vec2(4.0, 0.0)),
+            rects.name.shrink2(egui::vec2(4.0, 0.0)),
             &title,
             &body_font,
             name_color,
         );
         let age_label = recent_workspace_age_label(session.last_updated_unix);
-        paint_row_text(ui, age_rect, &age_label, &body_font, row_text_color);
+        paint_row_text(ui, rects.age, &age_label, &body_font, row_text_color);
         let primary_root = session
             .root_folders
             .first()
             .map(|root| root.display().to_string())
             .unwrap_or_else(|| "<no root>".to_owned());
-        paint_row_text(ui, path_rect, &primary_root, &body_font, row_text_color);
+        paint_row_text(ui, rects.path, &primary_root, &body_font, row_text_color);
 
         if can_delete
             && ui
-                .put(delete_rect, egui::Button::new("×"))
+                .put(rects.delete, egui::Button::new("×"))
                 .on_hover_text("Delete session")
                 .clicked()
         {
             self.session_edit.pending_delete_id = Some(session.id.clone());
         }
         if is_pending_delete {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("Delete this session?")
-                        .small()
-                        .color(ui.visuals().warn_fg_color),
-                );
-                if ui.button("Delete").clicked() {
-                    self.delete_session(&session.id);
-                }
-                if ui.button("Cancel").clicked() {
-                    self.session_edit.pending_delete_id = None;
-                }
-            });
+            self.recent_workspace_delete_prompt_ui(ui, &session.id);
         }
 
-        let mut extra_lines: Vec<String> = session
-            .root_folders
-            .iter()
-            .skip(1)
-            .take(3)
-            .map(|root| format!("+ {}", root.display()))
-            .collect();
-        if session.root_folders.len() > 4 {
-            extra_lines.push(format!("+ {} more roots", session.root_folders.len() - 4));
-        }
-        for line in extra_lines {
-            let (line_rect, _) =
-                ui.allocate_exact_size(egui::vec2(row_width, ROW_HEIGHT), egui::Sense::hover());
+        for line in recent_workspace_extra_root_lines(&session.root_folders) {
+            let (line_rect, _) = ui.allocate_exact_size(
+                egui::vec2(rects.width, RECENT_ROW_HEIGHT),
+                egui::Sense::hover(),
+            );
             let line_path_rect = egui::Rect::from_min_max(
-                egui::pos2(path_rect.left(), line_rect.top()),
-                egui::pos2(path_rect.right(), line_rect.bottom()),
+                egui::pos2(rects.path.left(), line_rect.top()),
+                egui::pos2(rects.path.right(), line_rect.bottom()),
             );
             paint_row_text(ui, line_path_rect, &line, &body_font, row_text_color);
         }
         switched
+    }
+
+    fn recent_workspace_delete_prompt_ui(&mut self, ui: &mut egui::Ui, session_id: &str) {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Delete this session?")
+                    .small()
+                    .color(ui.visuals().warn_fg_color),
+            );
+            if ui.button("Delete").clicked() {
+                self.delete_session(session_id);
+            }
+            if ui.button("Cancel").clicked() {
+                self.session_edit.pending_delete_id = None;
+            }
+        });
     }
 }
 
@@ -496,4 +471,61 @@ pub(super) fn text_position_from_position(position: Option<Position>) -> TextPos
     position
         .map(|position| TextPosition::new(position.line, position.character))
         .unwrap_or_default()
+}
+
+const RECENT_ROW_HEIGHT: f32 = 22.0;
+
+/// The columns of a row in the recent workspaces window.
+struct RecentWorkspaceRowRects {
+    width: f32,
+    name: egui::Rect,
+    age: egui::Rect,
+    delete: egui::Rect,
+    path: egui::Rect,
+}
+
+impl RecentWorkspaceRowRects {
+    fn allocate(ui: &mut egui::Ui) -> Self {
+        const NAME_WIDTH: f32 = 180.0;
+        const AGE_WIDTH: f32 = 76.0;
+        const COLUMN_GAP: f32 = 16.0;
+
+        let width = ui.available_width();
+        let (row, _) =
+            ui.allocate_exact_size(egui::vec2(width, RECENT_ROW_HEIGHT), egui::Sense::hover());
+        let name = egui::Rect::from_min_size(row.min, egui::vec2(NAME_WIDTH, RECENT_ROW_HEIGHT));
+        let age = egui::Rect::from_min_size(
+            egui::pos2(name.right() + COLUMN_GAP, row.top()),
+            egui::vec2(AGE_WIDTH, RECENT_ROW_HEIGHT),
+        );
+        let delete = egui::Rect::from_min_size(
+            egui::pos2(row.right() - 22.0, row.top() + 1.0),
+            egui::vec2(22.0, RECENT_ROW_HEIGHT - 2.0),
+        );
+        let path = egui::Rect::from_min_max(
+            egui::pos2(age.right() + COLUMN_GAP, row.top()),
+            egui::pos2(delete.left() - 8.0, row.bottom()),
+        );
+        Self {
+            width,
+            name,
+            age,
+            delete,
+            path,
+        }
+    }
+}
+
+/// The roots after the first, shown under the row: three, then how many more.
+fn recent_workspace_extra_root_lines(roots: &[PathBuf]) -> Vec<String> {
+    let mut lines: Vec<String> = roots
+        .iter()
+        .skip(1)
+        .take(3)
+        .map(|root| format!("+ {}", root.display()))
+        .collect();
+    if roots.len() > 4 {
+        lines.push(format!("+ {} more roots", roots.len() - 4));
+    }
+    lines
 }

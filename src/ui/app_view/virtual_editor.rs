@@ -213,8 +213,6 @@ impl EditorPane {
         }
 
         let line_index = self.cached_line_index(source_len, source_hash);
-        let line_count = line_index.line_count();
-        let mut current_line = self.cursor_position.map(|position| position.line);
         let bracket_pair = self.cached_bracket_pair(source_len, source_hash);
         let highlight_spans =
             self.cached_syntax_highlight_spans(ui, language_registry, source_len, source_hash);
@@ -222,6 +220,71 @@ impl EditorPane {
             self.cached_syntax_highlight_line_span_ranges(source_len, source_hash);
 
         let layout = VirtualLayout::allocate(ui, line_index.as_ref());
+        let interaction = self.virtual_editor_interaction(
+            ui,
+            (focused, text_edit_id),
+            line_index.as_ref(),
+            &layout,
+        );
+
+        let body_start = Instant::now();
+        let mut frame_counters = VirtualFrameCounters::default();
+        self.paint_virtual_body(
+            ui,
+            &VirtualBodyFrame {
+                layout: &layout,
+                viewport: &interaction.viewport,
+                line_index: line_index.as_ref(),
+                visible_range: interaction.visible_range.clone(),
+                current_line: interaction.current_line,
+                tab_width,
+                bookmark_lines,
+                text_edit_id,
+                line_style: VirtualLineStyle {
+                    source_len,
+                    source_hash,
+                    highlight_spans: highlight_spans.as_slice(),
+                    highlights: LineHighlights {
+                        bracket_pair,
+                        search_matches: source_search_matches.as_slice(),
+                        active_search_match: active_source_search_match,
+                    },
+                },
+                highlight_line_span_ranges: highlight_line_span_ranges.as_slice(),
+            },
+            &mut frame_counters,
+        );
+        self.finish_virtual_frame(
+            ui,
+            (focused, text_edit_id),
+            line_index.as_ref(),
+            &layout,
+            &interaction,
+        );
+        let body_ms = elapsed_ms(body_start);
+        self.record_virtual_perf(VirtualPerfSample {
+            total_ms: elapsed_ms(total_start),
+            body_ms,
+            visible_rows: interaction.visible_range.len(),
+            total_rows: line_index.line_count(),
+            counters: frame_counters,
+            text_len: source_len,
+            scroll_before_y,
+            search_matches: source_search_matches.len(),
+            syntax_spans: highlight_spans.len(),
+        });
+    }
+
+    /// Everything the pointer and keys do this frame, before anything is painted.
+    fn virtual_editor_interaction(
+        &mut self,
+        ui: &mut egui::Ui,
+        (focused, text_edit_id): (bool, egui::Id),
+        line_index: &LineIndex,
+        layout: &VirtualLayout,
+    ) -> VirtualInteraction {
+        let line_count = line_index.line_count();
+        let mut current_line = self.cursor_position.map(|position| position.line);
         // The viewport is the focusable widget behind `text_edit_id`.
         let response = ui.interact(
             layout.viewport_rect,
@@ -245,13 +308,12 @@ impl EditorPane {
             + 1)
         .min(line_count);
         let visible_range = visible_start.min(line_count)..visible_end;
-        let visible_rows = visible_range.end.saturating_sub(visible_range.start);
 
         if self.handle_virtual_navigation_input(
             ui,
             focused,
             text_edit_id,
-            line_index.as_ref(),
+            line_index,
             &layout.nav_metrics(),
         ) {
             current_line = self.cursor_position.map(|position| position.line);
@@ -266,7 +328,7 @@ impl EditorPane {
             ui,
             &response,
             (text_edit_id, focused),
-            line_index.as_ref(),
+            line_index,
             &viewport,
             visible_range.clone(),
         ) {
@@ -282,62 +344,12 @@ impl EditorPane {
             current_line,
         ));
         self.editor_context_menu(&response);
-
-        let body_start = Instant::now();
-        let mut frame_counters = VirtualFrameCounters::default();
-        self.paint_virtual_body(
-            ui,
-            &VirtualBodyFrame {
-                layout: &layout,
-                viewport: &viewport,
-                line_index: line_index.as_ref(),
-                visible_range,
-                current_line,
-                tab_width,
-                bookmark_lines,
-                text_edit_id,
-                line_style: VirtualLineStyle {
-                    source_len,
-                    source_hash,
-                    highlight_spans: highlight_spans.as_slice(),
-                    highlights: LineHighlights {
-                        bracket_pair,
-                        search_matches: source_search_matches.as_slice(),
-                        active_search_match: active_source_search_match,
-                    },
-                },
-                highlight_line_span_ranges: highlight_line_span_ranges.as_slice(),
-            },
-            &mut frame_counters,
-        );
-        self.finish_virtual_cursor(
-            ui,
-            &response,
-            (focused, text_edit_id),
-            line_index.as_ref(),
-            &viewport,
-            visible_start..visible_end,
-        );
-        handle_and_paint_virtual_scrollbars(
-            ui,
-            layout.viewport_rect,
-            layout.total_width,
-            layout.total_height,
-            &mut self.scroll.x,
-            &mut self.scroll.y,
-        );
-        let body_ms = elapsed_ms(body_start);
-        self.record_virtual_perf(VirtualPerfSample {
-            total_ms: elapsed_ms(total_start),
-            body_ms,
-            visible_rows,
-            total_rows: line_count,
-            counters: frame_counters,
-            text_len: source_len,
-            scroll_before_y,
-            search_matches: source_search_matches.len(),
-            syntax_spans: highlight_spans.len(),
-        });
+        VirtualInteraction {
+            response,
+            viewport,
+            current_line,
+            visible_range,
+        }
     }
 
     /// The current line, indent guides, selection, the visible lines and the gutter's edge.
@@ -436,16 +448,21 @@ impl EditorPane {
         );
     }
 
-    /// The IME area and uncommitted IME text, then the cursor on top.
-    fn finish_virtual_cursor(
-        &self,
+    /// The IME area and uncommitted IME text, the cursor on top of them, then the scrollbars.
+    fn finish_virtual_frame(
+        &mut self,
         ui: &egui::Ui,
-        response: &egui::Response,
         (focused, text_edit_id): (bool, egui::Id),
         line_index: &LineIndex,
-        viewport: &VirtualViewport,
-        visible_range: std::ops::Range<usize>,
+        layout: &VirtualLayout,
+        interaction: &VirtualInteraction,
     ) {
+        let VirtualInteraction {
+            response,
+            viewport,
+            visible_range,
+            ..
+        } = interaction;
         let cursor_rect = virtual_cursor_rect(
             Some(ui),
             line_index,
@@ -468,8 +485,16 @@ impl EditorPane {
             line_index,
             &self.text,
             self.cursor_position,
-            visible_range,
+            visible_range.clone(),
             viewport,
+        );
+        handle_and_paint_virtual_scrollbars(
+            ui,
+            layout.viewport_rect,
+            layout.total_width,
+            layout.total_height,
+            &mut self.scroll.x,
+            &mut self.scroll.y,
         );
     }
 
@@ -857,6 +882,14 @@ impl VirtualLayout {
             scroll_y,
         }
     }
+}
+
+/// What the frame's input left for painting.
+struct VirtualInteraction {
+    response: egui::Response,
+    viewport: VirtualViewport,
+    current_line: Option<u32>,
+    visible_range: std::ops::Range<usize>,
 }
 
 /// What `paint_virtual_body` draws from.

@@ -367,14 +367,8 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                let (escape, enter, arrow_up, arrow_down) = ui.input_mut(|input| {
-                    (
-                        self.layout.modal_escape == Some(Modal::SearchEverywhere),
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
-                    )
-                });
+                let escape = self.layout.modal_escape == Some(Modal::SearchEverywhere);
+                let keys = ListOverlayKeys::consume(ui);
 
                 let query_response = ui.add(
                     TextEdit::singleline(&mut self.search.overlay.query)
@@ -389,27 +383,15 @@ impl CodeReaderApp {
                 if escape {
                     close = true;
                 }
-                if arrow_down && !results.is_empty() {
-                    self.search.overlay.selected_index =
-                        (self.search.overlay.selected_index + 1).min(results.len() - 1);
-                }
-                if arrow_up && !results.is_empty() {
-                    self.search.overlay.selected_index =
-                        self.search.overlay.selected_index.saturating_sub(1);
-                }
-                if enter {
+                keys.step_selection(&mut self.search.overlay.selected_index, results.len());
+                if keys.enter {
                     selected_result = results
                         .get(self.search.overlay.selected_index)
                         .cloned()
                         .or_else(|| results.first().cloned());
                 }
 
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(format!("{} results", results.len())).weak());
-                    ui.separator();
-                    ui.label(RichText::new("Enter: open | Esc: close").weak());
-                });
-                ui.separator();
+                overlay_summary_ui(ui, format!("{} results", results.len()));
 
                 let results_width = ui.available_width();
                 ScrollArea::vertical()
@@ -497,6 +479,29 @@ impl CodeReaderApp {
         clicked
     }
 
+    /// The overlay's scrolling list. Returns the reference that was clicked.
+    fn references_overlay_list_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        entries: &[ReferenceOverlayEntry],
+    ) -> Option<Location> {
+        let results_width = ui.available_width();
+        ScrollArea::vertical()
+            .id_salt("references_overlay_results")
+            .auto_shrink([false, false])
+            .max_height(410.0)
+            .show(ui, |ui| {
+                ui.set_min_width(results_width);
+                if entries.is_empty() {
+                    ui.label(RichText::new("No references").weak());
+                    return None;
+                }
+
+                self.reference_groups_ui(ui, entries, results_width)
+            })
+            .inner
+    }
+
     pub(super) fn show_references_overlay(&mut self, ui: &mut egui::Ui) -> Option<Location> {
         if !self.search.references_overlay.open {
             return None;
@@ -520,13 +525,11 @@ impl CodeReaderApp {
         if self.search.references_overlay.selected_index >= entries.len() {
             self.search.references_overlay.selected_index = entries.len().saturating_sub(1);
         }
-        let mut files = entries
+        let file_count = entries
             .iter()
-            .map(|entry| entry.path.clone())
-            .collect::<Vec<_>>();
-        files.sort();
-        files.dedup();
-        let file_count = files.len();
+            .map(|entry| &entry.path)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
 
         let mut selected_location = None;
         let mut close = false;
@@ -538,19 +541,10 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                let (escape, enter, arrow_up, arrow_down) = ui.input_mut(|input| {
-                    (
-                        self.layout.modal_escape == Some(Modal::References),
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
-                    )
-                });
+                let escape = self.layout.modal_escape == Some(Modal::References);
+                let keys = ListOverlayKeys::consume(ui);
 
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Symbol").weak());
-                    ui.label(RichText::new(&self.search.references_overlay.symbol).monospace());
-                });
+                reference_symbol_label_ui(ui, &self.search.references_overlay.symbol);
                 let query_response = ui.add(
                     TextEdit::singleline(&mut self.search.references_overlay.query)
                         .hint_text("Filter references")
@@ -564,56 +558,25 @@ impl CodeReaderApp {
                 if escape {
                     close = true;
                 }
-                if arrow_down && !entries.is_empty() {
-                    self.search.references_overlay.selected_index =
-                        (self.search.references_overlay.selected_index + 1).min(entries.len() - 1);
-                }
-                if arrow_up && !entries.is_empty() {
-                    self.search.references_overlay.selected_index = self
-                        .search
-                        .references_overlay
-                        .selected_index
-                        .saturating_sub(1);
-                }
-                if enter {
+                keys.step_selection(
+                    &mut self.search.references_overlay.selected_index,
+                    entries.len(),
+                );
+                if keys.enter {
                     selected_location = entries
                         .get(self.search.references_overlay.selected_index)
                         .map(|entry| entry.location.clone())
                         .or_else(|| entries.first().map(|entry| entry.location.clone()));
                 }
 
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!(
-                            "{} references in {} files",
-                            entries.len(),
-                            file_count
-                        ))
-                        .weak(),
-                    );
-                    ui.separator();
-                    ui.label(RichText::new("Enter: open | Esc: close").weak());
-                });
-                ui.separator();
+                overlay_summary_ui(
+                    ui,
+                    format!("{} references in {} files", entries.len(), file_count),
+                );
 
-                let results_width = ui.available_width();
-                ScrollArea::vertical()
-                    .id_salt("references_overlay_results")
-                    .auto_shrink([false, false])
-                    .max_height(410.0)
-                    .show(ui, |ui| {
-                        ui.set_min_width(results_width);
-                        if entries.is_empty() {
-                            ui.label(RichText::new("No references").weak());
-                            return;
-                        }
-
-                        if let Some(location) =
-                            self.reference_groups_ui(ui, &entries, results_width)
-                        {
-                            selected_location = Some(location);
-                        }
-                    });
+                if let Some(location) = self.references_overlay_list_ui(ui, &entries) {
+                    selected_location = Some(location);
+                }
             });
 
         if close {
@@ -975,6 +938,49 @@ fn workspace_search_file_ui(
             });
     });
     open_location
+}
+
+/// Enter, Up and Down as the list overlays consume them.
+struct ListOverlayKeys {
+    enter: bool,
+    arrow_up: bool,
+    arrow_down: bool,
+}
+
+impl ListOverlayKeys {
+    fn consume(ui: &egui::Ui) -> Self {
+        ui.input_mut(|input| Self {
+            enter: input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            arrow_up: input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
+            arrow_down: input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
+        })
+    }
+
+    fn step_selection(&self, selected_index: &mut usize, count: usize) {
+        if self.arrow_down && count > 0 {
+            *selected_index = (*selected_index + 1).min(count - 1);
+        }
+        if self.arrow_up && count > 0 {
+            *selected_index = selected_index.saturating_sub(1);
+        }
+    }
+}
+
+fn reference_symbol_label_ui(ui: &mut egui::Ui, symbol: &str) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Symbol").weak());
+        ui.label(RichText::new(symbol).monospace());
+    });
+}
+
+/// The line between an overlay's query and its list.
+fn overlay_summary_ui(ui: &mut egui::Ui, summary: String) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(summary).weak());
+        ui.separator();
+        ui.label(RichText::new("Enter: open | Esc: close").weak());
+    });
+    ui.separator();
 }
 
 #[cfg(test)]

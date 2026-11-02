@@ -178,6 +178,80 @@ impl EditorPane {
         }
     }
 
+    fn csv_title_ui(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("CSV VIEW").small().strong());
+            if let Some(selection) = self.csv.selection {
+                ui.label(RichText::new(csv_selection_label(selection)).small().weak());
+            }
+            if let Some(message) = &self.csv.debug_message {
+                ui.label(RichText::new(message).small().weak());
+            }
+        });
+    }
+
+    /// Returns whether this row holds the active cell.
+    fn csv_row_header_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: usize,
+        row_number_width: f32,
+        row_height: f32,
+    ) -> bool {
+        let active_row = self.csv.selected_cell.is_some_and(|cell| cell.row == row)
+            && self.csv.selection.is_none();
+        let selected_row = self
+            .csv
+            .selection
+            .is_some_and(|selection| selection.contains(row, 0));
+        let row_header_response = paint_csv_row_header(
+            ui,
+            row + 1,
+            row_number_width,
+            row_height,
+            active_row || selected_row,
+        );
+        if let Some(action) = csv_pointer_action_for_rect(
+            ui,
+            row_header_response.rect,
+            row,
+            CsvSelectionKind::Rows,
+            self.csv.drag,
+        ) {
+            self.apply_csv_header_action(ui, CsvSelectionKind::Rows, action);
+        }
+        active_row
+    }
+
+    /// Selects `target`, adding the cell first when the row is too short to have it.
+    fn move_csv_focus(
+        &mut self,
+        ui: &egui::Ui,
+        document: &mut CsvDocument,
+        target: CsvCellPosition,
+    ) {
+        if self.csv.selected_cell != Some(target) {
+            let needs_new_cell = document
+                .rows
+                .get(target.row)
+                .and_then(|row| row.get(target.column))
+                .is_none();
+            if needs_new_cell {
+                self.push_csv_undo_entry();
+                document.ensure_cell(target.row, target.column);
+                self.replace_text(serialize_csv(
+                    document,
+                    CsvTextStyle::of(self.text.as_str()),
+                ));
+            }
+            self.csv.selected_cell = Some(target);
+            self.csv.edit_history_cell = None;
+            self.cursor_position = Some(Position::new(target.row as u32, target.column as u32));
+            // The target cell's TextEdit takes focus when it is built in the next frame.
+            ui.ctx().request_repaint();
+        }
+    }
+
     pub(super) fn csv_ui(&mut self, ui: &mut egui::Ui, focused: bool) {
         let mut document = match parse_csv(&self.text) {
             Ok(document) => document,
@@ -211,15 +285,7 @@ impl EditorPane {
             self.csv.selected_cell = Some(CsvCellPosition { row: 0, column: 0 });
         }
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("CSV VIEW").small().strong());
-            if let Some(selection) = self.csv.selection {
-                ui.label(RichText::new(csv_selection_label(selection)).small().weak());
-            }
-            if let Some(message) = &self.csv.debug_message {
-                ui.label(RichText::new(message).small().weak());
-            }
-        });
+        self.csv_title_ui(ui);
 
         ScrollArea::both()
             .id_salt(format!("csv_grid_{:?}", self.pane))
@@ -238,28 +304,8 @@ impl EditorPane {
 
                 for row in 0..document.rows.len() {
                     ui.horizontal(|ui| {
-                        let active_row = self.csv.selected_cell.is_some_and(|cell| cell.row == row)
-                            && self.csv.selection.is_none();
-                        let selected_row = self
-                            .csv
-                            .selection
-                            .is_some_and(|selection| selection.contains(row, 0));
-                        let row_header_response = paint_csv_row_header(
-                            ui,
-                            row + 1,
-                            row_number_width,
-                            row_height,
-                            active_row || selected_row,
-                        );
-                        if let Some(action) = csv_pointer_action_for_rect(
-                            ui,
-                            row_header_response.rect,
-                            row,
-                            CsvSelectionKind::Rows,
-                            self.csv.drag,
-                        ) {
-                            self.apply_csv_header_action(ui, CsvSelectionKind::Rows, action);
-                        }
+                        let active_row =
+                            self.csv_row_header_ui(ui, row, row_number_width, row_height);
 
                         for (column, width) in column_widths.iter().enumerate().take(column_count) {
                             let outcome = self.csv_cell_ui(
@@ -287,27 +333,8 @@ impl EditorPane {
             ));
         }
 
-        if let Some(target) = next_focus
-            && self.csv.selected_cell != Some(target)
-        {
-            let needs_new_cell = document
-                .rows
-                .get(target.row)
-                .and_then(|row| row.get(target.column))
-                .is_none();
-            if needs_new_cell {
-                self.push_csv_undo_entry();
-                document.ensure_cell(target.row, target.column);
-                self.replace_text(serialize_csv(
-                    &document,
-                    CsvTextStyle::of(self.text.as_str()),
-                ));
-            }
-            self.csv.selected_cell = Some(target);
-            self.csv.edit_history_cell = None;
-            self.cursor_position = Some(Position::new(target.row as u32, target.column as u32));
-            // The target cell's TextEdit takes focus when it is built in the next frame.
-            ui.ctx().request_repaint();
+        if let Some(target) = next_focus {
+            self.move_csv_focus(ui, &mut document, target);
         }
     }
 

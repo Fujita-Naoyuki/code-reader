@@ -147,26 +147,7 @@ impl CodeReaderApp {
                     }
                 }
 
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{} branches", repository.branches.len())).weak(),
-                    );
-                    ui.separator();
-                    ui.label(RichText::new("Up/Down: select  Enter: switch  Esc: close").weak());
-                });
-                ui.separator();
-
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&repository.name).monospace());
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(format!("current: {}", repository.branch))
-                                .monospace()
-                                .weak(),
-                        );
-                    });
-                });
-                ui.separator();
+                branch_window_header_ui(ui, &repository);
 
                 if repository.branches.is_empty() {
                     ui.label(RichText::new("No local branches").weak());
@@ -495,4 +476,25 @@ fn branch_row_ui(ui: &mut egui::Ui, branch: &str, row: BranchRow) -> bool {
         );
     }
     !row.current && response.on_hover_text("Switch to this branch").clicked()
+}
+
+fn branch_window_header_ui(ui: &mut egui::Ui, repository: &GitRepositoryState) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("{} branches", repository.branches.len())).weak());
+        ui.separator();
+        ui.label(RichText::new("Up/Down: select  Enter: switch  Esc: close").weak());
+    });
+    ui.separator();
+
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(&repository.name).monospace());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(format!("current: {}", repository.branch))
+                    .monospace()
+                    .weak(),
+            );
+        });
+    });
+    ui.separator();
 }

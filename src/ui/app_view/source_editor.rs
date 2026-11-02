@@ -275,6 +275,46 @@ impl EditorPane {
         self.source_search.scrolled_match = None;
     }
 
+    /// What follows the text field: the cursor, its painted backdrop, the gutter, the menu.
+    fn finish_source_text_edit(
+        &mut self,
+        ui: &mut egui::Ui,
+        output: &egui::text_edit::TextEditOutput,
+        gutter_rect: egui::Rect,
+        (line_count, tab_width): (usize, usize),
+        bookmark_lines: &[u32],
+    ) {
+        if let Some(cursor_range) = output.cursor_range {
+            let next_position = self.text.char_index_to_position(cursor_range.primary.index);
+            if self.cursor_position != next_position {
+                self.cursor_position = next_position;
+                ui.ctx().request_repaint();
+            }
+        }
+
+        let current_line = self.record_source_render_debug(ui, output, line_count);
+        let viewport_rect = ui.clip_rect();
+        paint_current_line_background(ui, output, viewport_rect, current_line);
+        if !self.is_csv() {
+            paint_indent_guides(
+                ui,
+                &self.text,
+                tab_width,
+                current_line,
+                output,
+                viewport_rect,
+            );
+        }
+        self.source_gutter_ui(ui, gutter_rect, line_count, bookmark_lines, output);
+
+        if output.response.changed() {
+            self.mark_text_changed();
+            self.target_position = None;
+        }
+
+        self.editor_context_menu(&output.response);
+    }
+
     pub(super) fn source_editor_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -353,36 +393,13 @@ impl EditorPane {
                 };
                 let output = self.source_text_edit(ui, text_edit_id, editor_width, &mut layouter);
 
-                if let Some(cursor_range) = output.cursor_range {
-                    let next_position =
-                        self.text.char_index_to_position(cursor_range.primary.index);
-                    if self.cursor_position != next_position {
-                        self.cursor_position = next_position;
-                        ui.ctx().request_repaint();
-                    }
-                }
-
-                let current_line = self.record_source_render_debug(ui, &output, line_count);
-                let viewport_rect = ui.clip_rect();
-                paint_current_line_background(ui, &output, viewport_rect, current_line);
-                if !self.is_csv() {
-                    paint_indent_guides(
-                        ui,
-                        &self.text,
-                        tab_width,
-                        current_line,
-                        &output,
-                        viewport_rect,
-                    );
-                }
-                self.source_gutter_ui(ui, gutter_rect, line_count, bookmark_lines, &output);
-
-                if output.response.changed() {
-                    self.mark_text_changed();
-                    self.target_position = None;
-                }
-
-                self.editor_context_menu(&output.response);
+                self.finish_source_text_edit(
+                    ui,
+                    &output,
+                    gutter_rect,
+                    (line_count, tab_width),
+                    bookmark_lines,
+                );
             });
         });
         self.finish_source_scroll(&scroll_output);

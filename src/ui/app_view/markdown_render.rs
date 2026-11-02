@@ -95,34 +95,10 @@ impl EditorPane {
                 self.markdown_paragraph_ui(ui, document, &paragraph.children, search_query);
             }
             Node::Heading(heading) => {
-                let title = markdown_inline_plain_text(&heading.children);
-                let job = markdown_plain_text_layout_job(
-                    ui,
-                    &title,
-                    search_query,
-                    markdown_heading_text_format(ui, heading.depth),
-                );
-                let response = ui.add(egui::Label::new(job).wrap());
-                if self.should_scroll_to_markdown_search_match(search_query, &title) {
-                    response.scroll_to_me(Some(egui::Align::Center));
-                }
-                ui.add_space(4.0);
+                self.markdown_heading_ui(ui, heading, search_query);
             }
             Node::Blockquote(blockquote) => {
-                egui::Frame::new()
-                    .fill(markdown_blockquote_background(ui))
-                    .stroke(egui::Stroke::new(1.0, ui.visuals().weak_text_color()))
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
-                        self.markdown_render_nodes_ui(
-                            ui,
-                            frame,
-                            &blockquote.children,
-                            depth + 1,
-                            0,
-                        );
-                    });
-                ui.add_space(6.0);
+                self.markdown_blockquote_ui(ui, frame, &blockquote.children, depth);
             }
             Node::List(list) => {
                 let start = list.start.unwrap_or(1);
@@ -273,6 +249,86 @@ impl EditorPane {
                     }
     }
 
+    fn markdown_heading_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        heading: &markdown::mdast::Heading,
+        search_query: Option<&str>,
+    ) {
+        let title = markdown_inline_plain_text(&heading.children);
+        let job = markdown_plain_text_layout_job(
+            ui,
+            &title,
+            search_query,
+            markdown_heading_text_format(ui, heading.depth),
+        );
+        let response = ui.add(egui::Label::new(job).wrap());
+        if self.should_scroll_to_markdown_search_match(search_query, &title) {
+            response.scroll_to_me(Some(egui::Align::Center));
+        }
+        ui.add_space(4.0);
+    }
+
+    fn markdown_blockquote_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        frame: &MarkdownRenderFrame<'_>,
+        children: &[Node],
+        depth: usize,
+    ) {
+        egui::Frame::new()
+            .fill(markdown_blockquote_background(ui))
+            .stroke(egui::Stroke::new(1.0, ui.visuals().weak_text_color()))
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                self.markdown_render_nodes_ui(ui, frame, children, depth + 1, 0);
+            });
+        ui.add_space(6.0);
+    }
+
+    fn markdown_link_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &MarkdownDocument,
+        link: &markdown::mdast::Link,
+        style: MarkdownInlineStyle,
+        search_query: Option<&str>,
+    ) {
+        let label = markdown_inline_plain_text(&link.children);
+        let label = if label.trim().is_empty() {
+            link.url.as_str()
+        } else {
+            label.as_str()
+        };
+        let response = markdown_link_label_ui(ui, label, style, search_query, &link.url);
+        if response.clicked() {
+            self.activate_markdown_link(document, &link.url);
+        }
+    }
+
+    fn markdown_link_reference_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &MarkdownDocument,
+        link: &markdown::mdast::LinkReference,
+        style: MarkdownInlineStyle,
+        search_query: Option<&str>,
+    ) {
+        let label = markdown_inline_plain_text(&link.children);
+        let response = markdown_link_label_ui(ui, &label, style, search_query, &link.identifier);
+        if response.clicked() {
+            match markdown_definition_url(document, &link.identifier) {
+                Some(url) => self.activate_markdown_link(document, &url),
+                None => {
+                    self.pending_action = Some(EditorAction::ShowStatus(format!(
+                        "Reference link has no definition: {}",
+                        link.identifier
+                    )));
+                }
+            }
+        }
+    }
+
     pub(super) fn markdown_inline_widgets_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -295,12 +351,7 @@ impl EditorPane {
                     }
                 }
                 Node::InlineCode(code) => {
-                    let mut format = markdown_inline_format(ui, style);
-                    format.font_id = editor_font_id();
-                    format.background = markdown_code_background(ui);
-                    format.expand_bg = 3.0;
-                    let job = markdown_plain_text_layout_job(ui, &code.value, search_query, format);
-                    ui.add(egui::Label::new(job).wrap());
+                    markdown_inline_code_ui(ui, &code.value, style, search_query);
                 }
                 Node::Break(_) => {
                     ui.end_row();
@@ -345,33 +396,10 @@ impl EditorPane {
                     );
                 }
                 Node::Link(link) => {
-                    let label = markdown_inline_plain_text(&link.children);
-                    let label = if label.trim().is_empty() {
-                        link.url.as_str()
-                    } else {
-                        label.as_str()
-                    };
-                    let response =
-                        markdown_link_label_ui(ui, label, style, search_query, &link.url);
-                    if response.clicked() {
-                        self.activate_markdown_link(document, &link.url);
-                    }
+                    self.markdown_link_ui(ui, document, link, style, search_query);
                 }
                 Node::LinkReference(link) => {
-                    let label = markdown_inline_plain_text(&link.children);
-                    let response =
-                        markdown_link_label_ui(ui, &label, style, search_query, &link.identifier);
-                    if response.clicked() {
-                        match markdown_definition_url(document, &link.identifier) {
-                            Some(url) => self.activate_markdown_link(document, &url),
-                            None => {
-                                self.pending_action = Some(EditorAction::ShowStatus(format!(
-                                    "Reference link has no definition: {}",
-                                    link.identifier
-                                )));
-                            }
-                        }
-                    }
+                    self.markdown_link_reference_ui(ui, document, link, style, search_query);
                 }
                 Node::Image(image) => {
                     self.markdown_image_ui(ui, document, &image.url, &image.alt);
@@ -383,10 +411,7 @@ impl EditorPane {
                     self.markdown_footnote_reference_ui(ui, document, footnote);
                 }
                 Node::InlineMath(math) => {
-                    let mut format = markdown_inline_format(ui, style);
-                    format.font_id = editor_font_id();
-                    let job = markdown_plain_text_layout_job(ui, &math.value, search_query, format);
-                    ui.add(egui::Label::new(job).wrap());
+                    markdown_inline_math_ui(ui, &math.value, style, search_query);
                 }
                 _ => {
                     if let Some(children) = child.children() {
@@ -1024,6 +1049,32 @@ fn markdown_link_label_ui(
         ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
     }
     response
+}
+
+fn markdown_inline_code_ui(
+    ui: &mut egui::Ui,
+    value: &str,
+    style: MarkdownInlineStyle,
+    search_query: Option<&str>,
+) {
+    let mut format = markdown_inline_format(ui, style);
+    format.font_id = editor_font_id();
+    format.background = markdown_code_background(ui);
+    format.expand_bg = 3.0;
+    let job = markdown_plain_text_layout_job(ui, value, search_query, format);
+    ui.add(egui::Label::new(job).wrap());
+}
+
+fn markdown_inline_math_ui(
+    ui: &mut egui::Ui,
+    value: &str,
+    style: MarkdownInlineStyle,
+    search_query: Option<&str>,
+) {
+    let mut format = markdown_inline_format(ui, style);
+    format.font_id = editor_font_id();
+    let job = markdown_plain_text_layout_job(ui, value, search_query, format);
+    ui.add(egui::Label::new(job).wrap());
 }
 
 #[cfg(test)]
