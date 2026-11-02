@@ -66,15 +66,15 @@ impl CodeReaderApp {
             } else {
                 "release"
             },
-            self.show_workspace_sidebar,
-            self.show_right_pane,
+            self.layout.show_workspace_sidebar,
+            self.layout.show_right_pane,
             self.focused_pane.label()
         ));
         lines.push(format!(
             "workspace_files={} symbols={} git_repositories={}",
             self.file_tree.files.len(),
-            self.symbol_index.len(),
-            self.git_repositories.len()
+            self.search.symbol_index.len(),
+            self.git.repositories.len()
         ));
         lines.push(format!(
             "app_frame: frame={} total_ms={:.2} avg120_ms={:.2} max120_ms={:.2} stable_dt_ms={:.2} unstable_dt_ms={:.2} focused={} scroll_y={:.1}->{:.1} delta_y={:.1} raw_wheel=({:.1},{:.1}) smooth_scroll=({:.1},{:.1}) page_key={:?}",
@@ -114,12 +114,12 @@ impl CodeReaderApp {
         lines.push(format!("status={}", self.status_message));
         lines.push(format!(
             "sidebar_view={} tab_width={} indexing={}",
-            self.sidebar_view.label(),
+            self.layout.sidebar_view.label(),
             self.tab_width,
-            self.symbol_index_receiver.is_some()
+            self.search.symbol_index_receiver.is_some()
         ));
-        lines.push(lsp_report_line("go_lsp", &self.go_lsp));
-        lines.push(lsp_report_line("rust_lsp", &self.rust_lsp));
+        lines.push(lsp_report_line("go_lsp", &self.lsp.go));
+        lines.push(lsp_report_line("rust_lsp", &self.lsp.rust));
         lines.push(self.rust_lsp_readiness_report_line());
         match self.current_session() {
             Some(session) => {
@@ -156,13 +156,13 @@ impl CodeReaderApp {
         lines.push(String::new());
         lines.push(format!(
             "{}: {}",
-            self.location_list_kind.report_title(),
-            self.definition_candidates.len()
+            self.lsp.location_list_kind.report_title(),
+            self.lsp.definition_candidates.len()
         ));
-        if self.definition_candidates.is_empty() {
+        if self.lsp.definition_candidates.is_empty() {
             lines.push("  none".to_owned());
         } else {
-            for candidate in &self.definition_candidates {
+            for candidate in &self.lsp.definition_candidates {
                 lines.push(format!(
                     "  {} -> {}:{}:{}",
                     candidate.label,
@@ -186,7 +186,7 @@ impl CodeReaderApp {
         let mut kind_counts: HashMap<String, usize> = HashMap::new();
         let mut file_counts: HashMap<PathBuf, usize> = HashMap::new();
 
-        for symbol in self.symbol_index.symbols() {
+        for symbol in self.search.symbol_index.symbols() {
             let source = match symbol.source {
                 SymbolSource::Workspace => "workspace",
                 SymbolSource::ExternalLibrary => "external",
@@ -198,7 +198,10 @@ impl CodeReaderApp {
             *file_counts.entry(symbol.location.path.clone()).or_default() += 1;
         }
 
-        lines.push(format!("Symbol index: total={}", self.symbol_index.len()));
+        lines.push(format!(
+            "Symbol index: total={}",
+            self.search.symbol_index.len()
+        ));
         lines.push(format!(
             "  by_source workspace={} external={}",
             source_counts.get("workspace").copied().unwrap_or(0),
@@ -237,6 +240,7 @@ impl CodeReaderApp {
             };
 
             let current_symbols = self
+                .search
                 .symbol_index
                 .symbols()
                 .iter()

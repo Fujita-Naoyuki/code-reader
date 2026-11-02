@@ -59,8 +59,8 @@ fn new_workspace_creates_and_switches_to_a_session() {
     assert!(t.has_label("Workspace 2"));
     assert!(t.has_label("fresh.txt"));
     assert!(t.app().left.path().is_none());
-    assert!(!t.app().show_right_pane);
-    assert!(t.app().recent_files.is_empty());
+    assert!(!t.app().layout.show_right_pane);
+    assert!(t.app().navigation.recent_files.is_empty());
     assert!(t.saved_state().contains("Workspace 2"));
 }
 
@@ -76,7 +76,7 @@ fn new_workspace_canceled_keeps_current_session() {
 fn recent_workspaces_switches_session() {
     let mut t = two_sessions();
     t.click("Workspaces");
-    assert!(t.app().recent_workspaces_open);
+    assert!(t.app().layout.recent_workspaces_open);
     assert!(t.has_label("2 workspaces"));
     // The window draws session names with the painter; click the name column of the
     // second row (sessions are sorted by last update, newest first).
@@ -85,7 +85,7 @@ fn recent_workspaces_switches_session() {
     t.click_at(second_row);
     t.assert_status("Switched session.");
     assert_eq!(t.app().app_state.current_session_id, "s2");
-    assert!(!t.app().recent_workspaces_open);
+    assert!(!t.app().layout.recent_workspaces_open);
     assert!(t.has_label("Second"));
     assert!(t.app().left.path().unwrap().ends_with("other.txt"));
     assert_eq!(t.app().focused_pane, Pane::Left);
@@ -99,9 +99,9 @@ fn recent_workspaces_ignores_clicks_on_the_current_session() {
     let first_row = egui::pos2(header.left() + 60.0, header.bottom() + 24.0);
     t.click_at(first_row);
     assert_eq!(t.app().app_state.current_session_id, "s1");
-    assert!(t.app().recent_workspaces_open);
+    assert!(t.app().layout.recent_workspaces_open);
     t.key(egui::Key::Escape);
-    assert!(!t.app().recent_workspaces_open);
+    assert!(!t.app().layout.recent_workspaces_open);
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn recent_workspaces_deletes_another_session_after_confirmation() {
     t.click("×");
     assert!(t.has_label("Delete this session?"));
     t.click("Cancel");
-    assert!(t.app().pending_delete_session_id.is_none());
+    assert!(t.app().session_edit.pending_delete_id.is_none());
 
     t.click("×");
     // Clicking the pending session's name does not switch to it.
@@ -148,8 +148,8 @@ fn everywhere_button_closes_recent_workspaces() {
     let mut t = two_sessions();
     t.click("Workspaces");
     t.click("Everywhere");
-    assert!(!t.app().recent_workspaces_open);
-    assert!(t.app().search_overlay.open);
+    assert!(!t.app().layout.recent_workspaces_open);
+    assert!(t.app().search.overlay.open);
 }
 
 #[test]
@@ -157,12 +157,12 @@ fn rename_workspace_with_enter() {
     let mut t = TestApp::plain();
     t.click_first("Rename");
     assert!(t.has_label("Rename Workspace"));
-    assert!(t.app().editing_session_name);
+    assert!(t.app().session_edit.editing_name);
     // The current name is pre-selected, so typing replaces it.
     t.type_text("Renamed");
     t.key(egui::Key::Enter);
     t.assert_status("Renamed session: Renamed");
-    assert!(!t.app().editing_session_name);
+    assert!(!t.app().session_edit.editing_name);
     assert!(t.has_label("Renamed"));
     assert!(t.saved_state().contains("Renamed"));
 }
@@ -174,13 +174,13 @@ fn rename_workspace_rejects_empty_name_and_can_be_canceled() {
     t.key(egui::Key::Backspace);
     t.click_nth("Rename", 2);
     t.assert_status("Workspace session name cannot be empty.");
-    assert!(t.app().editing_session_name);
+    assert!(t.app().session_edit.editing_name);
     t.click("Cancel");
-    assert!(!t.app().editing_session_name);
+    assert!(!t.app().session_edit.editing_name);
 
     t.click_first("Rename");
     t.key(egui::Key::Escape);
-    assert!(!t.app().editing_session_name);
+    assert!(!t.app().session_edit.editing_name);
 }
 
 #[test]

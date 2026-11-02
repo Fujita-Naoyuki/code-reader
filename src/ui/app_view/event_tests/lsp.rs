@@ -61,7 +61,7 @@ fn rust_workspace_warms_up_rust_analyzer_and_syncs_open_files() {
         .expect("warm-up request");
     t.platform.lsp_respond(RUST, warmup, Ok(Vec::new()));
     t.step();
-    assert_eq!(t.app().rust_lsp.debug.last_status, "warmup_ok");
+    assert_eq!(t.app().lsp.rust.debug.last_status, "warmup_ok");
 
     t.click_first("main.rs");
     let sync = t
@@ -74,14 +74,14 @@ fn rust_workspace_warms_up_rust_analyzer_and_syncs_open_files() {
     t.platform
         .lsp_respond(RUST, &sync, Err("sync broke".to_owned()));
     t.step();
-    assert_eq!(t.app().rust_lsp.debug.last_status, "sync_failed");
+    assert_eq!(t.app().lsp.rust.debug.last_status, "sync_failed");
     t.platform.lsp_respond(
         RUST,
         &sync,
         Ok(vec![location(&t.path("src/main.rs"), 0, 0)]),
     );
     t.step();
-    assert_eq!(t.app().rust_lsp.debug.last_status, "sync_ok");
+    assert_eq!(t.app().lsp.rust.debug.last_status, "sync_ok");
 
     // An unchanged document is not re-sent.
     t.steps(3);
@@ -96,7 +96,7 @@ fn rust_workspace_warms_up_rust_analyzer_and_syncs_open_files() {
     t.platform
         .lsp_respond(RUST, warmup, Err("no cargo".to_owned()));
     t.step();
-    assert_eq!(t.app().rust_lsp.debug.last_status, "warmup_failed");
+    assert_eq!(t.app().lsp.rust.debug.last_status, "warmup_failed");
 }
 
 #[test]
@@ -110,8 +110,8 @@ fn f12_jumps_to_a_single_rust_definition_and_back_forward_navigate() {
     respond(&mut t, RUST, &request, Ok(vec![target]));
     t.assert_status("Jumped to definition of `helper`.");
     assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 3)));
-    assert_eq!(t.app().left_navigation_history.back.len(), 1);
-    assert!(t.app().rust_lsp.debug.last_definition_success_at.is_some());
+    assert_eq!(t.app().navigation.left_history.back.len(), 1);
+    assert!(t.app().lsp.rust.debug.last_definition_success_at.is_some());
 
     t.alt(egui::Key::ArrowLeft);
     t.assert_status("Returned to previous location.");
@@ -137,7 +137,7 @@ fn definition_in_another_file_opens_it_and_reveals_it_in_the_tree() {
     respond(&mut t, RUST, &request, Ok(vec![target]));
     assert_eq!(t.app().left.path(), Some(t.path("src/other.rs").as_path()));
     assert_eq!(
-        t.app().selected_workspace_path,
+        t.app().workspace.selected_path,
         Some(t.path("src/other.rs"))
     );
     // The breadcrumb shows the previous location and can be clicked to return.
@@ -159,8 +159,8 @@ fn several_definitions_are_listed_in_the_report() {
         Ok(vec![location(&other, 0, 7), location(&other, 1, 7)]),
     );
     t.assert_status("Multiple definitions returned for `helper`. Use Report for details.");
-    assert_eq!(t.app().definition_candidates.len(), 2);
-    assert!(!t.app().references_overlay.open);
+    assert_eq!(t.app().lsp.definition_candidates.len(), 2);
+    assert!(!t.app().search.references_overlay.open);
 }
 
 #[test]
@@ -189,23 +189,23 @@ fn definition_at_the_cursor_falls_back_to_references_overlay() {
         ]),
     );
     t.assert_status("Found 3 references for `helper`.");
-    assert!(t.app().references_overlay.open);
+    assert!(t.app().search.references_overlay.open);
     assert!(t.has_label("References"));
     assert!(t.has_label("3 references in 2 files"));
-    assert_eq!(t.app().location_list_kind, LocationListKind::References);
+    assert_eq!(t.app().lsp.location_list_kind, LocationListKind::References);
 
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::ArrowDown);
-    assert_eq!(t.app().references_overlay.selected_index, 2);
+    assert_eq!(t.app().search.references_overlay.selected_index, 2);
     t.key(egui::Key::ArrowUp);
-    assert_eq!(t.app().references_overlay.selected_index, 1);
+    assert_eq!(t.app().search.references_overlay.selected_index, 1);
 
     t.type_text("other");
-    assert_eq!(t.app().references_overlay.selected_index, 0);
+    assert_eq!(t.app().search.references_overlay.selected_index, 0);
     assert!(t.has_label("1 references in 1 files"));
     t.key(egui::Key::Enter);
-    assert!(!t.app().references_overlay.open);
+    assert!(!t.app().search.references_overlay.open);
     assert_eq!(t.app().left.path(), Some(other.as_path()));
     assert_eq!(t.app().left.cursor_position, Some(Position::new(1, 7)));
 }
@@ -228,9 +228,9 @@ fn references_overlay_click_filter_without_matches_and_escape() {
         &references,
         Ok(vec![location(&main, 0, 3), location(&main, 5, 16)]),
     );
-    assert!(t.app().references_overlay.open);
+    assert!(t.app().search.references_overlay.open);
     t.click_containing("1  fn helper() -> u32 {");
-    assert!(!t.app().references_overlay.open);
+    assert!(!t.app().search.references_overlay.open);
     assert_eq!(t.app().left.cursor_position, Some(Position::new(0, 3)));
 
     // Ask again from the reference site and filter the list down to nothing.
@@ -260,9 +260,9 @@ fn references_overlay_click_filter_without_matches_and_escape() {
     assert!(t.has_label("No references"));
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::Enter);
-    assert!(t.app().references_overlay.open);
+    assert!(t.app().search.references_overlay.open);
     t.key(egui::Key::Escape);
-    assert!(!t.app().references_overlay.open);
+    assert!(!t.app().search.references_overlay.open);
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn rust_definition_errors_empty_results_and_stale_responses() {
     let mut stale = request.clone();
     stale.request_id += 1000;
     respond(&mut t, RUST, &stale, Ok(Vec::new()));
-    assert!(t.app().rust_lsp.pending.is_some());
+    assert!(t.app().lsp.rust.pending.is_some());
 
     respond(&mut t, RUST, &request, Ok(Vec::new()));
     t.assert_status_containing("rust-analyzer returned no definition for `helper`.");
@@ -315,7 +315,7 @@ fn rust_definition_errors_empty_results_and_stale_responses() {
     respond(&mut t, RUST, &request, Err("boom".to_owned()));
     t.assert_status("Rust LSP failed for `helper`. (boom)");
     assert_eq!(
-        t.app().rust_lsp.debug.last_definition_status,
+        t.app().lsp.rust.debug.last_definition_status,
         "definition_failed"
     );
 }
@@ -324,11 +324,11 @@ fn rust_definition_errors_empty_results_and_stale_responses() {
 fn rust_definition_and_references_time_out() {
     let mut t = rust_app();
     f12_on_helper(&mut t);
-    t.app_mut().rust_lsp.pending.as_mut().unwrap().started_at =
+    t.app_mut().lsp.rust.pending.as_mut().unwrap().started_at =
         Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status_containing("rust-analyzer did not answer before timeout for `helper`.");
-    assert_eq!(t.app().rust_lsp.debug.timeout_count, 1);
+    assert_eq!(t.app().lsp.rust.debug.timeout_count, 1);
 
     let request = {
         t.key(egui::Key::F12);
@@ -340,11 +340,11 @@ fn rust_definition_and_references_time_out() {
     };
     let main = t.path("src/main.rs");
     respond(&mut t, RUST, &request, Ok(vec![location(&main, 5, 17)]));
-    t.app_mut().rust_lsp.pending.as_mut().unwrap().started_at =
+    t.app_mut().lsp.rust.pending.as_mut().unwrap().started_at =
         Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status("rust-analyzer references timed out for `helper`.");
-    assert_eq!(t.app().location_list_kind, LocationListKind::References);
+    assert_eq!(t.app().lsp.location_list_kind, LocationListKind::References);
 }
 
 #[test]
@@ -356,13 +356,13 @@ fn rust_requests_fail_when_the_server_is_gone() {
     t.key(egui::Key::F12);
     t.assert_status("Rust LSP unavailable. (rust-analyzer LSP worker is not running.)");
     assert_eq!(
-        t.app().rust_lsp.debug.last_status,
+        t.app().lsp.rust.debug.last_status,
         "definition_queue_failed"
     );
 
     // Editing re-syncs the document, which fails the same way.
     t.type_text("x");
-    assert_eq!(t.app().rust_lsp.debug.last_status, "sync_queue_failed");
+    assert_eq!(t.app().lsp.rust.debug.last_status, "sync_queue_failed");
 }
 
 #[test]
@@ -584,7 +584,7 @@ fn go_definition_references_and_errors() {
         server_event(LspServerEventKind::Initialized, "initialized"),
     );
     t.step();
-    assert!(t.app().go_lsp.debug.initialized);
+    assert!(t.app().lsp.go.debug.initialized);
     let sync = crate::core::lsp::LspTestRequest {
         request_id: 999,
         kind: LspRequestKind::Sync,
@@ -593,17 +593,17 @@ fn go_definition_references_and_errors() {
     };
     t.platform.lsp_respond(GO, &sync, Ok(Vec::new()));
     t.step();
-    assert_eq!(t.app().go_lsp.debug.last_status, "sync_ok");
+    assert_eq!(t.app().lsp.go.debug.last_status, "sync_ok");
     t.platform.lsp_respond(GO, &sync, Err("bad".to_owned()));
     t.step();
-    assert_eq!(t.app().go_lsp.debug.last_status, "sync_failed");
+    assert_eq!(t.app().lsp.go.debug.last_status, "sync_failed");
 }
 
 #[test]
 fn go_requests_time_out_and_fail_without_a_server() {
     let mut t = go_app();
     go_f12(&mut t);
-    t.app_mut().go_lsp.pending.as_mut().unwrap().started_at =
+    t.app_mut().lsp.go.pending.as_mut().unwrap().started_at =
         Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status("gopls timed out for `helper`. Wait a moment and retry F12.");
@@ -611,7 +611,7 @@ fn go_requests_time_out_and_fail_without_a_server() {
     let request = go_f12(&mut t);
     let target = location(&t.path("main.go"), 7, 9);
     respond(&mut t, GO, &request, Ok(vec![target]));
-    t.app_mut().go_lsp.pending.as_mut().unwrap().started_at =
+    t.app_mut().lsp.go.pending.as_mut().unwrap().started_at =
         Instant::now() - Duration::from_secs(10);
     t.step();
     t.assert_status("gopls references timed out for `helper`.");
@@ -620,7 +620,7 @@ fn go_requests_time_out_and_fail_without_a_server() {
     t.platform.stop_lsp_servers();
     t.click_text(0, 0);
     t.type_text("// ");
-    assert_eq!(t.app().go_lsp.debug.last_status, "sync_queue_failed");
+    assert_eq!(t.app().lsp.go.debug.last_status, "sync_queue_failed");
     t.key(egui::Key::F12);
     t.assert_status("Go LSP unavailable. (gopls LSP worker is not running.)");
 }
@@ -639,7 +639,7 @@ fn a_single_reference_is_opened_directly() {
         .unwrap();
     respond(&mut t, GO, &references, Ok(vec![location(&main, 2, 5)]));
     t.assert_status("Jumped to reference of `helper`.");
-    assert!(!t.app().references_overlay.open);
+    assert!(!t.app().search.references_overlay.open);
 }
 
 fn take_request(
@@ -661,8 +661,8 @@ fn late_and_unexpected_go_responses_are_ignored() {
     let mut stale = request.clone();
     stale.request_id += 50;
     respond(&mut t, GO, &stale, Ok(Vec::new()));
-    assert!(t.app().go_lsp.pending.is_some(), "other ids are ignored");
-    t.app_mut().go_lsp.pending.as_mut().unwrap().started_at =
+    assert!(t.app().lsp.go.pending.is_some(), "other ids are ignored");
+    t.app_mut().lsp.go.pending.as_mut().unwrap().started_at =
         Instant::now() - Duration::from_secs(10);
     t.step();
     // The real answer arrives after the timeout: nothing is pending any more.
@@ -718,8 +718,8 @@ fn rust_warm_up_fails_when_the_server_cannot_start() {
         .file("src/main.rs", MAIN_RS)
         .dead_language_servers()
         .build();
-    assert_eq!(t.app().rust_lsp.debug.last_status, "warmup_queue_failed");
-    assert!(t.app().rust_lsp.debug.last_error.is_some());
+    assert_eq!(t.app().lsp.rust.debug.last_status, "warmup_queue_failed");
+    assert!(t.app().lsp.rust.debug.last_error.is_some());
 }
 
 #[test]
@@ -769,16 +769,18 @@ fn reference_lists_sort_truncate_and_handle_missing_lines() {
             location(&gone, 1, 1),
         ]),
     );
-    assert!(t.app().references_overlay.open);
+    assert!(t.app().search.references_overlay.open);
     assert!(t.has_label_containing("..."), "long previews are truncated");
     assert!(t.has_label("  901"), "a line past the end has no preview");
     let first_main = t
         .app()
+        .lsp
         .definition_candidates
         .iter()
         .position(|candidate| candidate.location.range.start.character == 16);
     let second_main = t
         .app()
+        .lsp
         .definition_candidates
         .iter()
         .position(|candidate| candidate.location.range.start.character == 20);
@@ -833,7 +835,7 @@ fn long_navigation_chains_collapse_the_breadcrumb_and_follow_renames() {
         respond(&mut t, RUST, &request, Ok(vec![location(target, 0, 7)]));
     }
     // All six steps are kept; the breadcrumb shows the latest four after "...".
-    assert_eq!(t.app().left_navigation_history.back.len(), 6);
+    assert_eq!(t.app().navigation.left_history.back.len(), 6);
     assert!(t.has_label("..."));
 
     // Renaming a file keeps history entries pointing at it.
@@ -844,10 +846,11 @@ fn long_navigation_chains_collapse_the_breadcrumb_and_follow_renames() {
     let renamed = t.path("src/renamed.rs");
     assert!(
         t.app()
-            .left_navigation_history
+            .navigation
+            .left_history
             .back
             .iter()
-            .chain(&t.app().left_navigation_history.forward)
+            .chain(&t.app().navigation.left_history.forward)
             .all(|point| point.path != other)
     );
     let _ = renamed;
@@ -857,7 +860,7 @@ fn long_navigation_chains_collapse_the_breadcrumb_and_follow_renames() {
 fn late_rust_responses_after_a_timeout_are_ignored() {
     let mut t = rust_app();
     let request = f12_on_helper(&mut t);
-    t.app_mut().rust_lsp.pending.as_mut().unwrap().started_at =
+    t.app_mut().lsp.rust.pending.as_mut().unwrap().started_at =
         Instant::now() - Duration::from_secs(10);
     t.step();
     t.app_mut().status_message = "after timeout".to_owned();
@@ -890,7 +893,7 @@ fn renaming_a_file_updates_the_other_panes_history() {
         .unwrap();
     let other = t.path("src/other.rs");
     respond(&mut t, RUST, &request, Ok(vec![location(&other, 0, 7)]));
-    assert_eq!(t.app().right_navigation_history.back.len(), 1);
+    assert_eq!(t.app().navigation.right_history.back.len(), 1);
 
     // Rename main.rs from the tree (the left pane opens it; the right keeps its history).
     t.click_at(egui::pos2(500.0, 400.0));
@@ -899,7 +902,7 @@ fn renaming_a_file_updates_the_other_panes_history() {
     t.type_text("entry");
     t.key(egui::Key::Enter);
     let renamed = t.path("src/entry.rs");
-    assert_eq!(t.app().right_navigation_history.back[0].path, renamed);
+    assert_eq!(t.app().navigation.right_history.back[0].path, renamed);
 }
 
 #[test]

@@ -65,7 +65,7 @@ fn git_view_lists_repository_and_changes() {
 
     // The workspace tree marks changed files once the new file is discovered.
     t.click("Workspace");
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
     t.wait_until("new.txt discovered", |app| {
         app.file_tree
             .files
@@ -111,16 +111,16 @@ fn discard_restores_tracked_files_and_removes_untracked_ones() {
     t.click("↶");
     assert!(t.has_label("This will discard local changes for this file."));
     t.click("Cancel");
-    assert!(t.app().pending_git_discard.is_none());
+    assert!(t.app().git.pending_discard.is_none());
 
     t.click("↶");
     t.key(egui::Key::Escape);
-    assert!(t.app().pending_git_discard.is_none());
+    assert!(t.app().git.pending_discard.is_none());
 
     // Enter confirms, as Help and the status bar say.
     t.click("↶");
     t.key(egui::Key::Enter);
-    assert!(t.app().pending_git_discard.is_none());
+    assert!(t.app().git.pending_discard.is_none());
     t.assert_status_containing("Git discard completed: workspace");
     assert_eq!(t.read("tracked.txt"), "one\ntwo\nthree\n");
 
@@ -158,7 +158,7 @@ fn commit_requires_a_message_and_clears_it_on_success() {
     t.click("Commit");
     t.assert_status_containing("Git commit completed: workspace");
     assert_eq!(t.git(&["log", "-1", "--format=%s"]), "Change tracked");
-    assert!(t.app().git_commit_messages.values().all(String::is_empty));
+    assert!(t.app().git.commit_messages.values().all(String::is_empty));
 }
 
 #[test]
@@ -303,7 +303,7 @@ fn create_branch_window() {
     assert!(t.has_label("from: main"));
     t.key(egui::Key::Enter);
     assert!(
-        t.app().git_create_branch_root.is_some(),
+        t.app().git.create_branch_root.is_some(),
         "empty name is ignored"
     );
     t.type_text("feature/one");
@@ -326,7 +326,7 @@ fn create_branch_window() {
     t.click("...");
     t.click("Create Branch...");
     t.key(egui::Key::Escape);
-    assert!(t.app().git_create_branch_root.is_none());
+    assert!(t.app().git.create_branch_root.is_none());
 }
 
 #[test]
@@ -339,7 +339,7 @@ fn switch_branch_window() {
     assert!(t.has_label("2 branches"));
     assert!(t.has_label("current: main"));
     t.key(egui::Key::Escape);
-    assert!(t.app().git_switch_branch_root.is_none());
+    assert!(t.app().git.switch_branch_root.is_none());
 
     t.click("...");
     t.click("Switch Branch...");
@@ -353,17 +353,17 @@ fn switch_branch_window() {
     // Keyboard: the highlight starts on the current branch; Enter on it just closes.
     t.click("develop ▾");
     t.key(egui::Key::Enter);
-    assert!(t.app().git_switch_branch_root.is_none());
+    assert!(t.app().git.switch_branch_root.is_none());
     assert!(t.has_label("develop ▾"));
     t.click("develop ▾");
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::ArrowDown);
-    assert_eq!(t.app().git_switch_branch_cursor.as_deref(), Some("main"));
+    assert_eq!(t.app().git.switch_branch_cursor.as_deref(), Some("main"));
     t.key(egui::Key::ArrowUp);
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::Enter);
     assert!(t.has_label("main ▾"));
-    assert!(t.app().git_switch_branch_cursor.is_none());
+    assert!(t.app().git.switch_branch_cursor.is_none());
     t.git(&["switch", "-q", "develop"]);
 
     // Switching with uncommitted conflicting changes fails.
@@ -388,13 +388,13 @@ fn branch_windows_close_when_repository_disappears() {
     let mut t = repo();
     open_git(&mut t);
     t.click("main ▾");
-    assert!(t.app().git_switch_branch_root.is_some());
+    assert!(t.app().git.switch_branch_root.is_some());
     // The repository goes away; the next workspace scan reloads Git and closes the window.
     std::fs::remove_dir_all(t.path(".git")).unwrap();
     t.write("trigger.txt", "x");
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
-    t.wait_until("repository gone", |app| app.git_repositories.is_empty());
-    assert!(t.app().git_switch_branch_root.is_none());
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
+    t.wait_until("repository gone", |app| app.git.repositories.is_empty());
+    assert!(t.app().git.switch_branch_root.is_none());
     t.steps(2);
     assert!(!t.has_label("Switch Branch"));
 }
@@ -405,12 +405,12 @@ fn create_branch_window_closes_when_repository_disappears() {
     open_git(&mut t);
     t.click("...");
     t.click("Create Branch...");
-    assert!(t.app().git_create_branch_root.is_some());
+    assert!(t.app().git.create_branch_root.is_some());
     std::fs::remove_dir_all(t.path(".git")).unwrap();
     t.write("trigger.txt", "x");
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
-    t.wait_until("repository gone", |app| app.git_repositories.is_empty());
-    assert!(t.app().git_create_branch_root.is_none());
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
+    t.wait_until("repository gone", |app| app.git.repositories.is_empty());
+    assert!(t.app().git.create_branch_root.is_none());
 }
 
 #[test]
@@ -504,13 +504,13 @@ fn all_diffs_and_history_report_a_vanished_repository() {
     open_git(&mut t);
     // Let the periodic workspace scan pick up the edit now, then keep it from reloading
     // Git while the test runs, so the stale repository entry stays on screen.
-    let before = t.app().workspace_snapshot.clone();
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    let before = t.app().workspace.snapshot.clone();
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
     // Wait on the snapshot: a status message can lose to "Indexed ..." in the same frame.
     t.wait_until("the scan to pick up the edit", |app| {
-        app.workspace_snapshot != before
+        app.workspace.snapshot != before
     });
-    t.app_mut().next_workspace_change_poll =
+    t.app_mut().workspace.next_change_poll =
         std::time::Instant::now() + std::time::Duration::from_secs(3600);
     // The sidebar still shows the repository when it disappears.
     std::fs::remove_dir_all(t.path(".git")).unwrap();
@@ -550,7 +550,7 @@ fn history_commit_details_and_commit_diff() {
 
     t.click("Open Diff");
     t.assert_status_containing("Opened commit diff:");
-    assert!(t.app().git_commit_details.is_none());
+    assert!(t.app().git.commit_details.is_none());
     assert!(t.has_label("Commit"));
     assert!(t.has_label("Back to History"));
 
@@ -563,18 +563,18 @@ fn history_commit_details_and_commit_diff() {
     t.click_at(second_row);
     assert!(t.has_label("none"));
     t.click("Close");
-    assert!(t.app().git_commit_details.is_none());
+    assert!(t.app().git.commit_details.is_none());
 
     t.click_at(second_row);
     t.key(egui::Key::Escape);
-    assert!(t.app().git_commit_details.is_none());
+    assert!(t.app().git.commit_details.is_none());
 
     // The repository disappears while the history is on screen: the details window shows
     // the error instead of the changed files.
     std::fs::remove_dir_all(t.path(".git")).unwrap();
     t.click_at(second_row);
     assert!(t.has_label("Commit Details"));
-    assert!(t.app().git_commit_details.as_ref().unwrap().error.is_some());
+    assert!(t.app().git.commit_details.as_ref().unwrap().error.is_some());
 }
 
 #[test]
@@ -611,7 +611,7 @@ fn files_with_spaces_or_japanese_names_can_be_staged_and_diffed() {
     t.write("my notes.txt", "space\n");
     t.write("日本語.txt", "japanese\n");
     open_git(&mut t);
-    let paths = t.app().git_repositories[0]
+    let paths = t.app().git.repositories[0]
         .changes
         .iter()
         .map(|change| change.path.clone())
@@ -624,7 +624,7 @@ fn files_with_spaces_or_japanese_names_can_be_staged_and_diffed() {
     t.assert_status("Opened diff: workspace | 日本語.txt");
     // The tree marks both files once they are discovered.
     t.click("Workspace");
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
     t.wait_until("new files discovered", |app| {
         app.file_tree
             .files
@@ -641,7 +641,7 @@ fn renamed_files_use_the_new_path() {
     let mut t = repo();
     t.git(&["mv", "tracked.txt", "moved file.txt"]);
     open_git(&mut t);
-    let changes = &t.app().git_repositories[0].changes;
+    let changes = &t.app().git.repositories[0].changes;
     assert_eq!(changes.len(), 1);
     assert_eq!(changes[0].status, "R");
     assert_eq!(changes[0].path, "moved file.txt");
@@ -667,7 +667,7 @@ fn repository_errors_and_locked_index_are_reported() {
     // A corrupt index makes `git status` fail; the error is shown under the repository.
     std::fs::write(t.path(".git/index"), "garbage").unwrap();
     open_git(&mut t);
-    assert!(t.app().git_repositories[0].error.is_some());
+    assert!(t.app().git.repositories[0].error.is_some());
     assert!(t.has_label_containing("index"));
 }
 
@@ -725,7 +725,7 @@ fn tree_markers_for_added_deleted_and_nested_changes() {
     t.git(&["add", "brand.txt"]);
     std::fs::remove_file(t.path("doomed.txt")).unwrap();
     t.write("dir/inner/deep.txt", "changed\n");
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
     t.wait_until("brand.txt discovered", |app| {
         app.file_tree
             .files
@@ -860,5 +860,5 @@ fn two_roots_in_one_repository_show_it_once() {
     t.platform.queue_folder_pick(&t.path("sub"));
     t.click_nth("Add", 0);
     open_git(&mut t);
-    assert_eq!(t.app().git_repositories.len(), 1);
+    assert_eq!(t.app().git.repositories.len(), 1);
 }

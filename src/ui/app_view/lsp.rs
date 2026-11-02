@@ -6,8 +6,8 @@ use super::*;
 impl CodeReaderApp {
     pub(super) fn lsp_mut(&mut self, language: LspLanguage) -> &mut LspSession {
         match language {
-            LspLanguage::Go => &mut self.go_lsp,
-            LspLanguage::Rust => &mut self.rust_lsp,
+            LspLanguage::Go => &mut self.lsp.go,
+            LspLanguage::Rust => &mut self.lsp.rust,
         }
     }
 
@@ -31,8 +31,8 @@ impl CodeReaderApp {
             .identifier_at(&document, position)
             .map(|identifier| identifier.name)
             .unwrap_or_else(|| "<unknown>".to_owned());
-        self.definition_candidates.clear();
-        self.location_list_kind = LocationListKind::Definitions;
+        self.lsp.definition_candidates.clear();
+        self.lsp.location_list_kind = LocationListKind::Definitions;
         self.close_references_overlay();
         // Every registered language resolves definitions through its language server.
         match language.id().0 {
@@ -66,7 +66,7 @@ impl CodeReaderApp {
         }
 
         self.ensure_lsp_client(LspLanguage::Rust);
-        let Some(client) = &mut self.rust_lsp.client else {
+        let Some(client) = &mut self.lsp.rust.client else {
             return;
         };
 
@@ -77,12 +77,12 @@ impl CodeReaderApp {
                     request_id,
                     LspRequestKind::WarmUp,
                 );
-                self.rust_lsp.debug.warmup_count += 1;
-                self.rust_lsp.debug.last_status = "warmup_queued".to_owned();
+                self.lsp.rust.debug.warmup_count += 1;
+                self.lsp.rust.debug.last_status = "warmup_queued".to_owned();
             }
             Err(error) => {
-                self.rust_lsp.debug.last_status = "warmup_queue_failed".to_owned();
-                self.rust_lsp.debug.last_error = Some(error);
+                self.lsp.rust.debug.last_status = "warmup_queue_failed".to_owned();
+                self.lsp.rust.debug.last_error = Some(error);
             }
         }
     }
@@ -190,8 +190,8 @@ impl CodeReaderApp {
                     origin,
                     started_at,
                 });
-                self.definition_candidates.clear();
-                self.location_list_kind = LocationListKind::Definitions;
+                self.lsp.definition_candidates.clear();
+                self.lsp.location_list_kind = LocationListKind::Definitions;
                 self.lsp_mut(language).debug.definition_count += 1;
                 self.lsp_mut(language).debug.last_status = "definition_queued".to_owned();
                 self.lsp_mut(language).debug.record_definition_status(
@@ -310,8 +310,8 @@ impl CodeReaderApp {
                     debug.last_duration_ms,
                     0,
                 );
-                self.definition_candidates.clear();
-                self.location_list_kind = LocationListKind::Definitions;
+                self.lsp.definition_candidates.clear();
+                self.lsp.location_list_kind = LocationListKind::Definitions;
                 self.status_message = match language {
                     LspLanguage::Go => format!(
                         "gopls timed out for `{}`. Wait a moment and retry F12.",
@@ -324,9 +324,9 @@ impl CodeReaderApp {
                 };
             }
             LspRequestKind::References => {
-                self.definition_candidates.clear();
+                self.lsp.definition_candidates.clear();
                 self.close_references_overlay();
-                self.location_list_kind = LocationListKind::References;
+                self.lsp.location_list_kind = LocationListKind::References;
                 self.lsp_mut(language).debug.last_status = "references_timeout".to_owned();
                 self.status_message = format!(
                     "{} references timed out for `{}`.",
@@ -404,9 +404,9 @@ impl CodeReaderApp {
                         0,
                     );
                 }
-                self.definition_candidates.clear();
+                self.lsp.definition_candidates.clear();
                 self.close_references_overlay();
-                self.location_list_kind = LocationListKind::Definitions;
+                self.lsp.location_list_kind = LocationListKind::Definitions;
                 self.status_message = format!(
                     "{} LSP failed for `{}`. ({error})",
                     language.label(),
@@ -426,8 +426,8 @@ impl CodeReaderApp {
                         duration_ms,
                         0,
                     );
-                    self.definition_candidates.clear();
-                    self.location_list_kind = LocationListKind::Definitions;
+                    self.lsp.definition_candidates.clear();
+                    self.lsp.location_list_kind = LocationListKind::Definitions;
                     self.status_message = self.rust_lsp_definition_pending_message(
                         &pending.identifier,
                         "returned no definition",
@@ -522,9 +522,9 @@ impl CodeReaderApp {
         let mut message = format!(
             "rust-analyzer {reason} for `{identifier}`. It may still be indexing workspace/dependencies; wait a moment and retry F12."
         );
-        if !self.rust_lsp.debug.initialized {
+        if !self.lsp.rust.debug.initialized {
             message.push_str(" Current state: starting.");
-        } else if let Some(server_message) = &self.rust_lsp.debug.last_server_message
+        } else if let Some(server_message) = &self.lsp.rust.debug.last_server_message
             && !server_message.is_empty()
         {
             message.push_str(&format!(" Last server message: {server_message}"));
@@ -533,8 +533,8 @@ impl CodeReaderApp {
     }
 
     pub(super) fn rust_lsp_readiness_status_message(&self) -> Option<String> {
-        self.rust_lsp.client.as_ref()?;
-        if !self.has_open_workspace_rust_document() && self.rust_lsp.pending.is_none() {
+        self.lsp.rust.client.as_ref()?;
+        if !self.has_open_workspace_rust_document() && self.lsp.rust.pending.is_none() {
             return None;
         }
 
@@ -543,33 +543,33 @@ impl CodeReaderApp {
     }
 
     pub(super) fn rust_lsp_readiness_status(&self) -> RustLspReadinessStatus {
-        if self.rust_lsp.client.is_none() {
+        if self.lsp.rust.client.is_none() {
             return RustLspReadinessStatus::NotStarted;
         }
 
-        if self.rust_lsp.debug.reader_error_count > 0
-            && self.rust_lsp.debug.last_status == "reader_error"
+        if self.lsp.rust.debug.reader_error_count > 0
+            && self.lsp.rust.debug.last_status == "reader_error"
         {
             return RustLspReadinessStatus::Error;
         }
 
-        if !self.rust_lsp.debug.initialized {
+        if !self.lsp.rust.debug.initialized {
             return RustLspReadinessStatus::WarmingUp("starting");
         }
 
-        if self.rust_lsp.debug.active_progress_count > 0 {
+        if self.lsp.rust.debug.active_progress_count > 0 {
             return RustLspReadinessStatus::WarmingUp("indexing");
         }
 
-        if self.rust_lsp.debug.last_definition_success_at.is_some() {
+        if self.lsp.rust.debug.last_definition_success_at.is_some() {
             return RustLspReadinessStatus::Ready("definition");
         }
 
-        if self.rust_lsp.debug.last_diagnostics_at.is_some() {
+        if self.lsp.rust.debug.last_diagnostics_at.is_some() {
             return RustLspReadinessStatus::Ready("diagnostics");
         }
 
-        if self.rust_lsp.debug.sync_count > 0 || self.rust_lsp.debug.warmup_count > 0 {
+        if self.lsp.rust.debug.sync_count > 0 || self.lsp.rust.debug.warmup_count > 0 {
             return RustLspReadinessStatus::WarmingUp("workspace/dependencies");
         }
 
@@ -580,12 +580,12 @@ impl CodeReaderApp {
         format!(
             "rust_lsp_readiness={} active_progress={} started_age_ms={} initialized_age_ms={} last_progress_age_ms={} last_diagnostics_age_ms={} last_definition_success_age_ms={}",
             self.rust_lsp_readiness_status().report_label(),
-            self.rust_lsp.debug.active_progress_count,
-            debug_instant_age_ms(self.rust_lsp.debug.started_at),
-            debug_instant_age_ms(self.rust_lsp.debug.initialized_at),
-            debug_instant_age_ms(self.rust_lsp.debug.last_progress_at),
-            debug_instant_age_ms(self.rust_lsp.debug.last_diagnostics_at),
-            debug_instant_age_ms(self.rust_lsp.debug.last_definition_success_at)
+            self.lsp.rust.debug.active_progress_count,
+            debug_instant_age_ms(self.lsp.rust.debug.started_at),
+            debug_instant_age_ms(self.lsp.rust.debug.initialized_at),
+            debug_instant_age_ms(self.lsp.rust.debug.last_progress_at),
+            debug_instant_age_ms(self.lsp.rust.debug.last_diagnostics_at),
+            debug_instant_age_ms(self.lsp.rust.debug.last_definition_success_at)
         )
     }
 
@@ -604,23 +604,23 @@ impl CodeReaderApp {
         kind: LocationListKind,
         origin: Option<NavigationPoint>,
     ) {
-        self.location_list_kind = kind;
+        self.lsp.location_list_kind = kind;
         match locations.len() {
             0 => {
-                self.definition_candidates.clear();
+                self.lsp.definition_candidates.clear();
                 self.close_references_overlay();
                 self.status_message =
                     format!("No {} found for `{identifier}`.", kind.singular_label());
             }
             1 => {
-                self.definition_candidates.clear();
+                self.lsp.definition_candidates.clear();
                 self.close_references_overlay();
                 self.open_definition_location_with_origin(locations[0].clone(), origin);
                 self.status_message =
                     format!("Jumped to {} of `{identifier}`.", kind.singular_label());
             }
             _ => {
-                self.definition_candidates = locations
+                self.lsp.definition_candidates = locations
                     .into_iter()
                     .map(|location| {
                         let preview = (kind == LocationListKind::References)
@@ -641,7 +641,7 @@ impl CodeReaderApp {
                     self.open_references_overlay(identifier);
                     self.status_message = format!(
                         "Found {} references for `{identifier}`.",
-                        self.definition_candidates.len()
+                        self.lsp.definition_candidates.len()
                     );
                 } else {
                     self.close_references_overlay();

@@ -5,11 +5,11 @@ use super::*;
 impl CodeReaderApp {
     pub(super) fn refresh_git_view(&mut self) {
         self.reload_git_repositories();
-        self.status_message = format!("Git: {} repositories.", self.git_repositories.len());
+        self.status_message = format!("Git: {} repositories.", self.git.repositories.len());
     }
 
     pub(super) fn ensure_git_repositories_loaded(&mut self) {
-        if !self.git_repositories_loaded {
+        if !self.git.repositories_loaded {
             self.reload_git_repositories();
         }
     }
@@ -19,48 +19,56 @@ impl CodeReaderApp {
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        self.git_repositories = discover_git_repositories(&roots);
-        self.git_repositories_loaded = true;
-        self.git_commit_messages
-            .retain(|root, _| self.git_repositories.iter().any(|repo| &repo.root == root));
-        self.git_repo_open
-            .retain(|root, _| self.git_repositories.iter().any(|repo| &repo.root == root));
-        self.git_new_branch_names
-            .retain(|root, _| self.git_repositories.iter().any(|repo| &repo.root == root));
+        self.git.repositories = discover_git_repositories(&roots);
+        self.git.repositories_loaded = true;
+        self.git
+            .commit_messages
+            .retain(|root, _| self.git.repositories.iter().any(|repo| &repo.root == root));
+        self.git
+            .repo_open
+            .retain(|root, _| self.git.repositories.iter().any(|repo| &repo.root == root));
+        self.git
+            .new_branch_names
+            .retain(|root, _| self.git.repositories.iter().any(|repo| &repo.root == root));
         if self
-            .git_create_branch_root
+            .git
+            .create_branch_root
             .as_ref()
-            .is_some_and(|root| !self.git_repositories.iter().any(|repo| &repo.root == root))
+            .is_some_and(|root| !self.git.repositories.iter().any(|repo| &repo.root == root))
         {
-            self.git_create_branch_root = None;
+            self.git.create_branch_root = None;
         }
         if self
-            .git_switch_branch_root
+            .git
+            .switch_branch_root
             .as_ref()
-            .is_some_and(|root| !self.git_repositories.iter().any(|repo| &repo.root == root))
+            .is_some_and(|root| !self.git.repositories.iter().any(|repo| &repo.root == root))
         {
-            self.git_switch_branch_root = None;
-            self.git_switch_branch_cursor = None;
+            self.git.switch_branch_root = None;
+            self.git.switch_branch_cursor = None;
         }
-        for repository in &self.git_repositories {
-            self.git_commit_messages
+        for repository in &self.git.repositories {
+            self.git
+                .commit_messages
                 .entry(repository.root.clone())
                 .or_default();
-            self.git_repo_open
+            self.git
+                .repo_open
                 .entry(repository.root.clone())
                 .or_insert(true);
-            self.git_new_branch_names
+            self.git
+                .new_branch_names
                 .entry(repository.root.clone())
                 .or_default();
         }
     }
 
     pub(super) fn git_ui(&mut self, ui: &mut egui::Ui) {
-        if !self.git_repositories_loaded {
+        if !self.git.repositories_loaded {
             self.refresh_git_view();
         }
 
-        if self.git_repositories.is_empty() {
+        if self.git.repositories.is_empty() {
             ui.label(RichText::new("No Git repositories found in this workspace.").weak());
             return;
         }
@@ -68,7 +76,7 @@ impl CodeReaderApp {
         egui::CollapsingHeader::new("Repositories")
             .default_open(true)
             .show(ui, |ui| {
-                for repository in self.git_repositories.clone() {
+                for repository in self.git.repositories.clone() {
                     let tracking = repository.tracking.as_ref().and_then(|tracking| {
                         if tracking.ahead == 0 && tracking.behind == 0 {
                             None
@@ -105,7 +113,7 @@ impl CodeReaderApp {
                                 .on_hover_text(format!("{}\nSwitch Branch", repository.branch))
                                 .clicked()
                             {
-                                self.git_switch_branch_root = Some(repository.root.clone());
+                                self.git.switch_branch_root = Some(repository.root.clone());
                             }
                         });
                     });
@@ -122,10 +130,11 @@ impl CodeReaderApp {
         egui::CollapsingHeader::new("Changes")
             .default_open(true)
             .show(ui, |ui| {
-                for repository in self.git_repositories.clone() {
+                for repository in self.git.repositories.clone() {
                     let change_count = repository.changes.len();
                     let default_open = self
-                        .git_repo_open
+                        .git
+                        .repo_open
                         .get(&repository.root)
                         .copied()
                         .unwrap_or(true);
@@ -164,7 +173,8 @@ impl CodeReaderApp {
                             );
                         });
                     });
-                    self.git_repo_open
+                    self.git
+                        .repo_open
                         .insert(repository.root.clone(), header.is_open());
                     if open_all_diffs {
                         self.open_git_all_diff(&repository);
@@ -176,7 +186,8 @@ impl CodeReaderApp {
                         let mut commit = false;
                         let mut commit_and_push = false;
                         let message = self
-                            .git_commit_messages
+                            .git
+                            .commit_messages
                             .entry(repository.root.clone())
                             .or_default();
                         ui.add(
@@ -244,13 +255,14 @@ impl CodeReaderApp {
             }
 
             if ui.button("Switch Branch...").clicked() {
-                self.git_switch_branch_root = Some(repository.root.clone());
+                self.git.switch_branch_root = Some(repository.root.clone());
                 ui.close();
             }
 
             if ui.button("Create Branch...").clicked() {
-                self.git_create_branch_root = Some(repository.root.clone());
-                self.git_new_branch_names
+                self.git.create_branch_root = Some(repository.root.clone());
+                self.git
+                    .new_branch_names
                     .entry(repository.root.clone())
                     .or_default()
                     .clear();
@@ -394,7 +406,7 @@ impl CodeReaderApp {
                 .on_hover_text("Discard changes")
                 .clicked()
             {
-                self.pending_git_discard = Some(GitDiscardRequest {
+                self.git.pending_discard = Some(GitDiscardRequest {
                     repository_root: repository.root.clone(),
                     repository_name: repository.name.clone(),
                     path: change.path.clone(),

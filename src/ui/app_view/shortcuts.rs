@@ -4,7 +4,7 @@ use super::*;
 
 impl CodeReaderApp {
     pub(super) fn show_shortcuts_help_window(&mut self, ui: &mut egui::Ui) {
-        if !self.shortcuts_help_open {
+        if !self.layout.shortcuts_help_open {
             return;
         }
 

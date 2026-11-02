@@ -20,7 +20,7 @@ impl CodeReaderApp {
 
     pub(super) fn create_session(&mut self) {
         if !self.panes_with_unsaved_changes().is_empty() {
-            self.pending_unsaved_action = Some(UnsavedChangesAction::CreateSession);
+            self.layout.pending_unsaved_action = Some(UnsavedChangesAction::CreateSession);
             return;
         }
         self.create_session_now();
@@ -32,21 +32,21 @@ impl CodeReaderApp {
             return;
         };
 
-        self.editing_session_name = false;
-        self.session_name_edit.clear();
-        self.pending_delete_session_id = None;
+        self.session_edit.editing_name = false;
+        self.session_edit.name_edit.clear();
+        self.session_edit.pending_delete_id = None;
         self.app_state.create_session(root);
         self.left = EditorPane::empty(Pane::Left);
         self.right = EditorPane::empty(Pane::Right);
         self.focused_pane = Pane::Left;
-        self.show_right_pane = false;
-        self.dragging_workspace_file = None;
-        self.git_commit_details = None;
-        self.selected_workspace_path = None;
-        self.pending_workspace_tree_reveal_path = None;
-        self.workspace_sidebar_active = false;
+        self.layout.show_right_pane = false;
+        self.workspace.dragging_file = None;
+        self.git.commit_details = None;
+        self.workspace.selected_path = None;
+        self.workspace.pending_reveal_path = None;
+        self.workspace.sidebar_active = false;
         self.close_references_overlay();
-        self.recent_files.clear();
+        self.navigation.recent_files.clear();
         self.rebuild_file_tree();
         self.status_message = "Created a new session.".to_owned();
         self.save_state();
@@ -99,7 +99,7 @@ impl CodeReaderApp {
 
     pub(super) fn switch_session(&mut self, session_id: &str) {
         if !self.panes_with_unsaved_changes().is_empty() {
-            self.pending_unsaved_action =
+            self.layout.pending_unsaved_action =
                 Some(UnsavedChangesAction::SwitchSession(session_id.to_owned()));
             return;
         }
@@ -108,9 +108,9 @@ impl CodeReaderApp {
 
     pub(super) fn switch_session_now(&mut self, session_id: &str) {
         self.sync_open_files();
-        self.pending_delete_session_id = None;
-        self.editing_session_name = false;
-        self.session_name_edit.clear();
+        self.session_edit.pending_delete_id = None;
+        self.session_edit.editing_name = false;
+        self.session_edit.name_edit.clear();
         self.app_state.switch_to(session_id);
 
         if let Some(session) = self.current_session().cloned() {
@@ -130,20 +130,20 @@ impl CodeReaderApp {
                     editor_pane_from_session_path(Pane::Right, path, session.pane_positions.right)
                 })
                 .unwrap_or_else(|| EditorPane::empty(Pane::Right));
-            self.recent_files = recent_files_from_open_files(&session.open_files);
+            self.navigation.recent_files = recent_files_from_open_files(&session.open_files);
         }
 
         self.focused_pane = Pane::Left;
-        self.left_navigation_history.clear();
-        self.right_navigation_history.clear();
-        self.definition_candidates.clear();
+        self.navigation.left_history.clear();
+        self.navigation.right_history.clear();
+        self.lsp.definition_candidates.clear();
         self.close_references_overlay();
-        self.show_right_pane = false;
-        self.dragging_workspace_file = None;
-        self.git_commit_details = None;
-        self.selected_workspace_path = None;
-        self.pending_workspace_tree_reveal_path = None;
-        self.workspace_sidebar_active = false;
+        self.layout.show_right_pane = false;
+        self.workspace.dragging_file = None;
+        self.git.commit_details = None;
+        self.workspace.selected_path = None;
+        self.workspace.pending_reveal_path = None;
+        self.workspace.sidebar_active = false;
         self.rebuild_file_tree();
         self.status_message = "Switched session.".to_owned();
         self.save_state();
@@ -152,12 +152,12 @@ impl CodeReaderApp {
     pub(super) fn delete_session(&mut self, session_id: &str) {
         match self.app_state.delete_session(session_id) {
             Ok(session) => {
-                self.pending_delete_session_id = None;
+                self.session_edit.pending_delete_id = None;
                 self.status_message = format!("Deleted session: {}", session.display_name);
                 self.save_state();
             }
             Err(error) => {
-                self.pending_delete_session_id = None;
+                self.session_edit.pending_delete_id = None;
                 self.status_message = error;
             }
         }
@@ -169,25 +169,25 @@ impl CodeReaderApp {
             return;
         };
 
-        self.session_name_edit = session.display_name.clone();
-        self.editing_session_name = true;
-        self.session_name_select_all = true;
-        self.pending_delete_session_id = None;
+        self.session_edit.name_edit = session.display_name.clone();
+        self.session_edit.editing_name = true;
+        self.session_edit.name_select_all = true;
+        self.session_edit.pending_delete_id = None;
     }
 
     pub(super) fn cancel_session_rename(&mut self) {
-        self.editing_session_name = false;
-        self.session_name_edit.clear();
-        self.session_name_select_all = false;
+        self.session_edit.editing_name = false;
+        self.session_edit.name_edit.clear();
+        self.session_edit.name_select_all = false;
     }
 
     pub(super) fn commit_session_rename(&mut self) {
-        let name = self.session_name_edit.trim().to_owned();
+        let name = self.session_edit.name_edit.trim().to_owned();
         match self.app_state.rename_current_session(&name) {
             Ok(()) => {
-                self.editing_session_name = false;
-                self.session_name_edit.clear();
-                self.session_name_select_all = false;
+                self.session_edit.editing_name = false;
+                self.session_edit.name_edit.clear();
+                self.session_edit.name_select_all = false;
                 self.sync_open_files();
                 match save_state(&self.state_path, &self.app_state) {
                     Ok(()) => {
@@ -236,7 +236,7 @@ impl CodeReaderApp {
     }
 
     pub(super) fn show_workspace_rename_window(&mut self, ui: &mut egui::Ui) {
-        if !self.editing_session_name {
+        if !self.session_edit.editing_name {
             return;
         }
 
@@ -245,14 +245,14 @@ impl CodeReaderApp {
             .map(|session| session.display_name.clone())
             .unwrap_or_else(|| "No session".to_owned());
         let input_id = egui::Id::new("workspace_rename_name");
-        if self.session_name_select_all {
+        if self.session_edit.name_select_all {
             let mut state = TextEditState::load(ui.ctx(), input_id).unwrap_or_default();
             state.cursor.set_char_range(Some(CCursorRange::two(
                 CCursor::new(0),
-                CCursor::new(self.session_name_edit.chars().count()),
+                CCursor::new(self.session_edit.name_edit.chars().count()),
             )));
             state.store(ui.ctx(), input_id);
-            self.session_name_select_all = false;
+            self.session_edit.name_select_all = false;
         }
 
         let mut rename = false;
@@ -266,7 +266,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter) = ui.input_mut(|input| {
                     (
-                        self.modal_escape == Some(Modal::RenameWorkspace),
+                        self.layout.modal_escape == Some(Modal::RenameWorkspace),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                     )
                 });
@@ -286,7 +286,7 @@ impl CodeReaderApp {
                 ui.label("New name");
                 ui.add_sized(
                     [ui.available_width(), 22.0],
-                    TextEdit::singleline(&mut self.session_name_edit)
+                    TextEdit::singleline(&mut self.session_edit.name_edit)
                         .id(input_id)
                         .font(TextStyle::Monospace),
                 );
@@ -309,7 +309,7 @@ impl CodeReaderApp {
     }
 
     pub(super) fn show_recent_workspaces_window(&mut self, ui: &mut egui::Ui) {
-        if !self.recent_workspaces_open {
+        if !self.layout.recent_workspaces_open {
             return;
         }
 
@@ -331,7 +331,7 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                if self.modal_escape == Some(Modal::RecentWorkspaces) {
+                if self.layout.modal_escape == Some(Modal::RecentWorkspaces) {
                     close = true;
                 }
 
@@ -355,7 +355,7 @@ impl CodeReaderApp {
                         for session in sessions {
                             let is_current = session.id == current_session_id;
                             let is_pending_delete =
-                                self.pending_delete_session_id.as_deref() == Some(&session.id);
+                                self.session_edit.pending_delete_id.as_deref() == Some(&session.id);
                             let can_delete = !is_current && session_count > 1;
                             let title = if is_current {
                                 format!("▶ {}", session.display_name)
@@ -468,7 +468,7 @@ impl CodeReaderApp {
                                     .on_hover_text("Delete session")
                                     .clicked()
                             {
-                                self.pending_delete_session_id = Some(session.id.clone());
+                                self.session_edit.pending_delete_id = Some(session.id.clone());
                             }
                             if is_pending_delete {
                                 ui.horizontal(|ui| {
@@ -481,7 +481,7 @@ impl CodeReaderApp {
                                         self.delete_session(&session.id);
                                     }
                                     if ui.button("Cancel").clicked() {
-                                        self.pending_delete_session_id = None;
+                                        self.session_edit.pending_delete_id = None;
                                     }
                                 });
                             }
@@ -525,8 +525,8 @@ impl CodeReaderApp {
             });
 
         if close {
-            self.recent_workspaces_open = false;
-            self.pending_delete_session_id = None;
+            self.layout.recent_workspaces_open = false;
+            self.session_edit.pending_delete_id = None;
         }
     }
 }

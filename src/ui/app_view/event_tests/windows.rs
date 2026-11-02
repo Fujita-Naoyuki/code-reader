@@ -9,14 +9,14 @@ use super::support::{CTRL, TestApp};
 fn f1_and_help_button_open_help_and_escape_closes_it() {
     let mut t = TestApp::plain();
     t.key(egui::Key::F1);
-    assert!(t.app().shortcuts_help_open);
+    assert!(t.app().layout.shortcuts_help_open);
     assert_eq!(t.count_label("Help"), 2, "button and window title");
     assert!(t.has_label("Source"), "context title for an empty editor");
     t.key(egui::Key::Escape);
-    assert!(!t.app().shortcuts_help_open);
+    assert!(!t.app().layout.shortcuts_help_open);
 
     t.click_first("Help");
-    assert!(t.app().shortcuts_help_open);
+    assert!(t.app().layout.shortcuts_help_open);
 }
 
 /// Presses F1 and checks the context title at the top of the Help window.
@@ -31,7 +31,7 @@ fn assert_help_context(t: &mut TestApp, title: &str) {
 
 /// Closes the Help window (Escape goes to the topmost window that handles it).
 fn close_help(t: &mut TestApp) {
-    while t.app().shortcuts_help_open {
+    while t.app().layout.shortcuts_help_open {
         t.key(egui::Key::Escape);
     }
 }
@@ -170,7 +170,7 @@ fn help_and_status_bar_follow_the_current_context() {
 fn ai_cmd_window_previews_edits_and_copies_the_command() {
     let mut t = TestApp::plain();
     t.click("AI Cmd");
-    assert!(t.app().ai_command_open);
+    assert!(t.app().layout.ai_command_open);
     assert!(t.has_label("Preview"));
     assert!(t.has_label_containing("claude"));
 
@@ -196,7 +196,7 @@ fn ai_cmd_window_previews_edits_and_copies_the_command() {
     assert!(t.platform.clipboard_text().unwrap().ends_with("codex"));
 
     t.key(egui::Key::Escape);
-    assert!(!t.app().ai_command_open);
+    assert!(!t.app().layout.ai_command_open);
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn two_quick_shift_combinations_do_not_open_search_everywhere() {
     let mut t = TestApp::plain();
     t.ctrl_shift(egui::Key::A);
     t.ctrl_shift(egui::Key::A);
-    assert!(!t.app().search_overlay.open);
+    assert!(!t.app().search.overlay.open);
 }
 
 #[test]
@@ -385,15 +385,15 @@ fn escape_closes_only_the_top_layer() {
     t.ctrl(egui::Key::F);
     assert!(t.app().left.source_search.open);
     t.click("Workspaces");
-    assert!(t.app().recent_workspaces_open);
+    assert!(t.app().layout.recent_workspaces_open);
     t.click("Help");
-    assert!(t.app().shortcuts_help_open);
+    assert!(t.app().layout.shortcuts_help_open);
 
     t.key(egui::Key::Escape);
-    assert!(!t.app().shortcuts_help_open);
-    assert!(t.app().recent_workspaces_open);
+    assert!(!t.app().layout.shortcuts_help_open);
+    assert!(t.app().layout.recent_workspaces_open);
     t.key(egui::Key::Escape);
-    assert!(!t.app().recent_workspaces_open);
+    assert!(!t.app().layout.recent_workspaces_open);
     assert!(
         t.app().left.source_search.open,
         "the find bar is under them"

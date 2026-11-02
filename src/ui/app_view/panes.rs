@@ -46,10 +46,13 @@ impl CodeReaderApp {
                 // Rust definition navigation is handled by rust-analyzer. Indexing external
                 // Rust sources here can be very expensive and is no longer needed for F12.
             } else if is_external_path(path) {
-                self.symbol_index
+                self.search
+                    .symbol_index
                     .add_external_file(path, &self.language_registry);
             } else {
-                self.symbol_index.add_file(path, &self.language_registry);
+                self.search
+                    .symbol_index
+                    .add_file(path, &self.language_registry);
             }
             self.remember_recent_file(path.to_path_buf());
         }
@@ -76,7 +79,7 @@ impl CodeReaderApp {
                     "{} has unsaved changes: save or discard them first.",
                     current.title
                 );
-                self.pending_unsaved_action = Some(UnsavedChangesAction::ReplaceEditor {
+                self.layout.pending_unsaved_action = Some(UnsavedChangesAction::ReplaceEditor {
                     pane,
                     next: Box::new(next),
                     sync_open_files,
@@ -175,7 +178,9 @@ impl CodeReaderApp {
             }
         }
 
-        self.symbol_index.add_file(&path, &self.language_registry);
+        self.search
+            .symbol_index
+            .add_file(&path, &self.language_registry);
         self.remember_recent_file(path.clone());
         self.reveal_workspace_file_in_tree(&path);
         let status =
@@ -279,9 +284,11 @@ impl CodeReaderApp {
     }
 
     pub(super) fn remember_recent_file(&mut self, path: PathBuf) {
-        self.recent_files.retain(|recent| recent != &path);
-        self.recent_files.insert(0, path);
-        self.recent_files.truncate(30);
+        self.navigation
+            .recent_files
+            .retain(|recent| recent != &path);
+        self.navigation.recent_files.insert(0, path);
+        self.navigation.recent_files.truncate(30);
         self.bump_search_index_revision();
     }
 
@@ -292,7 +299,9 @@ impl CodeReaderApp {
     pub(super) fn save_pane(&mut self, pane: Pane) -> bool {
         match self.editor_mut(pane).save_to_disk() {
             Ok(path) => {
-                self.symbol_index.add_file(&path, &self.language_registry);
+                self.search
+                    .symbol_index
+                    .add_file(&path, &self.language_registry);
                 self.bump_search_index_revision();
                 self.status_message = format!("Saved file: {}", path.display());
                 true
@@ -305,10 +314,10 @@ impl CodeReaderApp {
     }
 
     pub(super) fn show_unsaved_changes_window(&mut self, ui: &mut egui::Ui) {
-        if self.pending_unsaved_action.is_none() {
+        if self.layout.pending_unsaved_action.is_none() {
             return;
         }
-        let panes = match &self.pending_unsaved_action {
+        let panes = match &self.layout.pending_unsaved_action {
             Some(UnsavedChangesAction::ReplaceEditor { pane, .. }) => vec![*pane],
             _ => self.panes_with_unsaved_changes(),
         };
@@ -329,7 +338,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter) = ui.input_mut(|input| {
                     (
-                        self.modal_escape == Some(Modal::UnsavedChanges),
+                        self.layout.modal_escape == Some(Modal::UnsavedChanges),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                     )
                 });
@@ -365,7 +374,7 @@ impl CodeReaderApp {
             });
 
         if cancel {
-            self.pending_unsaved_action = None;
+            self.layout.pending_unsaved_action = None;
             self.status_message = "Kept unsaved changes.".to_owned();
             return;
         }
@@ -378,7 +387,7 @@ impl CodeReaderApp {
             }
         }
         if (save || discard)
-            && let Some(action) = self.pending_unsaved_action.take()
+            && let Some(action) = self.layout.pending_unsaved_action.take()
         {
             self.run_unsaved_changes_action(action);
         }

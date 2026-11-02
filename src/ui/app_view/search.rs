@@ -4,21 +4,21 @@ use super::*;
 
 impl CodeReaderApp {
     pub(super) fn poll_symbol_index(&mut self) {
-        let Some(receiver) = self.symbol_index_receiver.take() else {
+        let Some(receiver) = self.search.symbol_index_receiver.take() else {
             return;
         };
 
         match receiver.try_recv() {
             Ok(result) => {
-                self.symbol_index = result.index;
+                self.search.symbol_index = result.index;
                 self.bump_search_index_revision();
                 self.set_background_status(format!(
                     "Indexed {} workspace symbols.",
-                    self.symbol_index.len()
+                    self.search.symbol_index.len()
                 ));
             }
             Err(mpsc::TryRecvError::Empty) => {
-                self.symbol_index_receiver = Some(receiver);
+                self.search.symbol_index_receiver = Some(receiver);
             }
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.set_background_status("Symbol indexing failed.".to_owned());
@@ -27,124 +27,124 @@ impl CodeReaderApp {
     }
 
     pub(super) fn poll_workspace_search(&mut self, context: &egui::Context) {
-        let Some(receiver) = self.workspace_search_receiver.take() else {
+        let Some(receiver) = self.search.workspace_receiver.take() else {
             return;
         };
 
         match receiver.try_recv() {
             Ok(result) => {
-                if result.search_id == self.workspace_search.active_search_id {
-                    self.workspace_search.results = result.results;
-                    self.workspace_search.searched_query = result.query.clone();
-                    self.workspace_search.searching = false;
+                if result.search_id == self.search.workspace.active_search_id {
+                    self.search.workspace.results = result.results;
+                    self.search.workspace.searched_query = result.query.clone();
+                    self.search.workspace.searching = false;
 
-                    let match_count = self.workspace_search.match_count();
-                    let file_count = self.workspace_search.results.len();
+                    let match_count = self.search.workspace.match_count();
+                    let file_count = self.search.workspace.results.len();
                     self.status_message =
                         format!("Workspace search: {match_count} results in {file_count} files.");
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {
                 context.request_repaint_after(Duration::from_millis(100));
-                self.workspace_search_receiver = Some(receiver);
+                self.search.workspace_receiver = Some(receiver);
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.workspace_search.searching = false;
+                self.search.workspace.searching = false;
                 self.status_message = "Workspace search failed.".to_owned();
             }
         }
     }
 
     pub(super) fn bump_search_index_revision(&mut self) {
-        self.search_index_revision = self.search_index_revision.wrapping_add(1);
-        self.search_overlay.cache = None;
+        self.search.index_revision = self.search.index_revision.wrapping_add(1);
+        self.search.overlay.cache = None;
     }
 
     pub(super) fn open_search_overlay(&mut self) {
         self.close_references_overlay();
-        self.search_overlay.open = true;
-        self.search_overlay.selected_index = 0;
+        self.search.overlay.open = true;
+        self.search.overlay.selected_index = 0;
     }
 
     pub(super) fn close_search_overlay(&mut self) {
-        self.search_overlay.open = false;
-        self.search_overlay.query.clear();
-        self.search_overlay.selected_index = 0;
-        self.search_overlay.cache = None;
+        self.search.overlay.open = false;
+        self.search.overlay.query.clear();
+        self.search.overlay.selected_index = 0;
+        self.search.overlay.cache = None;
     }
 
     pub(super) fn open_references_overlay(&mut self, symbol: &str) {
-        self.references_overlay.open = true;
-        self.references_overlay.query.clear();
-        self.references_overlay.selected_index = 0;
-        self.references_overlay.symbol = symbol.to_owned();
+        self.search.references_overlay.open = true;
+        self.search.references_overlay.query.clear();
+        self.search.references_overlay.selected_index = 0;
+        self.search.references_overlay.symbol = symbol.to_owned();
     }
 
     pub(super) fn close_references_overlay(&mut self) {
-        self.references_overlay.open = false;
-        self.references_overlay.query.clear();
-        self.references_overlay.selected_index = 0;
-        self.references_overlay.symbol.clear();
+        self.search.references_overlay.open = false;
+        self.search.references_overlay.query.clear();
+        self.search.references_overlay.selected_index = 0;
+        self.search.references_overlay.symbol.clear();
     }
 
     pub(super) fn search_overlay_results(
         &mut self,
         bookmarks: &[SessionBookmark],
     ) -> Vec<SearchResult> {
-        if let Some(cache) = &self.search_overlay.cache
-            && cache.query == self.search_overlay.query
-            && cache.revision == self.search_index_revision
+        if let Some(cache) = &self.search.overlay.cache
+            && cache.query == self.search.overlay.query
+            && cache.revision == self.search.index_revision
         {
             return cache.results.clone();
         }
 
         let results = search_everywhere(
-            &self.search_overlay.query,
+            &self.search.overlay.query,
             &self.file_tree.files,
-            self.symbol_index.symbols(),
+            self.search.symbol_index.symbols(),
             bookmarks,
-            &self.recent_files,
+            &self.navigation.recent_files,
         );
 
-        self.search_overlay.cache = Some(SearchOverlayCache {
-            query: self.search_overlay.query.clone(),
-            revision: self.search_index_revision,
+        self.search.overlay.cache = Some(SearchOverlayCache {
+            query: self.search.overlay.query.clone(),
+            revision: self.search.index_revision,
             results: results.clone(),
         });
         results
     }
 
     pub(super) fn open_workspace_search(&mut self) {
-        self.show_workspace_sidebar = true;
-        self.sidebar_view = SidebarView::Search;
-        self.workspace_search.open = true;
-        self.workspace_search.focus_requested = true;
-        self.last_shift_tap_time = None;
+        self.layout.show_workspace_sidebar = true;
+        self.layout.sidebar_view = SidebarView::Search;
+        self.search.workspace.open = true;
+        self.search.workspace.focus_requested = true;
+        self.shift_tap.last_tap_time = None;
     }
 
     pub(super) fn close_workspace_search(&mut self) {
-        self.workspace_search.open = false;
-        self.workspace_search.query.clear();
-        self.workspace_search.results.clear();
-        self.workspace_search.searched_query.clear();
-        self.workspace_search.focus_requested = false;
-        self.workspace_search.searching = false;
-        self.workspace_search_receiver = None;
+        self.search.workspace.open = false;
+        self.search.workspace.query.clear();
+        self.search.workspace.results.clear();
+        self.search.workspace.searched_query.clear();
+        self.search.workspace.focus_requested = false;
+        self.search.workspace.searching = false;
+        self.search.workspace_receiver = None;
     }
 
     pub(super) fn run_workspace_search(&mut self) {
-        let query = self.workspace_search.query.trim().to_owned();
+        let query = self.search.workspace.query.trim().to_owned();
         if query.is_empty() {
-            self.workspace_search.results.clear();
-            self.workspace_search.searched_query.clear();
-            self.workspace_search.searching = false;
-            self.workspace_search_receiver = None;
+            self.search.workspace.results.clear();
+            self.search.workspace.searched_query.clear();
+            self.search.workspace.searching = false;
+            self.search.workspace_receiver = None;
             self.status_message = "Workspace search query is empty.".to_owned();
             return;
         }
 
-        self.next_workspace_search_id = self.next_workspace_search_id.wrapping_add(1);
-        let search_id = self.next_workspace_search_id;
+        self.search.next_workspace_id = self.search.next_workspace_id.wrapping_add(1);
+        let search_id = self.search.next_workspace_id;
         let files = self.file_tree.files.clone();
         let query_for_thread = query.clone();
         let (sender, receiver) = mpsc::channel();
@@ -159,10 +159,10 @@ impl CodeReaderApp {
             });
         });
 
-        self.workspace_search.active_search_id = search_id;
-        self.workspace_search.searching = true;
-        self.workspace_search.searched_query = query.clone();
-        self.workspace_search_receiver = Some(receiver);
+        self.search.workspace.active_search_id = search_id;
+        self.search.workspace.searching = true;
+        self.search.workspace.searched_query = query.clone();
+        self.search.workspace_receiver = Some(receiver);
         self.status_message = format!("Workspace search started: {query}");
     }
 
@@ -184,14 +184,14 @@ impl CodeReaderApp {
         }
 
         let response = ui.add(
-            TextEdit::singleline(&mut self.workspace_search.query)
+            TextEdit::singleline(&mut self.search.workspace.query)
                 .id(input_id)
                 .hint_text("Search workspace")
                 .desired_width(f32::INFINITY),
         );
-        if self.workspace_search.focus_requested {
+        if self.search.workspace.focus_requested {
             ui.memory_mut(|memory| memory.request_focus(input_id));
-            self.workspace_search.focus_requested = false;
+            self.search.workspace.focus_requested = false;
         }
 
         let input_has_focus =
@@ -212,17 +212,17 @@ impl CodeReaderApp {
             }
         });
 
-        let match_count = self.workspace_search.match_count();
-        let result_label = if self.workspace_search.searching {
+        let match_count = self.search.workspace.match_count();
+        let result_label = if self.search.workspace.searching {
             format!(
                 "Searching {} files for `{}`",
                 self.file_tree.files.len(),
-                self.workspace_search.searched_query
+                self.search.workspace.searched_query
             )
         } else {
             format!(
                 "{match_count} results in {} files",
-                self.workspace_search.results.len()
+                self.search.workspace.results.len()
             )
         };
         ui.label(RichText::new(result_label).weak());
@@ -231,16 +231,16 @@ impl CodeReaderApp {
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        let results = self.workspace_search.results.clone();
+        let results = self.search.workspace.results.clone();
         ScrollArea::vertical()
             .id_salt("workspace_search_results")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                if self.workspace_search.searching {
+                if self.search.workspace.searching {
                     ui.label(RichText::new("Searching...").weak());
                     return;
                 }
-                if !self.workspace_search.searched_query.is_empty() && results.is_empty() {
+                if !self.search.workspace.searched_query.is_empty() && results.is_empty() {
                     ui.label(RichText::new("No results").weak());
                     return;
                 }
@@ -304,7 +304,7 @@ impl CodeReaderApp {
         });
 
         if shortcut_pressed {
-            self.last_shift_tap_time = None;
+            self.shift_tap.last_tap_time = None;
             return true;
         }
 
@@ -334,40 +334,41 @@ impl CodeReaderApp {
                 input.time,
             )
         });
-        let shift_pressed = shift_down && !self.last_shift_down;
-        let shift_released = !shift_down && self.last_shift_down;
-        self.last_shift_down = shift_down;
+        let shift_pressed = shift_down && !self.shift_tap.last_down;
+        let shift_released = !shift_down && self.shift_tap.last_down;
+        self.shift_tap.last_down = shift_down;
 
         if other_input {
-            self.shift_tap_candidate = false;
-            self.last_shift_tap_time = None;
+            self.shift_tap.candidate = false;
+            self.shift_tap.last_tap_time = None;
             return false;
         }
         if shift_pressed {
-            self.shift_tap_candidate = true;
+            self.shift_tap.candidate = true;
         }
-        if !shift_released || !std::mem::take(&mut self.shift_tap_candidate) {
+        if !shift_released || !std::mem::take(&mut self.shift_tap.candidate) {
             return false;
         }
-        if self.search_overlay.open {
+        if self.search.overlay.open {
             return false;
         }
 
         let should_open = self
-            .last_shift_tap_time
+            .shift_tap
+            .last_tap_time
             .map(|last_time| time - last_time <= 0.45)
             .unwrap_or(false);
-        self.last_shift_tap_time = Some(time);
+        self.shift_tap.last_tap_time = Some(time);
 
         if should_open {
-            self.last_shift_tap_time = None;
+            self.shift_tap.last_tap_time = None;
         }
 
         should_open
     }
 
     pub(super) fn show_search_overlay(&mut self, ui: &mut egui::Ui) -> Option<SearchResult> {
-        if !self.search_overlay.open {
+        if !self.search.overlay.open {
             return None;
         }
 
@@ -377,8 +378,8 @@ impl CodeReaderApp {
             .unwrap_or_default();
         let results = self.search_overlay_results(&bookmarks);
 
-        if self.search_overlay.selected_index >= results.len() {
-            self.search_overlay.selected_index = results.len().saturating_sub(1);
+        if self.search.overlay.selected_index >= results.len() {
+            self.search.overlay.selected_index = results.len().saturating_sub(1);
         }
 
         let mut selected_result = None;
@@ -393,7 +394,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter, arrow_up, arrow_down) = ui.input_mut(|input| {
                     (
-                        self.modal_escape == Some(Modal::SearchEverywhere),
+                        self.layout.modal_escape == Some(Modal::SearchEverywhere),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
@@ -401,29 +402,29 @@ impl CodeReaderApp {
                 });
 
                 let query_response = ui.add(
-                    TextEdit::singleline(&mut self.search_overlay.query)
+                    TextEdit::singleline(&mut self.search.overlay.query)
                         .hint_text("Search files, symbols, bookmarks")
                         .desired_width(f32::INFINITY),
                 );
                 query_response.request_focus();
                 if query_response.changed() {
-                    self.search_overlay.selected_index = 0;
+                    self.search.overlay.selected_index = 0;
                 }
 
                 if escape {
                     close = true;
                 }
                 if arrow_down && !results.is_empty() {
-                    self.search_overlay.selected_index =
-                        (self.search_overlay.selected_index + 1).min(results.len() - 1);
+                    self.search.overlay.selected_index =
+                        (self.search.overlay.selected_index + 1).min(results.len() - 1);
                 }
                 if arrow_up && !results.is_empty() {
-                    self.search_overlay.selected_index =
-                        self.search_overlay.selected_index.saturating_sub(1);
+                    self.search.overlay.selected_index =
+                        self.search.overlay.selected_index.saturating_sub(1);
                 }
                 if enter {
                     selected_result = results
-                        .get(self.search_overlay.selected_index)
+                        .get(self.search.overlay.selected_index)
                         .cloned()
                         .or_else(|| results.first().cloned());
                 }
@@ -469,7 +470,7 @@ impl CodeReaderApp {
                         }
 
                         for (index, result) in results.iter().enumerate() {
-                            let selected = index == self.search_overlay.selected_index;
+                            let selected = index == self.search.overlay.selected_index;
                             let (row_rect, _) = ui.allocate_exact_size(
                                 egui::vec2(results_width, row_height),
                                 egui::Sense::hover(),
@@ -493,7 +494,7 @@ impl CodeReaderApp {
                             );
 
                             if response.hovered() {
-                                self.search_overlay.selected_index = index;
+                                self.search.overlay.selected_index = index;
                             }
                             if response.clicked() {
                                 selected_result = Some(result.clone());
@@ -562,11 +563,11 @@ impl CodeReaderApp {
     }
 
     pub(super) fn show_references_overlay(&mut self, ui: &mut egui::Ui) -> Option<Location> {
-        if !self.references_overlay.open {
+        if !self.search.references_overlay.open {
             return None;
         }
-        if self.location_list_kind != LocationListKind::References
-            || self.definition_candidates.is_empty()
+        if self.lsp.location_list_kind != LocationListKind::References
+            || self.lsp.definition_candidates.is_empty()
         {
             self.close_references_overlay();
             return None;
@@ -577,12 +578,12 @@ impl CodeReaderApp {
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
         let entries = reference_overlay_entries(
-            &self.definition_candidates,
+            &self.lsp.definition_candidates,
             &roots,
-            &self.references_overlay.query,
+            &self.search.references_overlay.query,
         );
-        if self.references_overlay.selected_index >= entries.len() {
-            self.references_overlay.selected_index = entries.len().saturating_sub(1);
+        if self.search.references_overlay.selected_index >= entries.len() {
+            self.search.references_overlay.selected_index = entries.len().saturating_sub(1);
         }
         let mut files = entries
             .iter()
@@ -604,7 +605,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter, arrow_up, arrow_down) = ui.input_mut(|input| {
                     (
-                        self.modal_escape == Some(Modal::References),
+                        self.layout.modal_escape == Some(Modal::References),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
@@ -613,32 +614,35 @@ impl CodeReaderApp {
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Symbol").weak());
-                    ui.label(RichText::new(&self.references_overlay.symbol).monospace());
+                    ui.label(RichText::new(&self.search.references_overlay.symbol).monospace());
                 });
                 let query_response = ui.add(
-                    TextEdit::singleline(&mut self.references_overlay.query)
+                    TextEdit::singleline(&mut self.search.references_overlay.query)
                         .hint_text("Filter references")
                         .desired_width(f32::INFINITY),
                 );
                 query_response.request_focus();
                 if query_response.changed() {
-                    self.references_overlay.selected_index = 0;
+                    self.search.references_overlay.selected_index = 0;
                 }
 
                 if escape {
                     close = true;
                 }
                 if arrow_down && !entries.is_empty() {
-                    self.references_overlay.selected_index =
-                        (self.references_overlay.selected_index + 1).min(entries.len() - 1);
+                    self.search.references_overlay.selected_index =
+                        (self.search.references_overlay.selected_index + 1).min(entries.len() - 1);
                 }
                 if arrow_up && !entries.is_empty() {
-                    self.references_overlay.selected_index =
-                        self.references_overlay.selected_index.saturating_sub(1);
+                    self.search.references_overlay.selected_index = self
+                        .search
+                        .references_overlay
+                        .selected_index
+                        .saturating_sub(1);
                 }
                 if enter {
                     selected_location = entries
-                        .get(self.references_overlay.selected_index)
+                        .get(self.search.references_overlay.selected_index)
                         .map(|entry| entry.location.clone())
                         .or_else(|| entries.first().map(|entry| entry.location.clone()));
                 }
@@ -695,7 +699,7 @@ impl CodeReaderApp {
                             {
                                 let selected_index = group_start + entry_index;
                                 let selected =
-                                    selected_index == self.references_overlay.selected_index;
+                                    selected_index == self.search.references_overlay.selected_index;
                                 let text = if entry.preview.is_empty() {
                                     format!("{:>5}", entry.line_number)
                                 } else {
@@ -707,7 +711,7 @@ impl CodeReaderApp {
                                         .selected(selected),
                                 );
                                 if response.hovered() {
-                                    self.references_overlay.selected_index = selected_index;
+                                    self.search.references_overlay.selected_index = selected_index;
                                 }
                                 if response.clicked() {
                                     selected_location = Some(entry.location.clone());

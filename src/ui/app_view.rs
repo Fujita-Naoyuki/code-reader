@@ -31,6 +31,7 @@ mod search;
 mod sessions;
 mod shortcuts;
 mod source_editor;
+mod state;
 mod status;
 mod virtual_editor;
 mod virtual_input;
@@ -161,6 +162,7 @@ use navigation::*;
 use panes::*;
 use search::*;
 use source_editor::*;
+use state::*;
 use status::*;
 use virtual_editor::*;
 use virtual_input::*;
@@ -212,64 +214,18 @@ pub struct CodeReaderApp {
     left: EditorPane,
     right: EditorPane,
     file_tree: FileTree,
-    workspace_snapshot: WorkspaceSnapshot,
-    next_workspace_change_poll: Instant,
-    workspace_change_receiver: Option<Receiver<WorkspaceChangeScanResult>>,
-    symbol_index: SymbolIndex,
-    symbol_index_receiver: Option<Receiver<IndexingResult>>,
-    definition_candidates: Vec<DefinitionCandidate>,
-    location_list_kind: LocationListKind,
-    go_lsp: LspSession,
-    rust_lsp: LspSession,
-    left_navigation_history: NavigationHistory,
-    right_navigation_history: NavigationHistory,
-    recent_files: Vec<PathBuf>,
     markdown_modes: HashMap<PathBuf, MarkdownMode>,
-    search_overlay: SearchOverlay,
-    references_overlay: ReferencesOverlay,
-    search_index_revision: u64,
-    workspace_search: WorkspaceSearchState,
-    workspace_search_receiver: Option<Receiver<WorkspaceSearchResult>>,
-    next_workspace_search_id: u64,
-    git_repositories: Vec<GitRepositoryState>,
-    git_repositories_loaded: bool,
-    git_commit_messages: HashMap<PathBuf, String>,
-    git_repo_open: HashMap<PathBuf, bool>,
-    git_new_branch_names: HashMap<PathBuf, String>,
-    git_create_branch_root: Option<PathBuf>,
-    git_switch_branch_root: Option<PathBuf>,
-    /// Branch highlighted with Up/Down in the Switch Branch window; Enter switches to it.
-    git_switch_branch_cursor: Option<String>,
-    pending_git_discard: Option<GitDiscardRequest>,
-    /// An action that would drop unsaved edits, waiting for Save / Discard / Cancel.
-    pending_unsaved_action: Option<UnsavedChangesAction>,
-    git_commit_details: Option<GitCommitDetailsWindow>,
-    dragging_workspace_file: Option<PathBuf>,
-    selected_workspace_path: Option<PathBuf>,
-    pending_workspace_tree_reveal_path: Option<PathBuf>,
-    workspace_sidebar_active: bool,
-    workspace_file_dialog: Option<WorkspaceFileDialog>,
-    sidebar_view: SidebarView,
-    show_workspace_sidebar: bool,
-    show_right_pane: bool,
-    recent_workspaces_open: bool,
-    shortcuts_help_open: bool,
-    /// The layer that gets this frame's Escape; see `dispatch_modal_escape`.
-    modal_escape: Option<Modal>,
-    background_status: BackgroundStatus,
-    ai_command_open: bool,
-    workspace_root_open: HashMap<PathBuf, bool>,
-    last_shift_down: bool,
-    /// Shift is down and nothing else (keys, text, other modifiers) has happened since it
-    /// went down, so releasing it counts as a lone Shift tap.
-    shift_tap_candidate: bool,
-    last_shift_tap_time: Option<f64>,
     tab_width: usize,
     status_message: String,
-    pending_delete_session_id: Option<String>,
-    editing_session_name: bool,
-    session_name_edit: String,
-    session_name_select_all: bool,
+    background_status: BackgroundStatus,
+    layout: LayoutState,
+    workspace: WorkspaceTreeState,
+    search: SearchState,
+    lsp: LspState,
+    navigation: NavigationState,
+    git: GitPanelState,
+    session_edit: SessionEditState,
+    shift_tap: ShiftTapState,
     app_perf_debug: AppPerfDebug,
 }
 
@@ -330,59 +286,21 @@ impl CodeReaderApp {
             left,
             right,
             file_tree,
-            workspace_snapshot,
-            next_workspace_change_poll: Instant::now() + WORKSPACE_CHANGE_POLL_INTERVAL,
-            workspace_change_receiver: None,
-            symbol_index: SymbolIndex::new(),
-            symbol_index_receiver: Some(symbol_index_receiver),
-            definition_candidates: Vec::new(),
-            location_list_kind: LocationListKind::Definitions,
-            go_lsp: LspSession::default(),
-            rust_lsp: LspSession::default(),
-            left_navigation_history: NavigationHistory::default(),
-            right_navigation_history: NavigationHistory::default(),
-            recent_files,
             markdown_modes: HashMap::new(),
-            search_overlay: SearchOverlay::default(),
-            references_overlay: ReferencesOverlay::default(),
-            search_index_revision: 0,
-            workspace_search: WorkspaceSearchState::default(),
-            workspace_search_receiver: None,
-            next_workspace_search_id: 0,
-            git_repositories: Vec::new(),
-            git_repositories_loaded: false,
-            git_commit_messages: HashMap::new(),
-            git_repo_open: HashMap::new(),
-            git_new_branch_names: HashMap::new(),
-            git_create_branch_root: None,
-            git_switch_branch_root: None,
-            git_switch_branch_cursor: None,
-            pending_git_discard: None,
-            pending_unsaved_action: None,
-            git_commit_details: None,
-            dragging_workspace_file: None,
-            selected_workspace_path: None,
-            pending_workspace_tree_reveal_path: None,
-            workspace_sidebar_active: false,
-            workspace_file_dialog: None,
-            sidebar_view: SidebarView::Workspace,
-            show_workspace_sidebar: true,
-            show_right_pane: false,
-            recent_workspaces_open: false,
-            shortcuts_help_open: false,
-            modal_escape: None,
-            background_status: BackgroundStatus::default(),
-            ai_command_open: false,
-            workspace_root_open: HashMap::new(),
-            last_shift_down: false,
-            shift_tap_candidate: false,
-            last_shift_tap_time: None,
             tab_width: DEFAULT_TAB_WIDTH,
             status_message: "Session restored.".to_owned(),
-            pending_delete_session_id: None,
-            editing_session_name: false,
-            session_name_edit: String::new(),
-            session_name_select_all: false,
+            background_status: BackgroundStatus::default(),
+            layout: LayoutState::default(),
+            workspace: WorkspaceTreeState::new(workspace_snapshot),
+            search: SearchState::new(symbol_index_receiver),
+            lsp: LspState::default(),
+            navigation: NavigationState {
+                recent_files,
+                ..NavigationState::default()
+            },
+            git: GitPanelState::default(),
+            session_edit: SessionEditState::default(),
+            shift_tap: ShiftTapState::default(),
             app_perf_debug: AppPerfDebug::default(),
         };
         app.warm_up_rust_lsp_for_workspace();
@@ -432,7 +350,7 @@ impl CodeReaderApp {
     /// Keys that work from anywhere. Runs before the panes so they see what is left.
     fn handle_global_shortcuts(&mut self, ui: &mut egui::Ui) {
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
-            self.shortcuts_help_open = true;
+            self.layout.shortcuts_help_open = true;
         }
         if ui.input_mut(|input| {
             input.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::F)
@@ -448,18 +366,18 @@ impl CodeReaderApp {
         if self.consume_search_shortcuts(ui) {
             self.open_search_overlay();
         }
-        if !self.search_overlay.open && ui.input_mut(consume_ai_command_shortcut) {
+        if !self.search.overlay.open && ui.input_mut(consume_ai_command_shortcut) {
             self.copy_cli_agent_command();
         }
         self.handle_workspace_file_shortcuts(ui);
-        if !self.search_overlay.open && ui.input_mut(consume_navigation_back_shortcut) {
+        if !self.search.overlay.open && ui.input_mut(consume_navigation_back_shortcut) {
             self.go_back();
         }
-        if !self.search_overlay.open && ui.input_mut(consume_navigation_forward_shortcut) {
+        if !self.search.overlay.open && ui.input_mut(consume_navigation_forward_shortcut) {
             self.go_forward();
         }
 
-        if !self.search_overlay.open && self.focused_editor().is_csv_grid() {
+        if !self.search.overlay.open && self.focused_editor().is_csv_grid() {
             if ui.input_mut(consume_undo_shortcut) {
                 if self.focused_editor_mut().apply_csv_undo() {
                     self.status_message = "CSV undo.".to_owned();
@@ -475,12 +393,12 @@ impl CodeReaderApp {
             }
         }
 
-        if !self.search_overlay.open
+        if !self.search.overlay.open
             && self.focused_editor().has_diff_text_selection()
             && ui.input_mut(consume_copy_shortcut)
         {
             self.copy_diff_selection_to_clipboard(ui);
-        } else if !self.search_overlay.open
+        } else if !self.search.overlay.open
             && (self.focused_editor().has_virtual_text_selection() || self.has_csv_selection())
             && ui.input_mut(consume_copy_shortcut)
             && !self.copy_virtual_selection_to_clipboard(ui)
@@ -506,14 +424,14 @@ impl CodeReaderApp {
         }
 
         let pressed_f12 =
-            !self.search_overlay.open && ui.input(|input| input.key_pressed(egui::Key::F12));
+            !self.search.overlay.open && ui.input(|input| input.key_pressed(egui::Key::F12));
         if pressed_f12 {
             self.go_to_definition();
         }
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::S)) {
             self.save_focused_file();
         }
-        if !self.show_right_pane && self.focused_pane == Pane::Right {
+        if !self.layout.show_right_pane && self.focused_pane == Pane::Right {
             self.focused_pane = Pane::Left;
         }
     }
@@ -522,19 +440,19 @@ impl CodeReaderApp {
         egui::Panel::top("top_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui
-                    .selectable_label(self.show_workspace_sidebar, "Sidebar")
+                    .selectable_label(self.layout.show_workspace_sidebar, "Sidebar")
                     .on_hover_text("Show or hide the workspace sidebar")
                     .clicked()
                 {
-                    self.show_workspace_sidebar = !self.show_workspace_sidebar;
+                    self.layout.show_workspace_sidebar = !self.layout.show_workspace_sidebar;
                 }
                 if ui
-                    .selectable_label(self.show_right_pane, "Right Pane")
+                    .selectable_label(self.layout.show_right_pane, "Right Pane")
                     .on_hover_text("Show or hide the right editor pane")
                     .clicked()
                 {
-                    self.show_right_pane = !self.show_right_pane;
-                    if !self.show_right_pane && self.focused_pane == Pane::Right {
+                    self.layout.show_right_pane = !self.layout.show_right_pane;
+                    if !self.layout.show_right_pane && self.focused_pane == Pane::Right {
                         self.focused_pane = Pane::Left;
                     }
                 }
@@ -551,21 +469,21 @@ impl CodeReaderApp {
                     .on_hover_text("Show recent workspaces")
                     .clicked()
                 {
-                    self.recent_workspaces_open = true;
+                    self.layout.recent_workspaces_open = true;
                 }
                 if ui
                     .button("Everywhere")
                     .on_hover_text("Open Search Everywhere")
                     .clicked()
                 {
-                    self.recent_workspaces_open = false;
+                    self.layout.recent_workspaces_open = false;
                     self.open_search_overlay();
                 }
                 if ui.button("AI Cmd").clicked() {
-                    self.ai_command_open = true;
+                    self.layout.ai_command_open = true;
                 }
                 if ui.button("Help").on_hover_text("Show shortcuts").clicked() {
-                    self.shortcuts_help_open = true;
+                    self.layout.shortcuts_help_open = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -581,7 +499,7 @@ impl CodeReaderApp {
     }
 
     fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
-        if self.show_workspace_sidebar {
+        if self.layout.show_workspace_sidebar {
             let session_name = self
                 .current_session()
                 .map(|session| session.display_name.clone())
@@ -595,13 +513,13 @@ impl CodeReaderApp {
                     ui.horizontal(|ui| {
                         for view in SidebarView::all() {
                             if ui
-                                .selectable_label(self.sidebar_view == view, view.label())
+                                .selectable_label(self.layout.sidebar_view == view, view.label())
                                 .clicked()
                             {
-                                self.sidebar_view = view;
+                                self.layout.sidebar_view = view;
                                 if view == SidebarView::Search {
-                                    self.workspace_search.open = true;
-                                    self.workspace_search.focus_requested = true;
+                                    self.search.workspace.open = true;
+                                    self.search.workspace.focus_requested = true;
                                 } else if view == SidebarView::Git {
                                     self.refresh_git_view();
                                 }
@@ -610,7 +528,7 @@ impl CodeReaderApp {
                     });
                     ui.separator();
 
-                    match self.sidebar_view {
+                    match self.layout.sidebar_view {
                         SidebarView::Workspace => {
                             self.workspace_sidebar_ui(ui, &session_name);
                         }
@@ -641,7 +559,7 @@ impl CodeReaderApp {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Files").strong());
             if ui.button("New File").clicked() {
-                self.workspace_sidebar_active = true;
+                self.workspace.sidebar_active = true;
                 self.start_workspace_new_file();
             }
             let has_selected_file = self.selected_workspace_file().is_some();
@@ -650,7 +568,7 @@ impl CodeReaderApp {
                 .on_hover_text("Rename selected file")
                 .clicked()
             {
-                self.workspace_sidebar_active = true;
+                self.workspace.sidebar_active = true;
                 self.start_workspace_rename_file();
             }
             if ui
@@ -658,7 +576,7 @@ impl CodeReaderApp {
                 .on_hover_text("Delete selected file")
                 .clicked()
             {
-                self.workspace_sidebar_active = true;
+                self.workspace.sidebar_active = true;
                 self.start_workspace_delete_file();
             }
         });
@@ -667,7 +585,7 @@ impl CodeReaderApp {
         let file_tree_height =
             workspace_file_tree_height(ui.available_height(), footer_header_count);
         self.ensure_git_repositories_loaded();
-        let git_file_statuses = workspace_git_file_statuses(&self.git_repositories);
+        let git_file_statuses = workspace_git_file_statuses(&self.git.repositories);
         ScrollArea::vertical()
             .id_salt("workspace_file_tree")
             .max_height(file_tree_height)
@@ -756,7 +674,7 @@ impl CodeReaderApp {
             bookmark_lines,
         );
         if can_take_focus && ui_was_primary_clicked(ui) {
-            self.workspace_sidebar_active = false;
+            self.workspace.sidebar_active = false;
             self.focused_pane = pane;
         }
         if let Some(action) = self.editor_mut(pane).take_pending_action() {
@@ -769,16 +687,16 @@ impl CodeReaderApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).fill(ui.visuals().panel_fill))
             .show_inside(ui, |ui| {
-                let editor_can_take_focus = !self.editing_session_name;
-                let left_navigation_history = self.left_navigation_history.back.clone();
+                let editor_can_take_focus = !self.session_edit.editing_name;
+                let left_navigation_history = self.navigation.left_history.back.clone();
                 let left_bookmark_lines = self.bookmark_lines_for_path(self.left.path());
                 let right_bookmark_lines = self.bookmark_lines_for_path(self.right.path());
-                let dragging_workspace_file = self.dragging_workspace_file.clone();
+                let dragging_workspace_file = self.workspace.dragging_file.clone();
                 let mut right_drop = None;
 
-                if self.show_right_pane || dragging_workspace_file.is_some() {
+                if self.layout.show_right_pane || dragging_workspace_file.is_some() {
                     ui.columns(2, |columns| {
-                        let right_navigation_history = self.right_navigation_history.back.clone();
+                        let right_navigation_history = self.navigation.right_history.back.clone();
                         self.pane_ui(
                             Pane::Left,
                             &mut columns[0],
@@ -787,7 +705,7 @@ impl CodeReaderApp {
                             &left_bookmark_lines,
                         );
 
-                        if self.show_right_pane {
+                        if self.layout.show_right_pane {
                             self.pane_ui(
                                 Pane::Right,
                                 &mut columns[1],
@@ -818,14 +736,14 @@ impl CodeReaderApp {
                 }
 
                 if let Some(path) = right_drop {
-                    self.show_right_pane = true;
+                    self.layout.show_right_pane = true;
                     self.focused_pane = Pane::Right;
-                    self.dragging_workspace_file = None;
+                    self.workspace.dragging_file = None;
                     self.open_file_in_pane(Pane::Right, path);
-                } else if self.dragging_workspace_file.is_some()
+                } else if self.workspace.dragging_file.is_some()
                     && ui.input(|input| input.pointer.any_released())
                 {
-                    self.dragging_workspace_file = None;
+                    self.workspace.dragging_file = None;
                 }
             });
     }

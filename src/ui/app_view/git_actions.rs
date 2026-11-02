@@ -111,7 +111,7 @@ impl CodeReaderApp {
             Ok(files) => (files, None),
             Err(error) => (Vec::new(), Some(error)),
         };
-        self.git_commit_details = Some(GitCommitDetailsWindow {
+        self.git.commit_details = Some(GitCommitDetailsWindow {
             repository_name,
             root,
             commit: commit.clone(),
@@ -242,7 +242,8 @@ impl CodeReaderApp {
         push_after_commit: bool,
     ) {
         let message = self
-            .git_commit_messages
+            .git
+            .commit_messages
             .get(&repository.root)
             .map(|message| message.trim().to_owned())
             .unwrap_or_default();
@@ -254,7 +255,8 @@ impl CodeReaderApp {
 
         match git_command_output(&repository.root, &["commit", "-m", &message]) {
             Ok(output) => {
-                self.git_commit_messages
+                self.git
+                    .commit_messages
                     .entry(repository.root.clone())
                     .or_default()
                     .clear();

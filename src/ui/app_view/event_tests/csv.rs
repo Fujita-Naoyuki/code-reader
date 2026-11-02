@@ -369,7 +369,7 @@ fn source_mode_edits_text_and_searches() {
     t.click("Grid");
     // Ctrl+F in grid mode falls back to Search Everywhere.
     t.ctrl(egui::Key::F);
-    assert!(t.app().search_overlay.open);
+    assert!(t.app().search.overlay.open);
 }
 
 #[test]

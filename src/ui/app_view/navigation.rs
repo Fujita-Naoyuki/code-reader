@@ -9,8 +9,8 @@ impl CodeReaderApp {
 
     pub(super) fn navigation_history_mut(&mut self, pane: Pane) -> &mut NavigationHistory {
         match pane {
-            Pane::Left => &mut self.left_navigation_history,
-            Pane::Right => &mut self.right_navigation_history,
+            Pane::Left => &mut self.navigation.left_history,
+            Pane::Right => &mut self.navigation.right_history,
         }
     }
 
@@ -33,10 +33,13 @@ impl CodeReaderApp {
                 // Rust definition navigation is handled by rust-analyzer. Indexing external
                 // Rust sources here can be very expensive and is no longer needed for F12.
             } else if is_external_path(path) {
-                self.symbol_index
+                self.search
+                    .symbol_index
                     .add_external_file(path, &self.language_registry);
             } else {
-                self.symbol_index.add_file(path, &self.language_registry);
+                self.search
+                    .symbol_index
+                    .add_file(path, &self.language_registry);
             }
             self.remember_recent_file(path.to_path_buf());
             self.reveal_workspace_file_in_tree(path);

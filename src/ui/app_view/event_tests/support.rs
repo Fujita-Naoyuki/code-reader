@@ -545,12 +545,14 @@ impl TestApp {
 
     /// Pushes the next periodic external-change scan far into the future.
     pub fn postpone_workspace_scan(&mut self) {
-        self.app_mut().next_workspace_change_poll = Instant::now() + Duration::from_secs(3600);
+        self.app_mut().workspace.next_change_poll = Instant::now() + Duration::from_secs(3600);
     }
 
     /// Waits for the initial background symbol indexing to finish.
     pub fn wait_for_indexing(&mut self) {
-        self.wait_until("symbol indexing", |app| app.symbol_index_receiver.is_none());
+        self.wait_until("symbol indexing", |app| {
+            app.search.symbol_index_receiver.is_none()
+        });
     }
 
     pub fn has_label(&self, label: &str) -> bool {

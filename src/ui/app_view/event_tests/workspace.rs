@@ -14,13 +14,13 @@ fn sidebar_and_right_pane_toggles_show_and_hide_panels() {
     assert!(t.has_label("notes.txt"));
 
     t.click("Sidebar");
-    assert!(!t.app().show_workspace_sidebar);
+    assert!(!t.app().layout.show_workspace_sidebar);
     assert!(!t.has_label("notes.txt"));
     t.click("Sidebar");
-    assert!(t.app().show_workspace_sidebar);
+    assert!(t.app().layout.show_workspace_sidebar);
 
     t.click("Right Pane");
-    assert!(t.app().show_right_pane);
+    assert!(t.app().layout.show_right_pane);
     assert_eq!(t.count_label("No file open"), 2);
 
     // Focus the right pane by clicking into it, then hide it: focus falls back to the left.
@@ -28,7 +28,7 @@ fn sidebar_and_right_pane_toggles_show_and_hide_panels() {
     t.click_at(right_title.center() + egui::vec2(0.0, 80.0));
     assert_eq!(t.app().focused_pane, Pane::Right);
     t.click("Right Pane");
-    assert!(!t.app().show_right_pane);
+    assert!(!t.app().layout.show_right_pane);
     assert_eq!(t.app().focused_pane, Pane::Left);
 }
 
@@ -38,14 +38,14 @@ fn clicking_folders_toggles_them_and_selects_them() {
     assert!(!t.has_label("guide.txt"));
     t.click("docs");
     assert!(t.has_label("guide.txt"));
-    assert_eq!(t.app().selected_workspace_path, Some(t.path("docs")));
-    assert!(t.app().workspace_sidebar_active);
+    assert_eq!(t.app().workspace.selected_path, Some(t.path("docs")));
+    assert!(t.app().workspace.sidebar_active);
     t.click("docs");
     assert!(!t.has_label("guide.txt"));
 
     t.click("workspace");
     assert!(!t.has_label("notes.txt"));
-    assert_eq!(t.app().selected_workspace_path, Some(t.root.clone()));
+    assert_eq!(t.app().workspace.selected_path, Some(t.root.clone()));
     t.click("workspace");
     assert!(t.has_label("notes.txt"));
 }
@@ -62,7 +62,7 @@ fn new_file_is_created_in_selected_folder_and_opened() {
     let created = t.path("docs/intro.md");
     assert_eq!(t.read("docs/intro.md"), "# intro\n");
     assert_eq!(t.app().left.path(), Some(created.as_path()));
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
     t.assert_status(&format!("Created file: {}", created.display()));
     assert!(t.app().file_tree.files.contains(&created));
 }
@@ -98,7 +98,7 @@ fn new_file_dialog_reports_validation_errors_and_stays_open() {
     assert!(t.has_label_containing("File already exists"));
 
     t.click("Cancel");
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 }
 
 #[test]
@@ -112,13 +112,13 @@ fn new_file_reports_folders_that_disappear() {
     t.click("Create");
     assert!(t.has_label_containing("Folder not found"));
     t.key(egui::Key::Escape);
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 
     // With the whole workspace root gone, New File reports it right away.
     std::fs::remove_dir_all(&t.root).unwrap();
     t.click_first("New File");
     t.assert_status_containing("Folder not found");
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn new_file_next_to_selected_file_uses_its_folder() {
     t.click("docs");
     t.click("guide.txt");
     t.click_first("New File");
-    match &t.app().workspace_file_dialog {
+    match &t.app().workspace.file_dialog {
         Some(WorkspaceFileDialog::NewFile { folder, .. }) => assert_eq!(folder, &t.path("docs")),
         other => panic!("unexpected dialog: {other:?}"),
     }
@@ -153,7 +153,7 @@ fn f2_renames_the_selected_file_and_updates_open_editor() {
     assert!(!t.path("notes.txt").exists());
     assert_eq!(t.app().left.path(), Some(renamed.as_path()));
     assert_eq!(t.app().left.title, "renamed.txt");
-    assert_eq!(t.app().recent_files.first(), Some(&renamed));
+    assert_eq!(t.app().navigation.recent_files.first(), Some(&renamed));
     let bookmarks = &t.app().current_session().unwrap().bookmarks;
     assert_eq!(bookmarks[0].path, renamed);
     assert_eq!(bookmarks[0].label, "renamed.txt:1");
@@ -184,7 +184,7 @@ fn rename_dialog_reports_errors() {
     assert!(t.has_label("Select a file to rename."));
 
     t.click("Cancel");
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn rename_dialog_closes_with_escape() {
     t.click_first("notes.txt");
     t.key(egui::Key::F2);
     t.key(egui::Key::Escape);
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 }
 
 #[test]
@@ -238,9 +238,9 @@ fn delete_key_deletes_selected_file_after_confirmation() {
 
     assert!(!t.path("notes.txt").exists());
     assert!(t.app().left.path().is_none());
-    assert!(t.app().recent_files.is_empty());
+    assert!(t.app().navigation.recent_files.is_empty());
     assert!(t.app().current_session().unwrap().bookmarks.is_empty());
-    assert!(t.app().selected_workspace_path.is_none());
+    assert!(t.app().workspace.selected_path.is_none());
 }
 
 #[test]
@@ -273,13 +273,13 @@ fn delete_dialog_reports_errors_and_can_be_canceled() {
     t.click_nth("Delete", 1);
     assert!(t.has_label("Select a file to delete."));
     t.click("Cancel");
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 
     t.click("docs");
     t.click_first("guide.txt");
     t.key(egui::Key::Delete);
     t.key(egui::Key::Escape);
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
     assert!(t.path("docs/guide.txt").exists());
 }
 
@@ -288,20 +288,20 @@ fn file_shortcuts_require_a_selected_file_and_an_active_sidebar() {
     let mut t = TestApp::plain();
     // Not active yet: F2 / Delete do nothing.
     t.key(egui::Key::F2);
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 
     t.click("docs");
     t.key(egui::Key::F2);
     assert_eq!(t.status(), "Select a file to rename.");
     t.key(egui::Key::Delete);
     assert_eq!(t.status(), "Select a file to delete.");
-    assert!(t.app().workspace_file_dialog.is_none());
+    assert!(t.app().workspace.file_dialog.is_none());
 
     // Clicking into the editor deactivates the sidebar shortcuts.
     t.click_first("notes.txt");
     let editor_point = egui::pos2(900.0, 400.0);
     t.click_at(editor_point);
-    assert!(!t.app().workspace_sidebar_active);
+    assert!(!t.app().workspace.sidebar_active);
 }
 
 #[test]
@@ -352,10 +352,10 @@ fn dragging_a_file_onto_the_right_side_opens_it_in_the_right_pane() {
     let to = egui::pos2(1250.0, 400.0);
     t.drag(from, to);
     t.steps(2);
-    assert!(t.app().show_right_pane);
+    assert!(t.app().layout.show_right_pane);
     assert_eq!(t.app().focused_pane, Pane::Right);
     assert_eq!(t.app().right.path(), Some(t.path("notes.txt").as_path()));
-    assert!(t.app().dragging_workspace_file.is_none());
+    assert!(t.app().workspace.dragging_file.is_none());
 }
 
 #[test]
@@ -378,7 +378,7 @@ fn dropping_a_dragged_file_elsewhere_cancels_the_drag() {
     let from = t.label_rect("notes.txt").center();
     t.drag(from, egui::pos2(600.0, 400.0));
     t.steps(2);
-    assert!(t.app().dragging_workspace_file.is_none());
+    assert!(t.app().workspace.dragging_file.is_none());
     assert!(t.app().right.path().is_none());
 }
 
@@ -387,14 +387,14 @@ fn external_file_changes_refresh_the_tree() {
     let mut t = TestApp::plain();
     t.wait_for_indexing();
     t.write("added.txt", "new file");
-    t.app_mut().next_workspace_change_poll = Instant::now();
+    t.app_mut().workspace.next_change_poll = Instant::now();
     t.wait_for_status("Detected 1 external file changes");
     t.assert_status_containing("updated changed symbols");
     assert!(t.has_label("added.txt"));
 
     // A dependency manifest change forces a full symbol reindex.
     t.write("Cargo.toml", "[package]\nname = \"x\"\n");
-    t.app_mut().next_workspace_change_poll = Instant::now();
+    t.app_mut().workspace.next_change_poll = Instant::now();
     t.wait_until("Cargo.toml discovered", |app| {
         app.file_tree
             .files
@@ -409,10 +409,10 @@ fn workspace_change_scan_without_changes_keeps_status() {
     let mut t = TestApp::plain();
     t.wait_for_indexing();
     t.app_mut().status_message = "unchanged".to_owned();
-    t.app_mut().next_workspace_change_poll = Instant::now();
+    t.app_mut().workspace.next_change_poll = Instant::now();
     t.steps(3);
     t.wait_until("scan finished", |app| {
-        app.workspace_change_receiver.is_none()
+        app.workspace.change_receiver.is_none()
     });
     assert_eq!(t.status(), "unchanged");
 }
@@ -421,13 +421,13 @@ fn workspace_change_scan_without_changes_keeps_status() {
 fn sidebar_tabs_switch_views() {
     let mut t = TestApp::plain();
     t.click("Search");
-    assert_eq!(t.app().sidebar_view, SidebarView::Search);
-    assert!(t.app().workspace_search.open);
+    assert_eq!(t.app().layout.sidebar_view, SidebarView::Search);
+    assert!(t.app().search.workspace.open);
     t.click("Git");
-    assert_eq!(t.app().sidebar_view, SidebarView::Git);
+    assert_eq!(t.app().layout.sidebar_view, SidebarView::Git);
     assert!(t.has_label("No Git repositories found in this workspace."));
     t.click("Workspace");
-    assert_eq!(t.app().sidebar_view, SidebarView::Workspace);
+    assert_eq!(t.app().layout.sidebar_view, SidebarView::Workspace);
 }
 
 #[test]
@@ -460,7 +460,7 @@ fn session_restores_open_files_and_positions() {
     );
     assert!(t.has_label("Restored"));
     assert!(t.has_label("notes.txt:2"));
-    assert_eq!(t.app().recent_files.len(), 2);
+    assert_eq!(t.app().navigation.recent_files.len(), 2);
     t.step();
 }
 

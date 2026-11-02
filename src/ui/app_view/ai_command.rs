@@ -32,7 +32,7 @@ impl CodeReaderApp {
     }
 
     pub(super) fn show_ai_command_window(&mut self, ui: &mut egui::Ui) {
-        if !self.ai_command_open {
+        if !self.layout.ai_command_open {
             return;
         }
 
@@ -51,7 +51,7 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                if self.modal_escape == Some(Modal::AiCommand) {
+                if self.layout.modal_escape == Some(Modal::AiCommand) {
                     close = true;
                 }
 
@@ -113,7 +113,7 @@ impl CodeReaderApp {
             self.copy_cli_agent_command();
         }
         if close {
-            self.ai_command_open = false;
+            self.layout.ai_command_open = false;
         }
     }
 }

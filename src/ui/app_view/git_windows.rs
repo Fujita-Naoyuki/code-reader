@@ -4,16 +4,17 @@ use super::*;
 
 impl CodeReaderApp {
     pub(super) fn show_git_create_branch_window(&mut self, ui: &mut egui::Ui) {
-        let Some(repository_root) = self.git_create_branch_root.clone() else {
+        let Some(repository_root) = self.git.create_branch_root.clone() else {
             return;
         };
         let Some(repository) = self
-            .git_repositories
+            .git
+            .repositories
             .iter()
             .find(|repository| repository.root == repository_root)
             .cloned()
         else {
-            self.git_create_branch_root = None;
+            self.git.create_branch_root = None;
             return;
         };
 
@@ -30,7 +31,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter) = ui.input_mut(|input| {
                     (
-                        self.modal_escape == Some(Modal::GitCreateBranch),
+                        self.layout.modal_escape == Some(Modal::GitCreateBranch),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                     )
                 });
@@ -56,7 +57,8 @@ impl CodeReaderApp {
 
                 ui.label(RichText::new("Branch name"));
                 let new_branch_name = self
-                    .git_new_branch_names
+                    .git
+                    .new_branch_names
                     .entry(repository.root.clone())
                     .or_default();
                 let response = ui.add(
@@ -85,31 +87,33 @@ impl CodeReaderApp {
             });
 
         if let Some(branch_name) = create_branch {
-            self.git_create_branch_root = None;
+            self.git.create_branch_root = None;
             self.create_git_branch(&repository, &branch_name);
         } else if close {
-            self.git_create_branch_root = None;
+            self.git.create_branch_root = None;
         }
     }
 
     pub(super) fn show_git_switch_branch_window(&mut self, ui: &mut egui::Ui) {
-        let Some(repository_root) = self.git_switch_branch_root.clone() else {
+        let Some(repository_root) = self.git.switch_branch_root.clone() else {
             return;
         };
         let Some(repository) = self
-            .git_repositories
+            .git
+            .repositories
             .iter()
             .find(|repository| repository.root == repository_root)
             .cloned()
         else {
-            self.git_switch_branch_root = None;
+            self.git.switch_branch_root = None;
             return;
         };
 
         let mut switch_to_branch = None;
         let mut close = false;
         let mut cursor = self
-            .git_switch_branch_cursor
+            .git
+            .switch_branch_cursor
             .clone()
             .filter(|branch| repository.branches.contains(branch))
             .unwrap_or_else(|| repository.branch.clone());
@@ -123,7 +127,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, up, down, enter) = ui.input_mut(|input| {
                     (
-                        self.modal_escape == Some(Modal::GitSwitchBranch),
+                        self.layout.modal_escape == Some(Modal::GitSwitchBranch),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
@@ -284,19 +288,19 @@ impl CodeReaderApp {
             });
 
         if let Some(branch_name) = switch_to_branch {
-            self.git_switch_branch_root = None;
-            self.git_switch_branch_cursor = None;
+            self.git.switch_branch_root = None;
+            self.git.switch_branch_cursor = None;
             self.switch_git_branch(&repository, &branch_name);
         } else if close {
-            self.git_switch_branch_root = None;
-            self.git_switch_branch_cursor = None;
+            self.git.switch_branch_root = None;
+            self.git.switch_branch_cursor = None;
         } else {
-            self.git_switch_branch_cursor = Some(cursor);
+            self.git.switch_branch_cursor = Some(cursor);
         }
     }
 
     pub(super) fn show_git_discard_window(&mut self, ui: &mut egui::Ui) {
-        let Some(request) = self.pending_git_discard.clone() else {
+        let Some(request) = self.git.pending_discard.clone() else {
             return;
         };
 
@@ -311,7 +315,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter) = ui.input_mut(|input| {
                     (
-                        self.modal_escape == Some(Modal::GitDiscard),
+                        self.layout.modal_escape == Some(Modal::GitDiscard),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                     )
                 });
@@ -348,15 +352,15 @@ impl CodeReaderApp {
             });
 
         if discard {
-            self.pending_git_discard = None;
+            self.git.pending_discard = None;
             self.discard_git_file(&request);
         } else if close {
-            self.pending_git_discard = None;
+            self.git.pending_discard = None;
         }
     }
 
     pub(super) fn show_git_commit_details_window(&mut self, ui: &mut egui::Ui) {
-        let Some(details) = self.git_commit_details.clone() else {
+        let Some(details) = self.git.commit_details.clone() else {
             return;
         };
 
@@ -369,7 +373,7 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                let escape = self.modal_escape == Some(Modal::GitCommitDetails);
+                let escape = self.layout.modal_escape == Some(Modal::GitCommitDetails);
                 if escape {
                     close = true;
                 }
@@ -465,11 +469,11 @@ impl CodeReaderApp {
 
         if open_commit_diff {
             self.open_git_commit_diff(&details);
-            self.git_commit_details = None;
+            self.git.commit_details = None;
             return;
         }
         if close {
-            self.git_commit_details = None;
+            self.git.commit_details = None;
         }
     }
 }

@@ -26,12 +26,12 @@ fn overlay_row(t: &TestApp, index: usize) -> egui::Pos2 {
 fn ctrl_p_opens_search_everywhere_and_enter_opens_the_selected_file() {
     let mut t = search_workspace();
     t.ctrl(egui::Key::P);
-    assert!(t.app().search_overlay.open);
+    assert!(t.app().search.overlay.open);
     assert!(t.has_label("Search Everywhere"));
     t.type_text("beta");
-    assert_eq!(t.app().search_overlay.query, "beta");
+    assert_eq!(t.app().search.overlay.query, "beta");
     t.key(egui::Key::Enter);
-    assert!(!t.app().search_overlay.open);
+    assert!(!t.app().search.overlay.open);
     assert_eq!(t.app().left.path(), Some(t.path("beta.txt").as_path()));
     t.assert_status("Opened File: beta.txt");
     // Re-opening shows the file as recent history first.
@@ -51,7 +51,7 @@ fn search_everywhere_finds_symbols_and_bookmarks() {
     t.assert_status("Added bookmark: alpha.txt:1");
 
     t.ctrl_shift(egui::Key::O);
-    assert!(t.app().search_overlay.open);
+    assert!(t.app().search.overlay.open);
     t.type_text("compute_total");
     t.key(egui::Key::Enter);
     t.assert_status("Opened Symbol: compute_total");
@@ -67,22 +67,22 @@ fn search_everywhere_finds_symbols_and_bookmarks() {
 fn search_everywhere_keyboard_selection_and_escape() {
     let mut t = search_workspace();
     t.click("Everywhere");
-    assert!(t.app().search_overlay.open);
+    assert!(t.app().search.overlay.open);
     t.key(egui::Key::ArrowDown);
-    assert_eq!(t.app().search_overlay.selected_index, 1);
+    assert_eq!(t.app().search.overlay.selected_index, 1);
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::ArrowUp);
-    assert_eq!(t.app().search_overlay.selected_index, 1);
+    assert_eq!(t.app().search.overlay.selected_index, 1);
     t.key(egui::Key::ArrowUp);
     t.key(egui::Key::ArrowUp);
-    assert_eq!(t.app().search_overlay.selected_index, 0);
+    assert_eq!(t.app().search.overlay.selected_index, 0);
     // Typing resets the selection.
     t.key(egui::Key::ArrowDown);
     t.type_text("a");
-    assert_eq!(t.app().search_overlay.selected_index, 0);
+    assert_eq!(t.app().search.overlay.selected_index, 0);
     t.key(egui::Key::Escape);
-    assert!(!t.app().search_overlay.open);
-    assert!(t.app().search_overlay.query.is_empty());
+    assert!(!t.app().search.overlay.open);
+    assert!(t.app().search.overlay.query.is_empty());
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn search_everywhere_with_no_results() {
     t.key(egui::Key::ArrowUp);
     t.key(egui::Key::Enter);
     assert!(
-        t.app().search_overlay.open,
+        t.app().search.overlay.open,
         "nothing to open keeps the overlay"
     );
 }
@@ -108,14 +108,14 @@ fn search_everywhere_selection_follows_shrinking_results() {
     for _ in 0..3 {
         t.key(egui::Key::ArrowDown);
     }
-    assert_eq!(t.app().search_overlay.selected_index, 3);
+    assert_eq!(t.app().search.overlay.selected_index, 3);
     // Files disappear while the overlay is open: the selection is clamped.
     std::fs::remove_file(t.path("alpha.txt")).unwrap();
     std::fs::remove_file(t.path("beta.txt")).unwrap();
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
     t.wait_until("files removed", |app| app.file_tree.files.len() == 1);
     t.steps(2);
-    assert!(t.app().search_overlay.selected_index <= 1);
+    assert!(t.app().search.overlay.selected_index <= 1);
 }
 
 #[test]
@@ -126,9 +126,9 @@ fn search_everywhere_rows_can_be_hovered_and_clicked() {
     let second = overlay_row(&t, 1);
     t.move_pointer(second);
     t.step();
-    assert_eq!(t.app().search_overlay.selected_index, 1);
+    assert_eq!(t.app().search.overlay.selected_index, 1);
     t.click_at(second);
-    assert!(!t.app().search_overlay.open);
+    assert!(!t.app().search.overlay.open);
     assert!(t.app().left.path().is_some());
 }
 
@@ -136,7 +136,7 @@ fn search_everywhere_rows_can_be_hovered_and_clicked() {
 fn double_shift_opens_search_everywhere() {
     let mut t = search_workspace();
     t.press_shift_twice();
-    assert!(t.app().search_overlay.open);
+    assert!(t.app().search.overlay.open);
 }
 
 #[test]
@@ -151,13 +151,13 @@ fn shift_taps_with_typing_in_between_do_not_open_search_everywhere() {
     t.step();
     t.set_modifiers(egui::Modifiers::NONE);
     t.step();
-    assert!(!t.app().search_overlay.open);
+    assert!(!t.app().search.overlay.open);
     // A second lone tap right after still opens it.
     t.set_modifiers(egui::Modifiers::SHIFT);
     t.step();
     t.set_modifiers(egui::Modifiers::NONE);
     t.step();
-    assert!(t.app().search_overlay.open);
+    assert!(t.app().search.overlay.open);
 }
 
 #[test]
@@ -171,14 +171,14 @@ fn slow_shift_taps_do_not_open_search_everywhere() {
     t.step();
     t.set_modifiers(egui::Modifiers::NONE);
     t.step();
-    assert!(!t.app().search_overlay.open);
+    assert!(!t.app().search.overlay.open);
 }
 
 #[test]
 fn ctrl_f_without_a_searchable_editor_opens_search_everywhere() {
     let mut t = search_workspace();
     t.ctrl(egui::Key::F);
-    assert!(t.app().search_overlay.open);
+    assert!(t.app().search.overlay.open);
 }
 
 #[test]
@@ -186,18 +186,18 @@ fn search_everywhere_reuses_cached_results() {
     let mut t = search_workspace();
     t.ctrl(egui::Key::P);
     t.steps(3);
-    assert!(t.app().search_overlay.cache.is_some());
-    let revision = t.app().search_index_revision;
+    assert!(t.app().search.overlay.cache.is_some());
+    let revision = t.app().search.index_revision;
     t.steps(2);
-    assert_eq!(t.app().search_index_revision, revision);
+    assert_eq!(t.app().search.index_revision, revision);
 }
 
 #[test]
 fn ctrl_shift_f_runs_workspace_search_and_opens_a_match() {
     let mut t = search_workspace();
     t.ctrl_shift(egui::Key::F);
-    assert_eq!(t.app().sidebar_view, SidebarView::Search);
-    assert!(t.app().workspace_search.open);
+    assert_eq!(t.app().layout.sidebar_view, SidebarView::Search);
+    assert!(t.app().search.workspace.open);
     t.type_text("needle");
     t.key(egui::Key::Enter);
     t.assert_status("Workspace search started: needle");
@@ -225,12 +225,12 @@ fn workspace_search_button_clear_and_empty_query() {
     t.ctrl_shift(egui::Key::F);
     t.type_text("nothing-matches-this");
     t.click_nth("Search", 1);
-    t.wait_until("search finished", |app| !app.workspace_search.searching);
+    t.wait_until("search finished", |app| !app.search.workspace.searching);
     assert!(t.has_label("No results"));
 
     t.click("Clear");
-    assert!(!t.app().workspace_search.open);
-    assert!(t.app().workspace_search.query.is_empty());
+    assert!(!t.app().search.workspace.open);
+    assert!(t.app().search.workspace.query.is_empty());
 }
 
 #[test]
@@ -239,8 +239,8 @@ fn escape_in_workspace_search_clears_it() {
     t.ctrl_shift(egui::Key::F);
     t.type_text("needle");
     t.key(egui::Key::Escape);
-    assert!(!t.app().workspace_search.open);
-    assert!(t.app().workspace_search.query.is_empty());
+    assert!(!t.app().search.workspace.open);
+    assert!(t.app().search.workspace.query.is_empty());
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn workspace_search_shows_progress_while_running() {
     t.step();
     assert!(t.has_label("Searching..."));
     assert!(t.has_label_containing("Searching 400 files for `needle`"));
-    t.wait_until("search finished", |app| !app.workspace_search.searching);
+    t.wait_until("search finished", |app| !app.search.workspace.searching);
     assert!(t.has_label("No results"));
 }
 
@@ -312,12 +312,13 @@ fn workspace_search_skips_unreadable_files_and_caps_results() {
     t.ctrl_shift(egui::Key::F);
     t.type_text("hit");
     t.key(egui::Key::Enter);
-    t.wait_until("search finished", |app| !app.workspace_search.searching);
-    let total = t.app().workspace_search.match_count();
+    t.wait_until("search finished", |app| !app.search.workspace.searching);
+    let total = t.app().search.workspace.match_count();
     assert_eq!(total, 2000, "results stop at the cap");
     assert!(
         t.app()
-            .workspace_search
+            .search
+            .workspace
             .results
             .iter()
             .all(|result| !result.path.ends_with("binary.txt"))

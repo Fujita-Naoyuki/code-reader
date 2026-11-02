@@ -250,12 +250,12 @@ impl CodeReaderApp {
             Some(Modal::RenameWorkspace) => return ShortcutContext::RenameWorkspace,
             _ => {}
         }
-        if self.sidebar_view == SidebarView::Search && self.workspace_search.open {
+        if self.layout.sidebar_view == SidebarView::Search && self.search.workspace.open {
             return ShortcutContext::WorkspaceSearch;
         }
-        if self.show_workspace_sidebar
-            && self.sidebar_view == SidebarView::Workspace
-            && self.workspace_sidebar_active
+        if self.layout.show_workspace_sidebar
+            && self.layout.sidebar_view == SidebarView::Workspace
+            && self.workspace.sidebar_active
         {
             return ShortcutContext::WorkspaceFiles;
         }

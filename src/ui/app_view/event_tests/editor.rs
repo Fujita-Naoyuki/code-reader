@@ -158,7 +158,7 @@ fn quick_shift_enter_presses_step_back_without_opening_search_everywhere() {
     t.shift(egui::Key::Enter);
     t.shift(egui::Key::Enter);
     // Shift+Enter is not a lone Shift tap, so "Shift x2" does not fire.
-    assert!(!t.app().search_overlay.open);
+    assert!(!t.app().search.overlay.open);
     assert!(t.app().left.source_search.open);
     assert!(t.app().left.text.as_str().contains("unsaved"));
 }
@@ -283,7 +283,7 @@ fn opening_another_file_asks_about_unsaved_edits() {
     t.assert_status("notes.txt has unsaved changes: save or discard them first.");
     t.click("Cancel");
     t.assert_status("Kept unsaved changes.");
-    assert!(t.app().pending_unsaved_action.is_none());
+    assert!(t.app().layout.pending_unsaved_action.is_none());
     assert!(t.app().left.text.as_str().starts_with("unsaved alpha"));
 
     // Discard opens the other file and leaves the disk untouched.
@@ -309,7 +309,7 @@ fn reopening_the_same_file_keeps_unsaved_edits() {
     t.click_text(0, 0);
     t.type_text("unsaved ");
     t.click_first("notes.txt");
-    assert!(t.app().pending_unsaved_action.is_none());
+    assert!(t.app().layout.pending_unsaved_action.is_none());
     assert!(t.app().left.text.as_str().starts_with("unsaved alpha"));
     assert!(t.has_label("● notes.txt"));
     t.ctrl(egui::Key::S);
@@ -325,7 +325,7 @@ fn new_workspace_asks_about_unsaved_edits() {
     t.click("New Workspace");
     assert!(t.has_label("Unsaved Changes"));
     t.key(egui::Key::Escape);
-    assert!(t.app().pending_unsaved_action.is_none());
+    assert!(t.app().layout.pending_unsaved_action.is_none());
     assert!(t.app().left.text.as_str().starts_with("unsaved alpha"));
     t.click("New Workspace");
     t.click("Discard");

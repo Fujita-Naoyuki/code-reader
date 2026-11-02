@@ -5,7 +5,7 @@ use super::*;
 
 impl CodeReaderApp {
     pub(super) fn selected_workspace_path(&self) -> Option<&Path> {
-        let path = self.selected_workspace_path.as_deref()?;
+        let path = self.workspace.selected_path.as_deref()?;
         (path.exists() && self.path_is_in_current_workspace(path)).then_some(path)
     }
 
@@ -49,15 +49,15 @@ impl CodeReaderApp {
             return;
         };
 
-        self.selected_workspace_path = Some(tree_path.clone());
-        self.pending_workspace_tree_reveal_path = Some(tree_path.clone());
+        self.workspace.selected_path = Some(tree_path.clone());
+        self.workspace.pending_reveal_path = Some(tree_path.clone());
         for root in self
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default()
         {
             if tree_path.starts_with(&root) {
-                self.workspace_root_open.insert(root, true);
+                self.workspace.root_open.insert(root, true);
                 break;
             }
         }
@@ -69,7 +69,7 @@ impl CodeReaderApp {
             self.status_message = format!("Folder not found: {}", folder.display());
             return;
         }
-        self.workspace_file_dialog = Some(WorkspaceFileDialog::NewFile {
+        self.workspace.file_dialog = Some(WorkspaceFileDialog::NewFile {
             folder,
             file_name: String::new(),
             error: None,
@@ -86,7 +86,7 @@ impl CodeReaderApp {
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_owned();
-        self.workspace_file_dialog = Some(WorkspaceFileDialog::Rename {
+        self.workspace.file_dialog = Some(WorkspaceFileDialog::Rename {
             path,
             new_name,
             select_stem: true,
@@ -99,7 +99,7 @@ impl CodeReaderApp {
             self.status_message = "Select a file to delete.".to_owned();
             return;
         };
-        self.workspace_file_dialog = Some(WorkspaceFileDialog::Delete { path, error: None });
+        self.workspace.file_dialog = Some(WorkspaceFileDialog::Delete { path, error: None });
     }
 
     pub(super) fn handle_workspace_file_shortcuts(&mut self, ui: &egui::Ui) {
@@ -116,12 +116,12 @@ impl CodeReaderApp {
     }
 
     pub(super) fn workspace_file_shortcuts_enabled(&self) -> bool {
-        self.show_workspace_sidebar
-            && self.sidebar_view == SidebarView::Workspace
-            && self.workspace_sidebar_active
-            && self.workspace_file_dialog.is_none()
-            && !self.editing_session_name
-            && !self.search_overlay.open
+        self.layout.show_workspace_sidebar
+            && self.layout.sidebar_view == SidebarView::Workspace
+            && self.workspace.sidebar_active
+            && self.workspace.file_dialog.is_none()
+            && !self.session_edit.editing_name
+            && !self.search.overlay.open
     }
 
     pub(super) fn create_workspace_file(
@@ -146,8 +146,8 @@ impl CodeReaderApp {
         fs::write(&path, content)
             .map_err(|error| format!("Failed to create file: {} ({error})", path.display()))?;
 
-        self.selected_workspace_path = Some(path.clone());
-        self.pending_workspace_tree_reveal_path = Some(path.clone());
+        self.workspace.selected_path = Some(path.clone());
+        self.workspace.pending_reveal_path = Some(path.clone());
         self.rebuild_file_tree();
         self.open_file_in_focused_pane(path.clone());
         self.status_message = format!("Created file: {}", path.display());
@@ -187,8 +187,8 @@ impl CodeReaderApp {
         })?;
 
         self.remap_workspace_file_references(path, &next_path);
-        self.selected_workspace_path = Some(next_path.clone());
-        self.pending_workspace_tree_reveal_path = Some(next_path.clone());
+        self.workspace.selected_path = Some(next_path.clone());
+        self.workspace.pending_reveal_path = Some(next_path.clone());
         self.rebuild_file_tree();
         self.status_message = format!("Renamed file: {}", next_path.display());
         self.save_state();
@@ -207,8 +207,8 @@ impl CodeReaderApp {
             .map_err(|error| format!("Failed to delete file: {} ({error})", path.display()))?;
 
         self.remove_workspace_file_references(path);
-        self.selected_workspace_path = None;
-        self.pending_workspace_tree_reveal_path = None;
+        self.workspace.selected_path = None;
+        self.workspace.pending_reveal_path = None;
         self.rebuild_file_tree();
         self.status_message = format!("Deleted file: {}", path.display());
         self.save_state();
@@ -226,9 +226,9 @@ impl CodeReaderApp {
                 editor.mark_text_changed();
             }
         }
-        self.left_navigation_history.remap_path(old_path, new_path);
-        self.right_navigation_history.remap_path(old_path, new_path);
-        for recent in &mut self.recent_files {
+        self.navigation.left_history.remap_path(old_path, new_path);
+        self.navigation.right_history.remap_path(old_path, new_path);
+        for recent in &mut self.navigation.recent_files {
             if recent == old_path {
                 *recent = new_path.to_path_buf();
             }
@@ -258,9 +258,9 @@ impl CodeReaderApp {
         if self.right.path() == Some(path) {
             self.right = EditorPane::empty(Pane::Right);
         }
-        self.left_navigation_history.retain_path_not(path);
-        self.right_navigation_history.retain_path_not(path);
-        self.recent_files.retain(|recent| recent != path);
+        self.navigation.left_history.retain_path_not(path);
+        self.navigation.right_history.retain_path_not(path);
+        self.navigation.recent_files.retain(|recent| recent != path);
         if let Some(session) = self.current_session_mut() {
             session.bookmarks.retain(|bookmark| bookmark.path != path);
             session.touch();
@@ -273,32 +273,32 @@ impl CodeReaderApp {
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
         self.file_tree = discover_workspace(&roots, FileDiscoveryOptions::default());
-        self.workspace_snapshot = workspace_snapshot(&self.file_tree.files);
+        self.workspace.snapshot = workspace_snapshot(&self.file_tree.files);
         self.bump_search_index_revision();
-        self.next_workspace_change_poll = Instant::now() + WORKSPACE_CHANGE_POLL_INTERVAL;
-        self.workspace_change_receiver = None;
-        self.go_lsp = LspSession::default();
-        self.rust_lsp = LspSession::default();
-        self.symbol_index_receiver = Some(start_symbol_indexing(
+        self.workspace.next_change_poll = Instant::now() + WORKSPACE_CHANGE_POLL_INTERVAL;
+        self.workspace.change_receiver = None;
+        self.lsp.go = LspSession::default();
+        self.lsp.rust = LspSession::default();
+        self.search.symbol_index_receiver = Some(start_symbol_indexing(
             self.file_tree.files.clone(),
             self.language_registry.clone(),
         ));
         self.warm_up_rust_lsp_for_workspace();
-        self.git_repositories_loaded = false;
-        self.git_repositories.clear();
+        self.git.repositories_loaded = false;
+        self.git.repositories.clear();
         self.set_background_status(format!("Discovered {} files.", self.file_tree.files.len()));
     }
 
     pub(super) fn poll_workspace_changes(&mut self, context: &egui::Context) {
         context.request_repaint_after(WORKSPACE_CHANGE_POLL_INTERVAL);
 
-        if let Some(receiver) = self.workspace_change_receiver.take() {
+        if let Some(receiver) = self.workspace.change_receiver.take() {
             match receiver.try_recv() {
                 Ok(result) => {
                     self.apply_workspace_change_scan(result);
                 }
                 Err(mpsc::TryRecvError::Empty) => {
-                    self.workspace_change_receiver = Some(receiver);
+                    self.workspace.change_receiver = Some(receiver);
                     context.request_repaint_after(Duration::from_millis(100));
                     return;
                 }
@@ -307,16 +307,16 @@ impl CodeReaderApp {
         }
 
         let now = Instant::now();
-        if now < self.next_workspace_change_poll {
+        if now < self.workspace.next_change_poll {
             return;
         }
-        self.next_workspace_change_poll = now + WORKSPACE_CHANGE_POLL_INTERVAL;
+        self.workspace.next_change_poll = now + WORKSPACE_CHANGE_POLL_INTERVAL;
 
         let roots = self
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        self.workspace_change_receiver = Some(start_workspace_change_scan(roots));
+        self.workspace.change_receiver = Some(start_workspace_change_scan(roots));
         context.request_repaint_after(Duration::from_millis(100));
     }
 
@@ -324,28 +324,29 @@ impl CodeReaderApp {
         let roots = result.roots;
         let next_files = result.files;
         let next_snapshot = result.snapshot;
-        if next_snapshot == self.workspace_snapshot {
+        if next_snapshot == self.workspace.snapshot {
             return;
         }
 
-        let diff = workspace_snapshot_diff(&self.workspace_snapshot, &next_snapshot);
+        let diff = workspace_snapshot_diff(&self.workspace.snapshot, &next_snapshot);
         let change_count = diff.len();
         let full_symbol_reindex =
-            diff.requires_full_symbol_reindex() || self.symbol_index_receiver.is_some();
+            diff.requires_full_symbol_reindex() || self.search.symbol_index_receiver.is_some();
         let next_file_tree = build_file_tree(&roots, next_files);
         self.file_tree = next_file_tree;
-        self.workspace_snapshot = next_snapshot;
+        self.workspace.snapshot = next_snapshot;
         if full_symbol_reindex {
-            self.symbol_index_receiver = Some(start_symbol_indexing(
+            self.search.symbol_index_receiver = Some(start_symbol_indexing(
                 self.file_tree.files.clone(),
                 self.language_registry.clone(),
             ));
         } else {
             for path in &diff.removed {
-                self.symbol_index.remove_file(path);
+                self.search.symbol_index.remove_file(path);
             }
             for path in diff.added.iter().chain(&diff.modified) {
-                self.symbol_index
+                self.search
+                    .symbol_index
                     .replace_file(path, &self.language_registry);
             }
         }
@@ -362,7 +363,7 @@ impl CodeReaderApp {
     }
 
     pub(super) fn show_workspace_file_dialog(&mut self, ui: &mut egui::Ui) {
-        let Some(mut dialog) = self.workspace_file_dialog.take() else {
+        let Some(mut dialog) = self.workspace.file_dialog.take() else {
             return;
         };
 
@@ -387,7 +388,7 @@ impl CodeReaderApp {
                     .collapsible(false)
                     .resizable(false)
                     .show(ui.ctx(), |ui| {
-                        if self.modal_escape == Some(Modal::WorkspaceFile) {
+                        if self.layout.modal_escape == Some(Modal::WorkspaceFile) {
                             keep_open = false;
                         }
 
@@ -446,7 +447,7 @@ impl CodeReaderApp {
                     .collapsible(false)
                     .resizable(false)
                     .show(ui.ctx(), |ui| {
-                        if self.modal_escape == Some(Modal::WorkspaceFile) {
+                        if self.layout.modal_escape == Some(Modal::WorkspaceFile) {
                             keep_open = false;
                         }
 
@@ -511,7 +512,7 @@ impl CodeReaderApp {
                     .collapsible(false)
                     .resizable(false)
                     .show(ui.ctx(), |ui| {
-                        if self.modal_escape == Some(Modal::WorkspaceFile) {
+                        if self.layout.modal_escape == Some(Modal::WorkspaceFile) {
                             keep_open = false;
                         }
 
@@ -567,7 +568,7 @@ impl CodeReaderApp {
         }
 
         if keep_open {
-            self.workspace_file_dialog = Some(dialog);
+            self.workspace.file_dialog = Some(dialog);
         }
     }
 }
@@ -655,7 +656,8 @@ pub(super) fn draw_workspace_roots(
         let mut remove_root = false;
         let has_status = node_contains_git_status(root, git_file_statuses);
         let default_open = app
-            .workspace_root_open
+            .workspace
+            .root_open
             .get(&root.path)
             .copied()
             .unwrap_or(true);
@@ -666,14 +668,15 @@ pub(super) fn draw_workspace_roots(
             default_open,
         );
         if app
-            .pending_workspace_tree_reveal_path
+            .workspace
+            .pending_reveal_path
             .as_deref()
             .is_some_and(|path| path.starts_with(&root.path))
         {
             state.set_open(true);
         }
         let mut root_label_clicked = false;
-        let selected = app.selected_workspace_path.as_deref() == Some(root.path.as_path());
+        let selected = app.workspace.selected_path.as_deref() == Some(root.path.as_path());
         let mut header = state.show_header(ui, |ui| {
             root_label_clicked = workspace_tree_folder_label(ui, &root.name, selected).clicked();
             if has_status {
@@ -689,12 +692,13 @@ pub(super) fn draw_workspace_roots(
             }
         });
         if root_label_clicked {
-            app.workspace_sidebar_active = true;
-            app.selected_workspace_path = Some(root.path.clone());
-            app.pending_workspace_tree_reveal_path = None;
+            app.workspace.sidebar_active = true;
+            app.workspace.selected_path = Some(root.path.clone());
+            app.workspace.pending_reveal_path = None;
             header.toggle();
         }
-        app.workspace_root_open
+        app.workspace
+            .root_open
             .insert(root.path.clone(), header.is_open());
         header.body(|ui| {
             draw_file_nodes(ui, &root.children, git_file_statuses, app);
@@ -724,14 +728,15 @@ pub(super) fn draw_file_nodes(
                 false,
             );
             if app
-                .pending_workspace_tree_reveal_path
+                .workspace
+                .pending_reveal_path
                 .as_deref()
                 .is_some_and(|path| path.starts_with(&node.path))
             {
                 state.set_open(true);
             }
             let mut folder_label_clicked = false;
-            let selected = app.selected_workspace_path.as_deref() == Some(node.path.as_path());
+            let selected = app.workspace.selected_path.as_deref() == Some(node.path.as_path());
             let mut header = state.show_header(ui, |ui| {
                 folder_label_clicked =
                     workspace_tree_folder_label(ui, &node.name, selected).clicked();
@@ -740,9 +745,9 @@ pub(super) fn draw_file_nodes(
                 }
             });
             if folder_label_clicked {
-                app.workspace_sidebar_active = true;
-                app.selected_workspace_path = Some(node.path.clone());
-                app.pending_workspace_tree_reveal_path = None;
+                app.workspace.sidebar_active = true;
+                app.workspace.selected_path = Some(node.path.clone());
+                app.workspace.pending_reveal_path = None;
                 header.toggle();
             }
             header.body(|ui| {
@@ -755,28 +760,29 @@ pub(super) fn draw_file_nodes(
                 label = label.color(status.color());
             }
             ui.horizontal(|ui| {
-                let selected = app.selected_workspace_path.as_deref() == Some(node.path.as_path());
+                let selected = app.workspace.selected_path.as_deref() == Some(node.path.as_path());
                 let response = ui.add(
                     egui::Button::new(label)
                         .selected(selected)
                         .sense(egui::Sense::click_and_drag()),
                 );
                 if response.clicked() {
-                    app.workspace_sidebar_active = true;
-                    app.selected_workspace_path = Some(node.path.clone());
-                    app.pending_workspace_tree_reveal_path = None;
+                    app.workspace.sidebar_active = true;
+                    app.workspace.selected_path = Some(node.path.clone());
+                    app.workspace.pending_reveal_path = None;
                     app.open_file_in_focused_pane(node.path.clone());
                 }
                 if app
-                    .pending_workspace_tree_reveal_path
+                    .workspace
+                    .pending_reveal_path
                     .as_deref()
                     .is_some_and(|path| path == node.path.as_path())
                 {
                     response.scroll_to_me(Some(egui::Align::Center));
-                    app.pending_workspace_tree_reveal_path = None;
+                    app.workspace.pending_reveal_path = None;
                 }
                 if response.drag_started() || response.dragged() {
-                    app.dragging_workspace_file = Some(node.path.clone());
+                    app.workspace.dragging_file = Some(node.path.clone());
                 }
                 if let Some(status) = status {
                     ui.label(

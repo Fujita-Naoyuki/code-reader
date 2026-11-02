@@ -201,7 +201,7 @@ fn percent_encoded_and_absolute_link_targets() {
         ),
     )
     .unwrap();
-    t.app_mut().next_workspace_change_poll = std::time::Instant::now();
+    t.app_mut().workspace.next_change_poll = std::time::Instant::now();
     t.wait_until("abs.md discovered", |app| {
         app.file_tree
             .files
