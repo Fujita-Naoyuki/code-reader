@@ -445,24 +445,38 @@ impl EditorPane {
             &mut self.scroll.y,
         );
         let body_ms = elapsed_ms(body_start);
-        self.debug.perf = Some(EditorPerfDebug {
-            view: "source-virtual",
+        self.record_virtual_perf(VirtualPerfSample {
             total_ms: elapsed_ms(total_start),
-            header_ms: 0.0,
             body_ms,
             visible_rows,
             total_rows: line_count,
-            galley_hits: frame_counters.galley_hits,
-            galley_misses: frame_counters.galley_misses,
-            line_number_hits: frame_counters.line_number_hits,
-            line_number_misses: frame_counters.line_number_misses,
+            counters: frame_counters,
             text_len: source_len,
+            scroll_before_y,
+            search_matches: source_search_matches.len(),
+            syntax_spans: highlight_spans.len(),
+        });
+    }
+
+    fn record_virtual_perf(&mut self, sample: VirtualPerfSample) {
+        self.debug.perf = Some(EditorPerfDebug {
+            view: "source-virtual",
+            total_ms: sample.total_ms,
+            header_ms: 0.0,
+            body_ms: sample.body_ms,
+            visible_rows: sample.visible_rows,
+            total_rows: sample.total_rows,
+            galley_hits: sample.counters.galley_hits,
+            galley_misses: sample.counters.galley_misses,
+            line_number_hits: sample.counters.line_number_hits,
+            line_number_misses: sample.counters.line_number_misses,
+            text_len: sample.text_len,
             scroll_y: self.scroll.y,
             scroll_x: self.scroll.x,
-            scroll_delta_y: self.scroll.y - scroll_before_y,
+            scroll_delta_y: self.scroll.y - sample.scroll_before_y,
             source_search_open: self.source_search.open,
-            source_search_matches: source_search_matches.len(),
-            syntax_spans: highlight_spans.len(),
+            source_search_matches: sample.search_matches,
+            syntax_spans: sample.syntax_spans,
             virtual_cache_entries: self
                 .virtual_editor
                 .line_layout_cache
@@ -759,6 +773,19 @@ impl EditorPane {
             });
         }
     }
+}
+
+/// One frame's numbers for the performance report.
+struct VirtualPerfSample {
+    total_ms: f32,
+    body_ms: f32,
+    visible_rows: usize,
+    total_rows: usize,
+    counters: VirtualFrameCounters,
+    text_len: usize,
+    scroll_before_y: f32,
+    search_matches: usize,
+    syntax_spans: usize,
 }
 
 /// How to paint one line of the large-file editor.

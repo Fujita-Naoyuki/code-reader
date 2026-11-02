@@ -233,34 +233,7 @@ impl EditorPane {
                     self.csv.selection,
                     self.csv.drag,
                 ) {
-                    self.csv.selection = Some(match action {
-                        CsvHeaderAction::Press(column) => {
-                            self.csv.drag = Some(CsvSelectionDrag {
-                                kind: CsvSelectionKind::Columns,
-                                anchor: column,
-                            });
-                            CsvSelection::Columns {
-                                start: column,
-                                end: column,
-                            }
-                        }
-                        CsvHeaderAction::ExtendDrag(column) => {
-                            let start = self
-                                .csv
-                                .drag
-                                .filter(|drag| drag.kind == CsvSelectionKind::Columns)
-                                .map(|drag| drag.anchor)
-                                .unwrap_or(column);
-                            CsvSelection::Columns { start, end: column }
-                        }
-                    });
-                    self.csv.debug_message = Some(format!(
-                        "csv column action: {:?} -> {:?}",
-                        action, self.csv.selection
-                    ));
-                    self.csv.selected_cell = None;
-                    self.csv.edit_history_cell = None;
-                    ui.ctx().request_repaint();
+                    self.apply_csv_header_action(ui, CsvSelectionKind::Columns, action);
                 }
 
                 for row in 0..document.rows.len() {
@@ -285,125 +258,19 @@ impl EditorPane {
                             CsvSelectionKind::Rows,
                             self.csv.drag,
                         ) {
-                            self.csv.selection = Some(match action {
-                                CsvHeaderAction::Press(row) => {
-                                    self.csv.drag = Some(CsvSelectionDrag {
-                                        kind: CsvSelectionKind::Rows,
-                                        anchor: row,
-                                    });
-                                    CsvSelection::Rows {
-                                        start: row,
-                                        end: row,
-                                    }
-                                }
-                                CsvHeaderAction::ExtendDrag(row) => {
-                                    let start = self
-                                        .csv
-                                        .drag
-                                        .filter(|drag| drag.kind == CsvSelectionKind::Rows)
-                                        .map(|drag| drag.anchor)
-                                        .unwrap_or(row);
-                                    CsvSelection::Rows { start, end: row }
-                                }
-                            });
-                            self.csv.debug_message = Some(format!(
-                                "csv row action: {:?} -> {:?}",
-                                action, self.csv.selection
-                            ));
-                            self.csv.selected_cell = None;
-                            self.csv.edit_history_cell = None;
-                            ui.ctx().request_repaint();
+                            self.apply_csv_header_action(ui, CsvSelectionKind::Rows, action);
                         }
 
                         for (column, width) in column_widths.iter().enumerate().take(column_count) {
-                            let id = ui
-                                .id()
-                                .with(format!("csv_cell_{:?}_{row}_{column}", self.pane));
-                            let row_count = document.rows.len();
-                            let is_selected = self.csv.selection.is_none()
-                                && self.csv.selected_cell == Some(CsvCellPosition { row, column });
-                            let is_range_selected = self
-                                .csv
-                                .selection
-                                .is_some_and(|selection| selection.contains(row, column));
-                            let text = document
-                                .rows
-                                .get(row)
-                                .and_then(|fields| fields.get(column))
-                                .cloned()
-                                .unwrap_or_default();
-                            let response = paint_csv_cell(
+                            let outcome = self.csv_cell_ui(
                                 ui,
-                                &text,
-                                *width,
-                                row_height,
-                                active_row || is_range_selected,
-                                is_selected || is_range_selected,
+                                &mut document,
+                                CsvCellPosition { row, column },
+                                (*width, row_height),
+                                (focused, active_row),
                             );
-
-                            if response.clicked() {
-                                self.csv.selected_cell = Some(CsvCellPosition { row, column });
-                                self.csv.selection = None;
-                                self.csv.drag = None;
-                                self.csv.edit_history_cell = None;
-                                self.csv.debug_message =
-                                    Some(format!("csv cell selected: R{}C{}", row + 1, column + 1));
-                                self.cursor_position =
-                                    Some(Position::new(row as u32, column as u32));
-                                // The cell's TextEdit is only built from the next frame on;
-                                // it takes focus itself then (see below).
-                                ui.ctx().request_repaint();
-                            }
-
-                            if is_selected {
-                                let edit_rect = response.rect.shrink2(egui::vec2(3.0, 2.0));
-                                let cell_position = CsvCellPosition { row, column };
-                                let before_edit = self.capture_csv_history_entry();
-                                let cell = document.cell_mut(row, column);
-                                if focused
-                                    && let Some(target) = csv_navigation_target(
-                                        ui,
-                                        id,
-                                        row,
-                                        column,
-                                        row_count,
-                                        column_count,
-                                        cell.chars().count(),
-                                    )
-                                {
-                                    next_focus = Some(target);
-                                }
-
-                                let output = ui
-                                    .scope_builder(
-                                        egui::UiBuilder::new().max_rect(edit_rect),
-                                        |ui| {
-                                            TextEdit::singleline(cell)
-                                                .id(id)
-                                                .font(TextStyle::Monospace)
-                                                .desired_width(edit_rect.width())
-                                                .interactive(!self.read_only())
-                                                .show(ui)
-                                        },
-                                    )
-                                    .inner;
-
-                                if output.response.changed() {
-                                    if self.csv.edit_history_cell != Some(cell_position) {
-                                        self.push_csv_undo_entry_value(before_edit);
-                                        self.csv.edit_history_cell = Some(cell_position);
-                                    }
-                                    changed = true;
-                                    self.target_position = None;
-                                }
-
-                                if output.response.has_focus() {
-                                    self.cursor_position =
-                                        Some(Position::new(row as u32, column as u32));
-                                } else if focused {
-                                    ui.memory_mut(|memory| memory.request_focus(id));
-                                }
-                            }
+                            changed |= outcome.changed;
+                            next_focus = outcome.next_focus.or(next_focus);
                         }
                     });
                 }
@@ -443,6 +310,150 @@ impl EditorPane {
             ui.ctx().request_repaint();
         }
     }
+
+    /// Selects columns or rows from a press or drag on their header.
+    fn apply_csv_header_action(
+        &mut self,
+        ui: &egui::Ui,
+        kind: CsvSelectionKind,
+        action: CsvHeaderAction,
+    ) {
+        let (start, end) = match action {
+            CsvHeaderAction::Press(index) => {
+                self.csv.drag = Some(CsvSelectionDrag {
+                    kind,
+                    anchor: index,
+                });
+                (index, index)
+            }
+            CsvHeaderAction::ExtendDrag(index) => {
+                let start = self
+                    .csv
+                    .drag
+                    .filter(|drag| drag.kind == kind)
+                    .map(|drag| drag.anchor)
+                    .unwrap_or(index);
+                (start, index)
+            }
+        };
+        let (selection, name) = match kind {
+            CsvSelectionKind::Columns => (CsvSelection::Columns { start, end }, "column"),
+            CsvSelectionKind::Rows => (CsvSelection::Rows { start, end }, "row"),
+        };
+        self.csv.selection = Some(selection);
+        self.csv.debug_message = Some(format!(
+            "csv {name} action: {:?} -> {:?}",
+            action, self.csv.selection
+        ));
+        self.csv.selected_cell = None;
+        self.csv.edit_history_cell = None;
+        ui.ctx().request_repaint();
+    }
+
+    /// Paints one cell; the selected one is a text field.
+    fn csv_cell_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &mut CsvDocument,
+        position: CsvCellPosition,
+        (width, row_height): (f32, f32),
+        (focused, active_row): (bool, bool),
+    ) -> CsvCellOutcome {
+        let CsvCellPosition { row, column } = position;
+        let column_count = document.column_count();
+        let mut outcome = CsvCellOutcome::default();
+        let id = ui
+            .id()
+            .with(format!("csv_cell_{:?}_{row}_{column}", self.pane));
+        let row_count = document.rows.len();
+        let is_selected = self.csv.selection.is_none()
+            && self.csv.selected_cell == Some(CsvCellPosition { row, column });
+        let is_range_selected = self
+            .csv
+            .selection
+            .is_some_and(|selection| selection.contains(row, column));
+        let text = document
+            .rows
+            .get(row)
+            .and_then(|fields| fields.get(column))
+            .cloned()
+            .unwrap_or_default();
+        let response = paint_csv_cell(
+            ui,
+            &text,
+            width,
+            row_height,
+            active_row || is_range_selected,
+            is_selected || is_range_selected,
+        );
+
+        if response.clicked() {
+            self.csv.selected_cell = Some(CsvCellPosition { row, column });
+            self.csv.selection = None;
+            self.csv.drag = None;
+            self.csv.edit_history_cell = None;
+            self.csv.debug_message =
+                Some(format!("csv cell selected: R{}C{}", row + 1, column + 1));
+            self.cursor_position = Some(Position::new(row as u32, column as u32));
+            // The cell's TextEdit is only built from the next frame on;
+            // it takes focus itself then (see below).
+            ui.ctx().request_repaint();
+        }
+
+        if is_selected {
+            let edit_rect = response.rect.shrink2(egui::vec2(3.0, 2.0));
+            let cell_position = CsvCellPosition { row, column };
+            let before_edit = self.capture_csv_history_entry();
+            let cell = document.cell_mut(row, column);
+            if focused
+                && let Some(target) = csv_navigation_target(
+                    ui,
+                    id,
+                    row,
+                    column,
+                    row_count,
+                    column_count,
+                    cell.chars().count(),
+                )
+            {
+                outcome.next_focus = Some(target);
+            }
+
+            let output = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(edit_rect), |ui| {
+                    TextEdit::singleline(cell)
+                        .id(id)
+                        .font(TextStyle::Monospace)
+                        .desired_width(edit_rect.width())
+                        .interactive(!self.read_only())
+                        .show(ui)
+                })
+                .inner;
+
+            if output.response.changed() {
+                if self.csv.edit_history_cell != Some(cell_position) {
+                    self.push_csv_undo_entry_value(before_edit);
+                    self.csv.edit_history_cell = Some(cell_position);
+                }
+                outcome.changed = true;
+                self.target_position = None;
+            }
+
+            if output.response.has_focus() {
+                self.cursor_position = Some(Position::new(row as u32, column as u32));
+            } else if focused {
+                ui.memory_mut(|memory| memory.request_focus(id));
+            }
+        }
+        outcome
+    }
+}
+
+/// What one cell's frame asks of the grid.
+#[derive(Default)]
+struct CsvCellOutcome {
+    changed: bool,
+    next_focus: Option<CsvCellPosition>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
