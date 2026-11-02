@@ -16,6 +16,8 @@ use std::{
 
 use serde_json::{Value, json};
 
+use protocol::{byte_position_to_lsp_position, parse_lsp_locations, path_to_file_uri};
+
 use crate::core::{
     document::Document,
     location::{Location, Position},
@@ -29,8 +31,6 @@ pub enum LspRequestKind {
     Definition,
     References,
 }
-
-use protocol::{byte_position_to_lsp_position, parse_lsp_locations, path_to_file_uri};
 
 #[derive(Debug, Clone)]
 pub struct LspLocationResponse {
