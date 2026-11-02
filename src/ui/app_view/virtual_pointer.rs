@@ -80,61 +80,24 @@ pub(super) fn virtual_editor_click_input(
     } = *viewport;
 
     let response_pointer_pos = response.interact_pointer_pos();
-    let response_clicked = response.clicked();
     let response_primary_clicked = response.clicked_by(egui::PointerButton::Primary);
     let response_double_clicked = response.double_clicked_by(egui::PointerButton::Primary);
-    let response_hovered = response.hovered();
-    let response_contains_pointer = response.contains_pointer();
-    let text_edit_focused = ui.memory(|memory| memory.has_focus(text_edit_id));
-
-    let (
-        input_pointer_pos,
-        primary_pressed,
-        primary_released,
-        primary_clicked,
-        any_pressed,
-        any_released,
-        any_click,
-        dragging,
-    ) = ui.input(|input| {
-        (
-            input.pointer.interact_pos(),
-            input.pointer.primary_pressed(),
-            input.pointer.primary_released(),
-            input.pointer.primary_clicked(),
-            input.pointer.any_pressed(),
-            input.pointer.any_released(),
-            input.pointer.any_click(),
-            input.pointer.is_decidedly_dragging(),
-        )
-    });
-
-    let input_activity = response_clicked
-        || response_primary_clicked
-        || response_double_clicked
-        || primary_pressed
-        || primary_released
-        || primary_clicked
-        || any_pressed
-        || any_released
-        || any_click;
+    let input = VirtualPointerInput::capture(ui);
 
     let (source, candidate_pos) = if response_double_clicked {
         ("response_double_clicked", response_pointer_pos)
     } else if response_primary_clicked {
         ("response_primary_clicked", response_pointer_pos)
-    } else if primary_released {
-        ("primary_released", input_pointer_pos)
-    } else if primary_pressed {
-        ("primary_pressed", input_pointer_pos)
+    } else if input.primary_released {
+        ("primary_released", input.pointer_pos)
+    } else if input.primary_pressed {
+        ("primary_pressed", input.pointer_pos)
     } else {
-        ("none", response_pointer_pos.or(input_pointer_pos))
+        ("none", response_pointer_pos.or(input.pointer_pos))
     };
 
-    let pointer_pos = candidate_pos.or(response_pointer_pos).or(input_pointer_pos);
-    let response_hit = pointer_pos.is_some_and(|position| response.rect.contains(position));
+    let pointer_pos = candidate_pos.or(response_pointer_pos).or(input.pointer_pos);
     let viewport_hit = pointer_pos.is_some_and(|position| viewport_rect.contains(position));
-    let text_hit = pointer_pos.is_some_and(|position| text_clip_rect.contains(position));
     // The response covers the whole editor; `viewport_rect` leaves out the scrollbars.
     let scrollbar_hit = pointer_pos.is_some_and(|position| {
         response.rect.contains(position) && !viewport_rect.contains(position)
@@ -144,7 +107,7 @@ pub(super) fn virtual_editor_click_input(
         "no_primary_press_or_release"
     } else if candidate_pos.is_none() {
         "no_pointer_position"
-    } else if source != "response_primary_clicked" && dragging {
+    } else if source != "response_primary_clicked" && input.dragging {
         "dragging"
     } else if scrollbar_hit {
         "scrollbar"
@@ -155,7 +118,11 @@ pub(super) fn virtual_editor_click_input(
     };
     let accepted = reason == "accepted";
 
-    let event = input_activity.then_some(VirtualClickEventDebug {
+    let event = (response.clicked()
+        || response_primary_clicked
+        || response_double_clicked
+        || input.any_activity())
+    .then(|| VirtualClickEventDebug {
         index: 0,
         source,
         accepted,
@@ -164,23 +131,23 @@ pub(super) fn virtual_editor_click_input(
         response_rect: response.rect,
         viewport_rect,
         text_clip_rect,
-        response_hovered,
-        response_contains_pointer,
-        response_clicked,
+        response_hovered: response.hovered(),
+        response_contains_pointer: response.contains_pointer(),
+        response_clicked: response.clicked(),
         response_primary_clicked,
-        primary_pressed,
-        primary_released,
-        primary_clicked,
-        any_pressed,
-        any_released,
-        any_click,
-        dragging,
-        response_hit,
+        primary_pressed: input.primary_pressed,
+        primary_released: input.primary_released,
+        primary_clicked: input.primary_clicked,
+        any_pressed: input.any_pressed,
+        any_released: input.any_released,
+        any_click: input.any_click,
+        dragging: input.dragging,
+        response_hit: pointer_pos.is_some_and(|position| response.rect.contains(position)),
         viewport_hit,
-        text_hit,
+        text_hit: pointer_pos.is_some_and(|position| text_clip_rect.contains(position)),
         scrollbar_hit,
         pane_focused,
-        text_edit_focused,
+        text_edit_focused: ui.memory(|memory| memory.has_focus(text_edit_id)),
         scroll_x,
         scroll_y,
         row_height,
@@ -305,4 +272,40 @@ pub(super) fn virtual_click_byte_column(
 ) -> u32 {
     let x_offset = virtual_click_x_offset(pointer_x, text_left, text_clip_left);
     byte_column_for_visual_x(ui, line, x_offset, char_width)
+}
+
+/// The pointer buttons this frame, as the click decision and its log read them.
+struct VirtualPointerInput {
+    pointer_pos: Option<egui::Pos2>,
+    primary_pressed: bool,
+    primary_released: bool,
+    primary_clicked: bool,
+    any_pressed: bool,
+    any_released: bool,
+    any_click: bool,
+    dragging: bool,
+}
+
+impl VirtualPointerInput {
+    fn capture(ui: &egui::Ui) -> Self {
+        ui.input(|input| Self {
+            pointer_pos: input.pointer.interact_pos(),
+            primary_pressed: input.pointer.primary_pressed(),
+            primary_released: input.pointer.primary_released(),
+            primary_clicked: input.pointer.primary_clicked(),
+            any_pressed: input.pointer.any_pressed(),
+            any_released: input.pointer.any_released(),
+            any_click: input.pointer.any_click(),
+            dragging: input.pointer.is_decidedly_dragging(),
+        })
+    }
+
+    fn any_activity(&self) -> bool {
+        self.primary_pressed
+            || self.primary_released
+            || self.primary_clicked
+            || self.any_pressed
+            || self.any_released
+            || self.any_click
+    }
 }

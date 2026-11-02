@@ -537,114 +537,115 @@ pub(crate) fn parse_diff_display_rows(source: &str) -> Vec<DiffDisplayRow> {
         return vec![DiffDisplayRow::Message("No diffs.".to_owned())];
     }
 
-    let mut rows = Vec::new();
-    let mut old_line = 0usize;
-    let mut new_line = 0usize;
-    let mut in_hunk = false;
-    let mut has_seen_hunk_in_file = false;
-    let mut current_file_row = None;
-
+    let mut parser = DiffRowParser::default();
     for raw_line in source.lines() {
-        if let Some(title) = raw_line.strip_prefix("diff --code-reader ") {
-            rows.push(DiffDisplayRow::Section(title.to_owned()));
-            in_hunk = false;
-            has_seen_hunk_in_file = false;
-            current_file_row = None;
-            continue;
-        }
-
-        if raw_line.starts_with("diff --git ") {
-            let path = diff_git_path(raw_line).unwrap_or_else(|| raw_line.to_owned());
-            current_file_row = Some(rows.len());
-            rows.push(DiffDisplayRow::FileHeader { path, status: "M" });
-            in_hunk = false;
-            has_seen_hunk_in_file = false;
-            continue;
-        }
-
-        if raw_line.starts_with("new file mode ") {
-            if let Some(index) = current_file_row
-                && let Some(DiffDisplayRow::FileHeader { status, .. }) = rows.get_mut(index)
-            {
-                *status = "A";
-            }
-            continue;
-        }
-
-        if raw_line.starts_with("deleted file mode ") {
-            if let Some(index) = current_file_row
-                && let Some(DiffDisplayRow::FileHeader { status, .. }) = rows.get_mut(index)
-            {
-                *status = "D";
-            }
-            continue;
-        }
-
-        if raw_line.starts_with("index ")
-            || raw_line.starts_with("--- ")
-            || raw_line.starts_with("+++ ")
-        {
-            continue;
-        }
-
-        if raw_line.starts_with("@@") {
-            if let Some((next_old_line, next_new_line)) = parse_unified_hunk_header(raw_line) {
-                if has_seen_hunk_in_file {
-                    let hidden_count = next_old_line
-                        .saturating_sub(old_line)
-                        .max(next_new_line.saturating_sub(new_line));
-                    if hidden_count > 0 {
-                        rows.push(DiffDisplayRow::HiddenLines(hidden_count));
-                    }
-                }
-                old_line = next_old_line;
-                new_line = next_new_line;
-                in_hunk = true;
-                has_seen_hunk_in_file = true;
-            }
-            continue;
-        }
-
-        if !in_hunk {
-            if raw_line.trim().is_empty() {
-                continue;
-            }
-            rows.push(DiffDisplayRow::Message(raw_line.to_owned()));
-            continue;
-        }
-
-        if let Some(content) = raw_line.strip_prefix('+') {
-            rows.push(DiffDisplayRow::Line {
-                line_label: format!("+{new_line}"),
-                content: content.to_owned(),
-                kind: DiffLineKind::Added,
-            });
-            new_line += 1;
-        } else if let Some(content) = raw_line.strip_prefix('-') {
-            rows.push(DiffDisplayRow::Line {
-                line_label: format!("-{old_line}"),
-                content: content.to_owned(),
-                kind: DiffLineKind::Removed,
-            });
-            old_line += 1;
-        } else if raw_line.starts_with(' ') || raw_line.is_empty() {
-            let content = raw_line.strip_prefix(' ').unwrap_or(raw_line).to_owned();
-            rows.push(DiffDisplayRow::Line {
-                line_label: new_line.to_string(),
-                content,
-                kind: DiffLineKind::Context,
-            });
-            old_line += 1;
-            new_line += 1;
-        } else if raw_line.starts_with("\\ No newline") {
-            continue;
-        }
+        parser.push_line(raw_line);
     }
 
+    let mut rows = parser.rows;
     if rows.is_empty() {
         rows.push(DiffDisplayRow::Message("No diffs.".to_owned()));
     }
     rows
+}
+
+/// Where parsing a unified diff has got to.
+#[derive(Default)]
+struct DiffRowParser {
+    rows: Vec<DiffDisplayRow>,
+    old_line: usize,
+    new_line: usize,
+    in_hunk: bool,
+    has_seen_hunk_in_file: bool,
+    current_file_row: Option<usize>,
+}
+
+impl DiffRowParser {
+    fn push_line(&mut self, raw_line: &str) {
+        if let Some(title) = raw_line.strip_prefix("diff --code-reader ") {
+            self.rows.push(DiffDisplayRow::Section(title.to_owned()));
+            self.in_hunk = false;
+            self.has_seen_hunk_in_file = false;
+            self.current_file_row = None;
+        } else if raw_line.starts_with("diff --git ") {
+            let path = diff_git_path(raw_line).unwrap_or_else(|| raw_line.to_owned());
+            self.current_file_row = Some(self.rows.len());
+            self.rows
+                .push(DiffDisplayRow::FileHeader { path, status: "M" });
+            self.in_hunk = false;
+            self.has_seen_hunk_in_file = false;
+        } else if raw_line.starts_with("new file mode ") {
+            self.set_file_status("A");
+        } else if raw_line.starts_with("deleted file mode ") {
+            self.set_file_status("D");
+        } else if raw_line.starts_with("index ")
+            || raw_line.starts_with("--- ")
+            || raw_line.starts_with("+++ ")
+        {
+            // File metadata the rows do not show.
+        } else if raw_line.starts_with("@@") {
+            self.start_hunk(raw_line);
+        } else if !self.in_hunk {
+            if !raw_line.trim().is_empty() {
+                self.rows.push(DiffDisplayRow::Message(raw_line.to_owned()));
+            }
+        } else {
+            self.push_hunk_line(raw_line);
+        }
+    }
+
+    fn set_file_status(&mut self, new_status: &'static str) {
+        if let Some(index) = self.current_file_row
+            && let Some(DiffDisplayRow::FileHeader { status, .. }) = self.rows.get_mut(index)
+        {
+            *status = new_status;
+        }
+    }
+
+    fn start_hunk(&mut self, raw_line: &str) {
+        let Some((next_old_line, next_new_line)) = parse_unified_hunk_header(raw_line) else {
+            return;
+        };
+        if self.has_seen_hunk_in_file {
+            let hidden_count = next_old_line
+                .saturating_sub(self.old_line)
+                .max(next_new_line.saturating_sub(self.new_line));
+            if hidden_count > 0 {
+                self.rows.push(DiffDisplayRow::HiddenLines(hidden_count));
+            }
+        }
+        self.old_line = next_old_line;
+        self.new_line = next_new_line;
+        self.in_hunk = true;
+        self.has_seen_hunk_in_file = true;
+    }
+
+    fn push_hunk_line(&mut self, raw_line: &str) {
+        if let Some(content) = raw_line.strip_prefix('+') {
+            self.rows.push(DiffDisplayRow::Line {
+                line_label: format!("+{}", self.new_line),
+                content: content.to_owned(),
+                kind: DiffLineKind::Added,
+            });
+            self.new_line += 1;
+        } else if let Some(content) = raw_line.strip_prefix('-') {
+            self.rows.push(DiffDisplayRow::Line {
+                line_label: format!("-{}", self.old_line),
+                content: content.to_owned(),
+                kind: DiffLineKind::Removed,
+            });
+            self.old_line += 1;
+        } else if raw_line.starts_with(' ') || raw_line.is_empty() {
+            let content = raw_line.strip_prefix(' ').unwrap_or(raw_line).to_owned();
+            self.rows.push(DiffDisplayRow::Line {
+                line_label: self.new_line.to_string(),
+                content,
+                kind: DiffLineKind::Context,
+            });
+            self.old_line += 1;
+            self.new_line += 1;
+        }
+    }
 }
 
 pub(crate) fn diff_git_path(line: &str) -> Option<String> {

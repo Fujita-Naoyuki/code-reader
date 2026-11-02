@@ -214,11 +214,6 @@ impl EditorPane {
 
         let line_index = self.cached_line_index(source_len, source_hash);
         let line_count = line_index.line_count();
-        let row_height = editor_scroll_row_height(ui);
-        let gutter_width = line_number_gutter_width(ui, line_count);
-        let editor_width = line_index.editor_width(ui, ui.available_width());
-        let total_width = gutter_width + editor_width;
-        let total_height = line_count.max(1) as f32 * row_height;
         let mut current_line = self.cursor_position.map(|position| position.line);
         let bracket_pair = self.cached_bracket_pair(source_len, source_hash);
         let highlight_spans =
@@ -226,20 +221,24 @@ impl EditorPane {
         let highlight_line_span_ranges =
             self.cached_syntax_highlight_line_span_ranges(source_len, source_hash);
 
-        let viewport_size = ui.available_size();
-        let viewport_size = egui::vec2(viewport_size.x.max(1.0), viewport_size.y.max(1.0));
-        let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, egui::Sense::hover());
+        let layout = VirtualLayout::allocate(ui, line_index.as_ref());
         // The viewport is the focusable widget behind `text_edit_id`.
-        let response = ui.interact(viewport_rect, text_edit_id, egui::Sense::click_and_drag());
-        lock_virtual_editor_focus(ui, &response, viewport_rect, text_edit_id);
-        let scrollbar_layout = virtual_scrollbar_layout(viewport_rect, total_width, total_height);
-        let content_rect = scrollbar_layout.content_rect;
-        let max_scroll_y = (total_height - content_rect.height()).max(0.0);
-        let max_scroll_x = (total_width - content_rect.width()).max(0.0);
-        self.scroll.y = self.scroll.y.clamp(0.0, max_scroll_y);
-        self.scroll.x = self.scroll.x.clamp(0.0, max_scroll_x);
-
-        self.apply_virtual_wheel(ui, &response, content_rect, max_scroll_x, max_scroll_y);
+        let response = ui.interact(
+            layout.viewport_rect,
+            text_edit_id,
+            egui::Sense::click_and_drag(),
+        );
+        lock_virtual_editor_focus(ui, &response, layout.viewport_rect, text_edit_id);
+        let (content_rect, row_height) = (layout.content_rect, layout.row_height);
+        self.scroll.y = self.scroll.y.clamp(0.0, layout.max_scroll_y);
+        self.scroll.x = self.scroll.x.clamp(0.0, layout.max_scroll_x);
+        self.apply_virtual_wheel(
+            ui,
+            &response,
+            content_rect,
+            layout.max_scroll_x,
+            layout.max_scroll_y,
+        );
 
         let visible_start = (self.scroll.y / row_height).floor().max(0.0) as usize;
         let visible_end = (((self.scroll.y + content_rect.height()) / row_height).ceil() as usize
@@ -247,39 +246,13 @@ impl EditorPane {
         .min(line_count);
         let visible_range = visible_start.min(line_count)..visible_end;
         let visible_rows = visible_range.end.saturating_sub(visible_range.start);
-        let painter = ui.painter_at(viewport_rect);
-        let char_width = editor_char_width(ui);
-        let content_left = content_rect.left();
-        let text_clip_left = content_left + gutter_width + 1.0;
-        let text_clip_rect = egui::Rect::from_min_max(
-            egui::pos2(text_clip_left, content_rect.top()),
-            content_rect.right_bottom(),
-        );
-        let text_painter = ui.painter_at(text_clip_rect);
-        let text_left = content_left + gutter_width + 8.0 - self.scroll.x;
-        let viewport = VirtualViewport {
-            content_rect,
-            text_clip_rect,
-            text_left,
-            row_height,
-            char_width,
-            scroll_x: self.scroll.x,
-            scroll_y: self.scroll.y,
-        };
 
         if self.handle_virtual_navigation_input(
             ui,
             focused,
             text_edit_id,
             line_index.as_ref(),
-            &VirtualNavMetrics {
-                row_height,
-                viewport_height: content_rect.height(),
-                text_clip_width: text_clip_rect.width(),
-                char_width,
-                max_scroll_x,
-                max_scroll_y,
-            },
+            &layout.nav_metrics(),
         ) {
             current_line = self.cursor_position.map(|position| position.line);
             response.request_focus();
@@ -287,13 +260,8 @@ impl EditorPane {
             ui.ctx().request_repaint();
         }
 
-        // Navigation may have scrolled to keep the cursor visible.
-        let viewport = VirtualViewport {
-            scroll_x: self.scroll.x,
-            scroll_y: self.scroll.y,
-            text_left: content_left + gutter_width + 8.0 - self.scroll.x,
-            ..viewport
-        };
+        // After navigation, which may have scrolled to keep the cursor visible.
+        let viewport = layout.viewport(self.scroll.x, self.scroll.y);
         if let Some(line) = self.handle_virtual_pointer(
             ui,
             &response,
@@ -313,21 +281,88 @@ impl EditorPane {
             visible_range.clone(),
             current_line,
         ));
-        response.context_menu(|ui| {
-            if ui.button("Go to Definition").clicked() {
-                self.pending_action = Some(EditorAction::GoToDefinition);
-                ui.close();
-            }
-            if ui.button("Back").clicked() {
-                self.pending_action = Some(EditorAction::Back);
-                ui.close();
-            }
-        });
+        self.editor_context_menu(&response);
 
         let body_start = Instant::now();
         let mut frame_counters = VirtualFrameCounters::default();
+        self.paint_virtual_body(
+            ui,
+            &VirtualBodyFrame {
+                layout: &layout,
+                viewport: &viewport,
+                line_index: line_index.as_ref(),
+                visible_range,
+                current_line,
+                tab_width,
+                bookmark_lines,
+                text_edit_id,
+                line_style: VirtualLineStyle {
+                    source_len,
+                    source_hash,
+                    highlight_spans: highlight_spans.as_slice(),
+                    highlights: LineHighlights {
+                        bracket_pair,
+                        search_matches: source_search_matches.as_slice(),
+                        active_search_match: active_source_search_match,
+                    },
+                },
+                highlight_line_span_ranges: highlight_line_span_ranges.as_slice(),
+            },
+            &mut frame_counters,
+        );
+        self.finish_virtual_cursor(
+            ui,
+            &response,
+            (focused, text_edit_id),
+            line_index.as_ref(),
+            &viewport,
+            visible_start..visible_end,
+        );
+        handle_and_paint_virtual_scrollbars(
+            ui,
+            layout.viewport_rect,
+            layout.total_width,
+            layout.total_height,
+            &mut self.scroll.x,
+            &mut self.scroll.y,
+        );
+        let body_ms = elapsed_ms(body_start);
+        self.record_virtual_perf(VirtualPerfSample {
+            total_ms: elapsed_ms(total_start),
+            body_ms,
+            visible_rows,
+            total_rows: line_count,
+            counters: frame_counters,
+            text_len: source_len,
+            scroll_before_y,
+            search_matches: source_search_matches.len(),
+            syntax_spans: highlight_spans.len(),
+        });
+    }
+
+    /// The current line, indent guides, selection, the visible lines and the gutter's edge.
+    fn paint_virtual_body(
+        &mut self,
+        ui: &egui::Ui,
+        body: &VirtualBodyFrame<'_>,
+        frame_counters: &mut VirtualFrameCounters,
+    ) {
+        let VirtualBodyFrame {
+            layout,
+            viewport,
+            line_index,
+            current_line,
+            tab_width,
+            bookmark_lines,
+            text_edit_id,
+            highlight_line_span_ranges,
+            ..
+        } = *body;
+        let (content_rect, row_height) = (layout.content_rect, layout.row_height);
+        let painter = ui.painter_at(layout.viewport_rect);
+        let text_painter = ui.painter_at(viewport.text_clip_rect);
         if let Some(current_line) = current_line
-            && visible_range.contains(&(current_line as usize))
+            && body.visible_range.contains(&(current_line as usize))
         {
             let top = content_rect.top() + current_line as f32 * row_height - self.scroll.y;
             let row_rect = egui::Rect::from_min_size(
@@ -344,37 +379,27 @@ impl EditorPane {
         if !self.is_csv() {
             paint_virtual_indent_guides(
                 ui,
-                line_index.as_ref(),
+                line_index,
                 &self.text,
-                visible_range.clone(),
+                body.visible_range.clone(),
                 tab_width,
                 current_line,
-                &viewport,
+                viewport,
             );
         }
 
         paint_virtual_selection(
             ui,
-            line_index.as_ref(),
+            line_index,
             &self.text,
             self.virtual_editor
                 .selection
                 .and_then(|selection| selection.normalized()),
-            visible_range.clone(),
-            &viewport,
+            body.visible_range.clone(),
+            viewport,
         );
 
-        let line_style = VirtualLineStyle {
-            source_len,
-            source_hash,
-            highlight_spans: highlight_spans.as_slice(),
-            highlights: LineHighlights {
-                bracket_pair,
-                search_matches: source_search_matches.as_slice(),
-                active_search_match: active_source_search_match,
-            },
-        };
-        for line_number in visible_range {
+        for line_number in body.visible_range.clone() {
             let Some(line_info) = line_index.line(line_number) else {
                 continue;
             };
@@ -385,77 +410,67 @@ impl EditorPane {
                 &VirtualLinePaint {
                     painter: &painter,
                     text_painter: &text_painter,
-                    viewport: &viewport,
-                    gutter_width,
-                    line_count,
+                    viewport,
+                    gutter_width: layout.gutter_width,
+                    line_count: line_index.line_count(),
                     is_current_line: current_line == Some(line_number as u32),
                     bookmarked: bookmark_lines.contains(&(line_number as u32)),
                     text_edit_id,
-                    style: &line_style,
+                    style: &body.line_style,
                     highlight_line_span_range: highlight_line_span_ranges
                         .get(line_number)
                         .cloned()
                         .unwrap_or(0..0),
                 },
-                &mut frame_counters,
+                frame_counters,
             );
         }
 
+        let gutter_right = content_rect.left() + layout.gutter_width;
+        painter.line_segment(
+            [
+                egui::pos2(gutter_right, content_rect.top()),
+                egui::pos2(gutter_right, content_rect.bottom()),
+            ],
+            egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        );
+    }
+
+    /// The IME area and uncommitted IME text, then the cursor on top.
+    fn finish_virtual_cursor(
+        &self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        (focused, text_edit_id): (bool, egui::Id),
+        line_index: &LineIndex,
+        viewport: &VirtualViewport,
+        visible_range: std::ops::Range<usize>,
+    ) {
         let cursor_rect = virtual_cursor_rect(
             Some(ui),
-            line_index.as_ref(),
+            line_index,
             &self.text,
             self.cursor_position,
-            visible_start..visible_end,
-            &viewport,
+            visible_range.clone(),
+            viewport,
         );
-        self.publish_virtual_ime_area(ui, &response, focused, text_edit_id, cursor_rect);
-
+        self.publish_virtual_ime_area(ui, response, focused, text_edit_id, cursor_rect);
         paint_virtual_ime_preedit(
             ui,
             self.virtual_editor.ime_preedit.as_deref(),
             cursor_rect,
-            text_clip_rect,
-            content_rect,
-            row_height,
+            viewport.text_clip_rect,
+            viewport.content_rect,
+            viewport.row_height,
         );
         paint_virtual_cursor(
             ui,
-            line_index.as_ref(),
+            line_index,
             &self.text,
             self.cursor_position,
-            visible_start..visible_end,
-            &viewport,
+            visible_range,
+            viewport,
         );
-
-        painter.line_segment(
-            [
-                egui::pos2(content_left + gutter_width, content_rect.top()),
-                egui::pos2(content_left + gutter_width, content_rect.bottom()),
-            ],
-            egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-        );
-
-        handle_and_paint_virtual_scrollbars(
-            ui,
-            viewport_rect,
-            total_width,
-            total_height,
-            &mut self.scroll.x,
-            &mut self.scroll.y,
-        );
-        let body_ms = elapsed_ms(body_start);
-        self.record_virtual_perf(VirtualPerfSample {
-            total_ms: elapsed_ms(total_start),
-            body_ms,
-            visible_rows,
-            total_rows: line_count,
-            counters: frame_counters,
-            text_len: source_len,
-            scroll_before_y,
-            search_matches: source_search_matches.len(),
-            syntax_spans: highlight_spans.len(),
-        });
     }
 
     fn record_virtual_perf(&mut self, sample: VirtualPerfSample) {
@@ -548,14 +563,6 @@ impl EditorPane {
         viewport: &VirtualViewport,
         visible_range: std::ops::Range<usize>,
     ) -> Option<u32> {
-        let VirtualViewport {
-            content_rect,
-            text_clip_rect,
-            text_left,
-            row_height,
-            char_width,
-            ..
-        } = *viewport;
         let line_count = line_index.line_count();
         let mut moved_to_line = None;
         if let Some((anchor, head)) =
@@ -578,68 +585,76 @@ impl EditorPane {
             focused,
             viewport,
             line_count,
-            visible_range.clone(),
+            visible_range,
         );
         let click_event_index = click_input
             .event
             .map(|event| self.debug.virtual_click.push_event(event));
         if let Some(pointer_pos) = click_input.position {
-            let line = ((pointer_pos.y - content_rect.top() + self.scroll.y) / row_height)
+            let line = ((pointer_pos.y - viewport.content_rect.top() + self.scroll.y)
+                / viewport.row_height)
                 .floor()
                 .max(0.0) as usize;
             let line = line.min(line_count.saturating_sub(1));
             if let Some(line_info) = line_index.line(line) {
-                let line_text = self.text.line_text_or_empty(line_info);
-                let character = virtual_click_byte_column(
-                    Some(ui),
-                    line_text,
-                    pointer_pos.x,
-                    text_left,
-                    text_clip_rect.left(),
-                    char_width,
-                );
-                let position = Position::new(line as u32, character);
-                if click_input.double_clicked {
-                    if let Some(selection) =
-                        virtual_word_selection_at_position(line_text, line as u32, character)
-                    {
-                        self.cursor_position = Some(selection.head);
-                        moved_to_line = Some(selection.head.line);
-                        self.virtual_editor.selection = Some(selection);
-                    } else {
-                        self.cursor_position = Some(position);
-                        moved_to_line = Some(position.line);
-                        self.virtual_editor.selection = None;
-                    }
-                } else {
-                    self.cursor_position = Some(position);
-                    moved_to_line = Some(position.line);
-                    self.virtual_editor.selection = None;
-                }
-                self.virtual_editor.ime_preedit = None;
-                self.target_position = None;
-                if let Some(event_index) = click_event_index {
-                    self.debug.virtual_click.last_accept = Some(VirtualClickAcceptDebug {
-                        event_index,
-                        pointer_pos,
-                        line,
-                        character,
-                        cursor_position: position,
-                        text_left,
-                        text_clip_left: text_clip_rect.left(),
-                        x_offset: virtual_click_x_offset(
-                            pointer_pos.x,
-                            text_left,
-                            text_clip_rect.left(),
-                        ),
-                    });
-                }
+                moved_to_line = Some(self.apply_virtual_click(
+                    ui,
+                    (line, line_info),
+                    pointer_pos,
+                    click_input.double_clicked,
+                    viewport,
+                    click_event_index,
+                ));
                 response.request_focus();
                 ui.memory_mut(|memory| memory.request_focus(text_edit_id));
                 ui.ctx().request_repaint();
             }
         }
         moved_to_line
+    }
+
+    /// Puts the cursor where the click landed; a double click selects the word there.
+    /// Returns the cursor's line.
+    fn apply_virtual_click(
+        &mut self,
+        ui: &egui::Ui,
+        (line, line_info): (usize, LineInfo),
+        pointer_pos: egui::Pos2,
+        double_clicked: bool,
+        viewport: &VirtualViewport,
+        click_event_index: Option<u64>,
+    ) -> u32 {
+        let (text_left, text_clip_left) = (viewport.text_left, viewport.text_clip_rect.left());
+        let line_text = self.text.line_text_or_empty(line_info);
+        let character = virtual_click_byte_column(
+            Some(ui),
+            line_text,
+            pointer_pos.x,
+            text_left,
+            text_clip_left,
+            viewport.char_width,
+        );
+        let position = Position::new(line as u32, character);
+        let word = double_clicked
+            .then(|| virtual_word_selection_at_position(line_text, line as u32, character))
+            .flatten();
+        self.cursor_position = Some(word.map_or(position, |selection| selection.head));
+        self.virtual_editor.selection = word;
+        self.virtual_editor.ime_preedit = None;
+        self.target_position = None;
+        if let Some(event_index) = click_event_index {
+            self.debug.virtual_click.last_accept = Some(VirtualClickAcceptDebug {
+                event_index,
+                pointer_pos,
+                line,
+                character,
+                cursor_position: position,
+                text_left,
+                text_clip_left,
+                x_offset: virtual_click_x_offset(pointer_pos.x, text_left, text_clip_left),
+            });
+        }
+        word.map_or(position.line, |selection| selection.head.line)
     }
 
     fn paint_virtual_line(
@@ -773,6 +788,89 @@ impl EditorPane {
             });
         }
     }
+}
+
+/// Where the large-file editor's parts go this frame. Allocates its space in the `Ui`.
+struct VirtualLayout {
+    viewport_rect: egui::Rect,
+    content_rect: egui::Rect,
+    text_clip_rect: egui::Rect,
+    gutter_width: f32,
+    total_width: f32,
+    total_height: f32,
+    max_scroll_x: f32,
+    max_scroll_y: f32,
+    row_height: f32,
+    char_width: f32,
+}
+
+impl VirtualLayout {
+    fn allocate(ui: &mut egui::Ui, line_index: &LineIndex) -> Self {
+        let line_count = line_index.line_count();
+        let row_height = editor_scroll_row_height(ui);
+        let gutter_width = line_number_gutter_width(ui, line_count);
+        let editor_width = line_index.editor_width(ui, ui.available_width());
+        let total_width = gutter_width + editor_width;
+        let total_height = line_count.max(1) as f32 * row_height;
+        let viewport_size = ui.available_size();
+        let viewport_size = egui::vec2(viewport_size.x.max(1.0), viewport_size.y.max(1.0));
+        let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, egui::Sense::hover());
+        let content_rect =
+            virtual_scrollbar_layout(viewport_rect, total_width, total_height).content_rect;
+        let text_clip_rect = egui::Rect::from_min_max(
+            egui::pos2(content_rect.left() + gutter_width + 1.0, content_rect.top()),
+            content_rect.right_bottom(),
+        );
+        Self {
+            viewport_rect,
+            content_rect,
+            text_clip_rect,
+            gutter_width,
+            total_width,
+            total_height,
+            max_scroll_x: (total_width - content_rect.width()).max(0.0),
+            max_scroll_y: (total_height - content_rect.height()).max(0.0),
+            row_height,
+            char_width: editor_char_width(ui),
+        }
+    }
+
+    fn nav_metrics(&self) -> VirtualNavMetrics {
+        VirtualNavMetrics {
+            row_height: self.row_height,
+            viewport_height: self.content_rect.height(),
+            text_clip_width: self.text_clip_rect.width(),
+            char_width: self.char_width,
+            max_scroll_x: self.max_scroll_x,
+            max_scroll_y: self.max_scroll_y,
+        }
+    }
+
+    fn viewport(&self, scroll_x: f32, scroll_y: f32) -> VirtualViewport {
+        VirtualViewport {
+            content_rect: self.content_rect,
+            text_clip_rect: self.text_clip_rect,
+            text_left: self.content_rect.left() + self.gutter_width + 8.0 - scroll_x,
+            row_height: self.row_height,
+            char_width: self.char_width,
+            scroll_x,
+            scroll_y,
+        }
+    }
+}
+
+/// What `paint_virtual_body` draws from.
+struct VirtualBodyFrame<'a> {
+    layout: &'a VirtualLayout,
+    viewport: &'a VirtualViewport,
+    line_index: &'a LineIndex,
+    visible_range: std::ops::Range<usize>,
+    current_line: Option<u32>,
+    tab_width: usize,
+    bookmark_lines: &'a [u32],
+    text_edit_id: egui::Id,
+    line_style: VirtualLineStyle<'a>,
+    highlight_line_span_ranges: &'a [std::ops::Range<usize>],
 }
 
 /// One frame's numbers for the performance report.
