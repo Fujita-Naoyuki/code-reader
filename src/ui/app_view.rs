@@ -105,6 +105,7 @@ use editor_pane::*;
 use editor_style::*;
 use fonts::*;
 use git_history_view::*;
+use git_windows::*;
 use lsp::*;
 use markdown_render::*;
 use markdown_view::*;
@@ -929,15 +930,6 @@ impl eframe::App for CodeReaderApp {
     }
 }
 
-#[derive(Debug, Clone)]
-struct GitCommitDetailsWindow {
-    repository_name: String,
-    root: PathBuf,
-    commit: GitCommitNode,
-    files: Vec<GitCommitFileChange>,
-    error: Option<String>,
-}
-
 /// What to do once the user has saved or discarded unsaved edits.
 enum UnsavedChangesAction {
     ReplaceEditor {
@@ -948,14 +940,6 @@ enum UnsavedChangesAction {
     },
     SwitchSession(String),
     CreateSession,
-}
-
-#[derive(Debug, Clone)]
-struct GitDiscardRequest {
-    repository_root: PathBuf,
-    repository_name: String,
-    path: String,
-    untracked: bool,
 }
 
 impl WorkspaceGitStatus {

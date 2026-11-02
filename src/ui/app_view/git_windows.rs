@@ -474,3 +474,20 @@ impl CodeReaderApp {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub(super) struct GitCommitDetailsWindow {
+    pub(super) repository_name: String,
+    pub(super) root: PathBuf,
+    pub(super) commit: GitCommitNode,
+    pub(super) files: Vec<GitCommitFileChange>,
+    pub(super) error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct GitDiscardRequest {
+    pub(super) repository_root: PathBuf,
+    pub(super) repository_name: String,
+    pub(super) path: String,
+    pub(super) untracked: bool,
+}
