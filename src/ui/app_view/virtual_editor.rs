@@ -3,21 +3,49 @@
 
 use super::*;
 
+/// What every line of a large file is laid out with this frame.
+#[derive(Clone, Copy)]
+pub(super) struct VirtualLineStyle<'a> {
+    pub(super) source_len: usize,
+    pub(super) source_hash: u64,
+    pub(super) highlight_spans: &'a [HighlightSpan],
+    pub(super) highlights: LineHighlights<'a>,
+}
+
+/// The arguments of `virtual_source_editor_ui` that come from the pane's frame.
+pub(super) struct VirtualSourceFrame<'a> {
+    pub(super) language_registry: &'a LanguageRegistry,
+    pub(super) tab_width: usize,
+    pub(super) source_len: usize,
+    pub(super) source_hash: u64,
+    pub(super) search_matches: Rc<Vec<SourceSearchMatch>>,
+    pub(super) active_search_match: Option<usize>,
+    pub(super) pending_position: Option<Position>,
+    pub(super) bookmark_lines: &'a [u32],
+}
+
 impl EditorPane {
     pub(super) fn cached_virtual_line_galley(
         &mut self,
         ui: &egui::Ui,
         line_number: usize,
         line_info: LineInfo,
-        source_len: usize,
-        source_hash: u64,
-        highlight_spans: &[HighlightSpan],
+        style: &VirtualLineStyle<'_>,
         highlight_line_span_range: std::ops::Range<usize>,
-        bracket_pair: Option<(usize, usize)>,
-        source_search_matches: &[SourceSearchMatch],
-        active_source_search_match: Option<usize>,
         frame_counters: Option<&mut VirtualFrameCounters>,
     ) -> Arc<egui::Galley> {
+        let VirtualLineStyle {
+            source_len,
+            source_hash,
+            highlight_spans,
+            highlights,
+        } = *style;
+        let LineHighlights {
+            bracket_pair,
+            search_matches: source_search_matches,
+            ..
+        } = highlights;
+
         let mut frame_counters = frame_counters;
         let can_cache = source_search_matches.is_empty()
             && !line_contains_bracket_pair(line_info, bracket_pair);
@@ -67,9 +95,7 @@ impl EditorPane {
             line_info,
             highlight_spans,
             highlight_line_span_range,
-            bracket_pair,
-            source_search_matches,
-            active_source_search_match,
+            highlights,
         );
         job.wrap.max_width = f32::INFINITY;
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
@@ -96,8 +122,7 @@ impl EditorPane {
         line_number: usize,
         line_count: usize,
         active: bool,
-        inactive_color: Color32,
-        active_color: Color32,
+        (inactive_color, active_color): (Color32, Color32),
         frame_counters: Option<&mut VirtualFrameCounters>,
     ) -> Arc<egui::Galley> {
         let mut frame_counters = frame_counters;
@@ -160,15 +185,19 @@ impl EditorPane {
         ui: &mut egui::Ui,
         focused: bool,
         text_edit_id: egui::Id,
-        language_registry: &LanguageRegistry,
-        tab_width: usize,
-        mut source_len: usize,
-        mut source_hash: u64,
-        source_search_matches: Rc<Vec<SourceSearchMatch>>,
-        active_source_search_match: Option<usize>,
-        pending_position: Option<Position>,
-        bookmark_lines: &[u32],
+        frame: VirtualSourceFrame<'_>,
     ) {
+        let VirtualSourceFrame {
+            language_registry,
+            tab_width,
+            mut source_len,
+            mut source_hash,
+            search_matches: source_search_matches,
+            active_search_match: active_source_search_match,
+            pending_position,
+            bookmark_lines,
+        } = frame;
+
         let total_start = Instant::now();
         let scroll_before_y = self.scroll.y;
         if !focused {
@@ -288,18 +317,29 @@ impl EditorPane {
         );
         let text_painter = ui.painter_at(text_clip_rect);
         let text_left = content_left + gutter_width + 8.0 - self.scroll.x;
+        let viewport = VirtualViewport {
+            content_rect,
+            text_clip_rect,
+            text_left,
+            row_height,
+            char_width,
+            scroll_x: self.scroll.x,
+            scroll_y: self.scroll.y,
+        };
 
         if self.handle_virtual_navigation_input(
             ui,
             focused,
             text_edit_id,
             line_index.as_ref(),
-            row_height,
-            content_rect.height(),
-            text_clip_rect.width(),
-            char_width,
-            max_scroll_x,
-            max_scroll_y,
+            &VirtualNavMetrics {
+                row_height,
+                viewport_height: content_rect.height(),
+                text_clip_width: text_clip_rect.width(),
+                char_width,
+                max_scroll_x,
+                max_scroll_y,
+            },
         ) {
             current_line = self.cursor_position.map(|position| position.line);
             response.request_focus();
@@ -307,18 +347,17 @@ impl EditorPane {
             ui.ctx().request_repaint();
         }
 
-        if let Some((anchor, head)) = virtual_editor_drag_selection(
-            ui,
-            &response,
-            line_index.as_ref(),
-            &self.text,
-            content_rect,
-            text_clip_rect,
-            text_left,
-            row_height,
-            self.scroll.y,
-            char_width,
-        ) {
+        // Navigation may have scrolled to keep the cursor visible.
+        let viewport = VirtualViewport {
+            scroll_x: self.scroll.x,
+            scroll_y: self.scroll.y,
+            text_left: content_left + gutter_width + 8.0 - self.scroll.x,
+            ..viewport
+        };
+        let text_left = viewport.text_left;
+        if let Some((anchor, head)) =
+            virtual_editor_drag_selection(ui, &response, line_index.as_ref(), &self.text, &viewport)
+        {
             self.virtual_editor.selection = Some(VirtualTextSelection { anchor, head });
             self.cursor_position = Some(head);
             self.virtual_editor.ime_preedit = None;
@@ -334,11 +373,7 @@ impl EditorPane {
             &response,
             text_edit_id,
             focused,
-            content_rect,
-            text_clip_rect,
-            self.scroll.x,
-            self.scroll.y,
-            row_height,
+            &viewport,
             line_count,
             visible_range.clone(),
         );
@@ -446,10 +481,7 @@ impl EditorPane {
                 visible_range.clone(),
                 tab_width,
                 current_line,
-                text_left,
-                row_height,
-                self.scroll.y,
-                text_clip_rect,
+                &viewport,
             );
         }
 
@@ -461,14 +493,19 @@ impl EditorPane {
                 .selection
                 .and_then(|selection| selection.normalized()),
             visible_range.clone(),
-            text_left,
-            text_clip_rect,
-            row_height,
-            self.scroll.y,
-            char_width,
-            content_rect,
+            &viewport,
         );
 
+        let line_style = VirtualLineStyle {
+            source_len,
+            source_hash,
+            highlight_spans: highlight_spans.as_slice(),
+            highlights: LineHighlights {
+                bracket_pair,
+                search_matches: source_search_matches.as_slice(),
+                active_search_match: active_source_search_match,
+            },
+        };
         for line_number in visible_range {
             let Some(line_info) = line_index.line(line_number) else {
                 continue;
@@ -514,8 +551,7 @@ impl EditorPane {
                 line_number,
                 line_count,
                 is_current_line,
-                inactive_color,
-                active_color,
+                (inactive_color, active_color),
                 Some(&mut frame_counters),
             );
             painter.galley(
@@ -535,16 +571,11 @@ impl EditorPane {
                 ui,
                 line_number,
                 line_info,
-                source_len,
-                source_hash,
-                highlight_spans.as_slice(),
+                &line_style,
                 highlight_line_span_ranges
                     .get(line_number)
                     .cloned()
                     .unwrap_or(0..0),
-                bracket_pair,
-                source_search_matches.as_slice(),
-                active_source_search_match,
                 Some(&mut frame_counters),
             );
             text_painter.galley(
@@ -560,12 +591,7 @@ impl EditorPane {
             &self.text,
             self.cursor_position,
             visible_start..visible_end,
-            text_left,
-            text_clip_rect,
-            row_height,
-            self.scroll.y,
-            char_width,
-            content_rect,
+            &viewport,
         );
         if focused
             && !self.read_only()
@@ -603,12 +629,7 @@ impl EditorPane {
             &self.text,
             self.cursor_position,
             visible_start..visible_end,
-            text_left,
-            text_clip_rect,
-            row_height,
-            self.scroll.y,
-            char_width,
-            content_rect,
+            &viewport,
         );
 
         painter.line_segment(
@@ -757,19 +778,15 @@ pub(super) struct VirtualEditorClickInput {
     pub(super) event: Option<VirtualClickEventDebug>,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn virtual_editor_drag_selection(
     ui: &egui::Ui,
     response: &egui::Response,
     line_index: &LineIndex,
     text: &EditorTextBuffer,
-    viewport_rect: egui::Rect,
-    text_clip_rect: egui::Rect,
-    text_left: f32,
-    row_height: f32,
-    scroll_y: f32,
-    char_width: f32,
+    viewport: &VirtualViewport,
 ) -> Option<(Position, Position)> {
+    let viewport_rect = viewport.content_rect;
+
     if !(response.drag_started_by(egui::PointerButton::Primary)
         || response.dragged_by(egui::PointerButton::Primary))
     {
@@ -788,30 +805,9 @@ pub(super) fn virtual_editor_drag_selection(
         return None;
     }
 
-    let anchor = virtual_pointer_to_text_position(
-        Some(ui),
-        press_origin,
-        line_index,
-        text,
-        viewport_rect,
-        text_clip_rect,
-        text_left,
-        row_height,
-        scroll_y,
-        char_width,
-    )?;
-    let head = virtual_pointer_to_text_position(
-        Some(ui),
-        pointer_pos,
-        line_index,
-        text,
-        viewport_rect,
-        text_clip_rect,
-        text_left,
-        row_height,
-        scroll_y,
-        char_width,
-    )?;
+    let anchor =
+        virtual_pointer_to_text_position(Some(ui), press_origin, line_index, text, viewport)?;
+    let head = virtual_pointer_to_text_position(Some(ui), pointer_pos, line_index, text, viewport)?;
     Some((anchor, head))
 }
 
@@ -834,20 +830,24 @@ pub(super) fn visual_column_for_position(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn virtual_editor_click_input(
     ui: &egui::Ui,
     response: &egui::Response,
     text_edit_id: egui::Id,
     pane_focused: bool,
-    viewport_rect: egui::Rect,
-    text_clip_rect: egui::Rect,
-    scroll_x: f32,
-    scroll_y: f32,
-    row_height: f32,
+    viewport: &VirtualViewport,
     line_count: usize,
     visible_range: std::ops::Range<usize>,
 ) -> VirtualEditorClickInput {
+    let VirtualViewport {
+        content_rect: viewport_rect,
+        text_clip_rect,
+        scroll_x,
+        scroll_y,
+        row_height,
+        ..
+    } = *viewport;
+
     let response_pointer_pos = response.interact_pointer_pos();
     let response_clicked = response.clicked();
     let response_primary_clicked = response.clicked_by(egui::PointerButton::Primary);
@@ -964,19 +964,23 @@ pub(super) fn virtual_editor_click_input(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn virtual_pointer_to_text_position(
     ui: Option<&egui::Ui>,
     pointer_pos: egui::Pos2,
     line_index: &LineIndex,
     text: &EditorTextBuffer,
-    viewport_rect: egui::Rect,
-    text_clip_rect: egui::Rect,
-    text_left: f32,
-    row_height: f32,
-    scroll_y: f32,
-    char_width: f32,
+    viewport: &VirtualViewport,
 ) -> Option<Position> {
+    let VirtualViewport {
+        content_rect: viewport_rect,
+        text_clip_rect,
+        text_left,
+        row_height,
+        scroll_y,
+        char_width,
+        ..
+    } = *viewport;
+
     let line_count = line_index.line_count();
     if line_count == 0 {
         return None;
@@ -1196,12 +1200,15 @@ mod tests {
                 egui::pos2(80.0, 37.0),
                 &line_index,
                 &buffer,
-                viewport,
-                text_clip,
-                50.0,
-                17.0,
-                17.0,
-                10.0,
+                &VirtualViewport {
+                    content_rect: viewport,
+                    text_clip_rect: text_clip,
+                    text_left: 50.0,
+                    row_height: 17.0,
+                    char_width: 10.0,
+                    scroll_x: 0.0,
+                    scroll_y: 17.0,
+                }
             ),
             Some(Position::new(2, 3))
         );

@@ -411,14 +411,16 @@ impl EditorPane {
                 ui,
                 focused,
                 text_edit_id,
-                language_registry,
-                tab_width,
-                source_len,
-                source_hash,
-                source_search_matches,
-                active_source_search_match,
-                pending_position,
-                bookmark_lines,
+                VirtualSourceFrame {
+                    language_registry: language_registry,
+                    tab_width: tab_width,
+                    source_len: source_len,
+                    source_hash: source_hash,
+                    search_matches: source_search_matches,
+                    active_search_match: active_source_search_match,
+                    pending_position: pending_position,
+                    bookmark_lines: bookmark_lines,
+                },
             );
             return;
         }

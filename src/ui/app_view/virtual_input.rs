@@ -3,6 +3,17 @@
 
 use super::*;
 
+/// What keyboard movement needs to keep the cursor in view.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct VirtualNavMetrics {
+    pub(super) row_height: f32,
+    pub(super) viewport_height: f32,
+    pub(super) text_clip_width: f32,
+    pub(super) char_width: f32,
+    pub(super) max_scroll_x: f32,
+    pub(super) max_scroll_y: f32,
+}
+
 impl EditorPane {
     pub(super) fn has_virtual_text_selection(&self) -> bool {
         self.virtual_editor
@@ -75,12 +86,7 @@ impl EditorPane {
         focused: bool,
         text_edit_id: egui::Id,
         line_index: &LineIndex,
-        row_height: f32,
-        viewport_height: f32,
-        text_clip_width: f32,
-        char_width: f32,
-        max_scroll_x: f32,
-        max_scroll_y: f32,
+        metrics: &VirtualNavMetrics,
     ) -> bool {
         if !focused || !virtual_editor_can_handle_key(ui, text_edit_id) || self.source_search.open {
             return false;
@@ -90,16 +96,7 @@ impl EditorPane {
             return false;
         };
 
-        self.apply_virtual_navigation(
-            command,
-            line_index,
-            row_height,
-            viewport_height,
-            text_clip_width,
-            char_width,
-            max_scroll_x,
-            max_scroll_y,
-        )
+        self.apply_virtual_navigation(command, line_index, metrics)
     }
 
     pub(super) fn consume_virtual_ime_input(
@@ -247,13 +244,15 @@ impl EditorPane {
         &mut self,
         command: VirtualNavigationCommand,
         line_index: &LineIndex,
-        row_height: f32,
-        viewport_height: f32,
-        text_clip_width: f32,
-        char_width: f32,
-        max_scroll_x: f32,
-        max_scroll_y: f32,
+        metrics: &VirtualNavMetrics,
     ) -> bool {
+        let VirtualNavMetrics {
+            row_height,
+            viewport_height,
+            max_scroll_y,
+            ..
+        } = *metrics;
+
         if line_index.line_count() == 0 {
             self.cursor_position = Some(Position::new(0, 0));
             self.virtual_editor.selection = None;
@@ -302,15 +301,7 @@ impl EditorPane {
                     head: end,
                 });
                 self.virtual_editor.ime_preedit = None;
-                self.ensure_virtual_cursor_visible(
-                    line_index,
-                    row_height,
-                    viewport_height,
-                    text_clip_width,
-                    char_width,
-                    max_scroll_x,
-                    max_scroll_y,
-                );
+                self.ensure_virtual_cursor_visible(line_index, metrics);
                 self.target_position = None;
                 return true;
             }
@@ -331,15 +322,7 @@ impl EditorPane {
             self.virtual_editor.selection = None;
         }
         self.virtual_editor.ime_preedit = None;
-        self.ensure_virtual_cursor_visible(
-            line_index,
-            row_height,
-            viewport_height,
-            text_clip_width,
-            char_width,
-            max_scroll_x,
-            max_scroll_y,
-        );
+        self.ensure_virtual_cursor_visible(line_index, metrics);
         self.target_position = None;
         true
     }
@@ -347,13 +330,17 @@ impl EditorPane {
     pub(super) fn ensure_virtual_cursor_visible(
         &mut self,
         line_index: &LineIndex,
-        row_height: f32,
-        viewport_height: f32,
-        text_clip_width: f32,
-        char_width: f32,
-        max_scroll_x: f32,
-        max_scroll_y: f32,
+        metrics: &VirtualNavMetrics,
     ) {
+        let VirtualNavMetrics {
+            row_height,
+            viewport_height,
+            text_clip_width,
+            char_width,
+            max_scroll_x,
+            max_scroll_y,
+        } = *metrics;
+
         let Some(position) = self.cursor_position else {
             return;
         };
@@ -1238,12 +1225,14 @@ mod tests {
                 extend_selection: false,
             },
             line_index.as_ref(),
-            17.0,
-            170.0,
-            200.0,
-            10.0,
-            0.0,
-            1000.0,
+            &VirtualNavMetrics {
+                row_height: 17.0,
+                viewport_height: 170.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 1000.0,
+            }
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(1, 0)));
 
@@ -1253,12 +1242,14 @@ mod tests {
                 extend_selection: false,
             },
             line_index.as_ref(),
-            17.0,
-            170.0,
-            200.0,
-            10.0,
-            0.0,
-            1000.0,
+            &VirtualNavMetrics {
+                row_height: 17.0,
+                viewport_height: 170.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 1000.0,
+            }
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(0, 2)));
     }
@@ -1276,12 +1267,14 @@ mod tests {
                 extend_selection: true,
             },
             line_index.as_ref(),
-            17.0,
-            170.0,
-            200.0,
-            10.0,
-            0.0,
-            1000.0,
+            &VirtualNavMetrics {
+                row_height: 17.0,
+                viewport_height: 170.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 1000.0,
+            }
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(0, 2)));
         assert_eq!(
@@ -1298,12 +1291,14 @@ mod tests {
                 extend_selection: true,
             },
             line_index.as_ref(),
-            17.0,
-            170.0,
-            200.0,
-            10.0,
-            0.0,
-            1000.0,
+            &VirtualNavMetrics {
+                row_height: 17.0,
+                viewport_height: 170.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 1000.0,
+            }
         ));
         assert_eq!(
             editor.virtual_editor.selection,
@@ -1327,12 +1322,14 @@ mod tests {
                 extend_selection: false,
             },
             line_index.as_ref(),
-            17.0,
-            170.0,
-            200.0,
-            10.0,
-            0.0,
-            1000.0,
+            &VirtualNavMetrics {
+                row_height: 17.0,
+                viewport_height: 170.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 1000.0,
+            }
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(0, 4)));
 
@@ -1342,12 +1339,14 @@ mod tests {
                 extend_selection: false,
             },
             line_index.as_ref(),
-            17.0,
-            170.0,
-            200.0,
-            10.0,
-            0.0,
-            1000.0,
+            &VirtualNavMetrics {
+                row_height: 17.0,
+                viewport_height: 170.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 1000.0,
+            }
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(0, 0)));
 
@@ -1357,12 +1356,14 @@ mod tests {
                 extend_selection: false,
             },
             line_index.as_ref(),
-            17.0,
-            170.0,
-            200.0,
-            10.0,
-            0.0,
-            1000.0,
+            &VirtualNavMetrics {
+                row_height: 17.0,
+                viewport_height: 170.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 1000.0,
+            }
         ));
         assert_eq!(
             editor.virtual_editor.selection,
@@ -1386,12 +1387,14 @@ mod tests {
                 extend_selection: false,
             },
             line_index.as_ref(),
-            10.0,
-            100.0,
-            200.0,
-            10.0,
-            0.0,
-            900.0,
+            &VirtualNavMetrics {
+                row_height: 10.0,
+                viewport_height: 100.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 900.0,
+            }
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(9, 0)));
         assert_eq!(editor.scroll.y, 90.0);
@@ -1402,12 +1405,14 @@ mod tests {
                 extend_selection: false,
             },
             line_index.as_ref(),
-            10.0,
-            100.0,
-            200.0,
-            10.0,
-            0.0,
-            900.0,
+            &VirtualNavMetrics {
+                row_height: 10.0,
+                viewport_height: 100.0,
+                text_clip_width: 200.0,
+                char_width: 10.0,
+                max_scroll_x: 0.0,
+                max_scroll_y: 900.0,
+            }
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(0, 0)));
         assert_eq!(editor.scroll.y, 0.0);

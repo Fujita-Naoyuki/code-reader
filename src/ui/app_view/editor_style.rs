@@ -300,9 +300,11 @@ pub(super) fn highlighted_layout_job(
                 cursor,
                 start,
                 default_format.clone(),
-                bracket_pair,
-                search_matches,
-                active_search_match,
+                LineHighlights {
+                    bracket_pair,
+                    search_matches,
+                    active_search_match,
+                },
                 ui,
             );
         }
@@ -313,9 +315,11 @@ pub(super) fn highlighted_layout_job(
             start,
             end,
             text_format(ui, Some(span.kind)),
-            bracket_pair,
-            search_matches,
-            active_search_match,
+            LineHighlights {
+                bracket_pair,
+                search_matches,
+                active_search_match,
+            },
             ui,
         );
         cursor = end;
@@ -328,9 +332,11 @@ pub(super) fn highlighted_layout_job(
             cursor,
             source.len(),
             default_format,
-            bracket_pair,
-            search_matches,
-            active_search_match,
+            LineHighlights {
+                bracket_pair,
+                search_matches,
+                active_search_match,
+            },
             ui,
         );
     }
@@ -344,11 +350,15 @@ pub(super) fn append_text_segment(
     start: usize,
     end: usize,
     format: TextFormat,
-    bracket_pair: Option<(usize, usize)>,
-    search_matches: &[SourceSearchMatch],
-    active_search_match: Option<usize>,
+    highlights: LineHighlights<'_>,
     ui: &egui::Ui,
 ) {
+    let LineHighlights {
+        bracket_pair,
+        search_matches,
+        active_search_match,
+    } = highlights;
+
     let mut cursor = start;
     while cursor < end {
         let mut next = end;

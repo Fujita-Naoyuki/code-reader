@@ -3,6 +3,27 @@
 
 use super::*;
 
+/// Where the large-file editor's text sits on screen this frame.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct VirtualViewport {
+    /// The text area without the scrollbars.
+    pub(super) content_rect: egui::Rect,
+    pub(super) text_clip_rect: egui::Rect,
+    pub(super) text_left: f32,
+    pub(super) row_height: f32,
+    pub(super) char_width: f32,
+    pub(super) scroll_x: f32,
+    pub(super) scroll_y: f32,
+}
+
+/// The brackets and search matches a line's layout has to mark.
+#[derive(Clone, Copy)]
+pub(super) struct LineHighlights<'a> {
+    pub(super) bracket_pair: Option<(usize, usize)>,
+    pub(super) search_matches: &'a [SourceSearchMatch],
+    pub(super) active_search_match: Option<usize>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct VirtualScrollbarLayout {
     pub(super) content_rect: egui::Rect,
@@ -55,11 +76,16 @@ pub(super) fn paint_virtual_indent_guides(
     visible_range: std::ops::Range<usize>,
     tab_width: usize,
     current_line: Option<u32>,
-    text_left: f32,
-    row_height: f32,
-    scroll_y: f32,
-    clip_rect: egui::Rect,
+    viewport: &VirtualViewport,
 ) {
+    let VirtualViewport {
+        text_clip_rect: clip_rect,
+        text_left,
+        row_height,
+        scroll_y,
+        ..
+    } = *viewport;
+
     let guide_lines =
         virtual_indent_guide_lines(line_index, text, visible_range, tab_width, current_line);
     let max_guide_count = guide_lines
@@ -96,8 +122,7 @@ pub(super) fn paint_virtual_indent_guides(
                 paint_virtual_indent_guide_run(
                     &painter,
                     x,
-                    start,
-                    end,
+                    start..end,
                     row_height,
                     scroll_y,
                     clip_rect,
@@ -109,8 +134,7 @@ pub(super) fn paint_virtual_indent_guides(
                 paint_virtual_indent_guide_run(
                     &painter,
                     x,
-                    guide_line.line_number,
-                    guide_line.line_number,
+                    guide_line.line_number..guide_line.line_number,
                     row_height,
                     scroll_y,
                     clip_rect,
@@ -127,8 +151,7 @@ pub(super) fn paint_virtual_indent_guides(
             paint_virtual_indent_guide_run(
                 &painter,
                 x,
-                start,
-                end,
+                start..end,
                 row_height,
                 scroll_y,
                 clip_rect,
@@ -141,13 +164,14 @@ pub(super) fn paint_virtual_indent_guides(
 pub(super) fn paint_virtual_indent_guide_run(
     painter: &egui::Painter,
     x: f32,
-    start_line: usize,
-    end_line: usize,
+    lines: std::ops::Range<usize>,
     row_height: f32,
     scroll_y: f32,
     clip_rect: egui::Rect,
     color: Color32,
 ) {
+    let (start_line, end_line) = (lines.start, lines.end);
+
     let top = clip_rect.top() + start_line as f32 * row_height - scroll_y;
     let bottom = clip_rect.top() + (end_line + 1) as f32 * row_height - scroll_y;
     painter.line_segment(
@@ -165,13 +189,18 @@ pub(super) fn paint_virtual_selection(
     text: &EditorTextBuffer,
     selection: Option<NormalizedVirtualSelection>,
     visible_range: std::ops::Range<usize>,
-    text_left: f32,
-    text_clip_rect: egui::Rect,
-    row_height: f32,
-    scroll_y: f32,
-    char_width: f32,
-    viewport_rect: egui::Rect,
+    viewport: &VirtualViewport,
 ) {
+    let VirtualViewport {
+        content_rect: viewport_rect,
+        text_clip_rect,
+        text_left,
+        row_height,
+        char_width,
+        scroll_y,
+        ..
+    } = *viewport;
+
     let Some(selection) = selection else {
         return;
     };
@@ -230,25 +259,20 @@ pub(super) fn paint_virtual_cursor(
     text: &EditorTextBuffer,
     cursor_position: Option<Position>,
     visible_range: std::ops::Range<usize>,
-    text_left: f32,
-    text_clip_rect: egui::Rect,
-    row_height: f32,
-    scroll_y: f32,
-    char_width: f32,
-    viewport_rect: egui::Rect,
+    viewport: &VirtualViewport,
 ) {
+    let VirtualViewport {
+        content_rect: viewport_rect,
+        text_clip_rect,
+        ..
+    } = *viewport;
     let Some(rect) = virtual_cursor_rect(
         Some(ui),
         line_index,
         text,
         cursor_position,
         visible_range,
-        text_left,
-        text_clip_rect,
-        row_height,
-        scroll_y,
-        char_width,
-        viewport_rect,
+        viewport,
     ) else {
         return;
     };
@@ -266,13 +290,18 @@ pub(super) fn virtual_cursor_rect(
     text: &EditorTextBuffer,
     cursor_position: Option<Position>,
     visible_range: std::ops::Range<usize>,
-    text_left: f32,
-    text_clip_rect: egui::Rect,
-    row_height: f32,
-    scroll_y: f32,
-    char_width: f32,
-    viewport_rect: egui::Rect,
+    viewport: &VirtualViewport,
 ) -> Option<egui::Rect> {
+    let VirtualViewport {
+        content_rect: viewport_rect,
+        text_clip_rect,
+        text_left,
+        row_height,
+        char_width,
+        scroll_y,
+        ..
+    } = *viewport;
+
     let position = cursor_position?;
     let line_number = position.line as usize;
     if !visible_range.contains(&line_number) {
@@ -338,9 +367,7 @@ pub(super) fn highlighted_line_layout_job(
     line: LineInfo,
     spans: &[HighlightSpan],
     line_span_range: std::ops::Range<usize>,
-    bracket_pair: Option<(usize, usize)>,
-    search_matches: &[SourceSearchMatch],
-    active_search_match: Option<usize>,
+    highlights: LineHighlights<'_>,
 ) -> LayoutJob {
     let mut job = LayoutJob::default();
     let mut cursor = line.start;
@@ -363,9 +390,7 @@ pub(super) fn highlighted_line_layout_job(
                 cursor,
                 start,
                 default_format.clone(),
-                bracket_pair,
-                search_matches,
-                active_search_match,
+                highlights,
                 ui,
             );
         }
@@ -376,9 +401,7 @@ pub(super) fn highlighted_line_layout_job(
             start,
             end,
             text_format(ui, Some(span.kind)),
-            bracket_pair,
-            search_matches,
-            active_search_match,
+            highlights,
             ui,
         );
         cursor = end;
@@ -391,9 +414,7 @@ pub(super) fn highlighted_line_layout_job(
             cursor,
             line.content_end,
             default_format,
-            bracket_pair,
-            search_matches,
-            active_search_match,
+            highlights,
             ui,
         );
     }
