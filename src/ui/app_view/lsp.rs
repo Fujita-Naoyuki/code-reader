@@ -806,22 +806,6 @@ impl CodeReaderApp {
         message
     }
 
-    pub(super) fn status_bar_message(&self) -> String {
-        if self.status_message.contains("rust-analyzer") {
-            return self.status_message.clone();
-        }
-
-        let Some(rust_lsp_status) = self.rust_lsp_readiness_status_message() else {
-            return self.status_message.clone();
-        };
-
-        if self.status_message.is_empty() {
-            rust_lsp_status
-        } else {
-            format!("{} | {}", self.status_message, rust_lsp_status)
-        }
-    }
-
     pub(super) fn rust_lsp_readiness_status_message(&self) -> Option<String> {
         self.rust_lsp_client.as_ref()?;
         if !self.has_open_workspace_rust_document() && self.pending_rust_lsp_request.is_none() {

@@ -12,14 +12,16 @@ impl CodeReaderApp {
             Ok(result) => {
                 self.symbol_index = result.index;
                 self.bump_search_index_revision();
-                self.status_message =
-                    format!("Indexed {} workspace symbols.", self.symbol_index.len());
+                self.set_background_status(format!(
+                    "Indexed {} workspace symbols.",
+                    self.symbol_index.len()
+                ));
             }
             Err(mpsc::TryRecvError::Empty) => {
                 self.symbol_index_receiver = Some(receiver);
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.status_message = "Symbol indexing failed.".to_owned();
+                self.set_background_status("Symbol indexing failed.".to_owned());
             }
         }
     }

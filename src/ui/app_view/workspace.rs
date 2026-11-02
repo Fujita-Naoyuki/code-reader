@@ -294,7 +294,7 @@ impl CodeReaderApp {
         self.warm_up_rust_lsp_for_workspace();
         self.git_repositories_loaded = false;
         self.git_repositories.clear();
-        self.status_message = format!("Discovered {} files.", self.file_tree.files.len());
+        self.set_background_status(format!("Discovered {} files.", self.file_tree.files.len()));
     }
 
     pub(super) fn poll_workspace_changes(&mut self, context: &egui::Context) {

@@ -115,6 +115,7 @@ use panes::*;
 use search::*;
 use shortcuts::*;
 use source_editor::*;
+use status::*;
 use virtual_editor::*;
 use virtual_input::*;
 use workspace::*;
@@ -213,6 +214,7 @@ pub struct CodeReaderApp {
     show_right_pane: bool,
     recent_workspaces_open: bool,
     shortcuts_help_open: bool,
+    background_status: BackgroundStatus,
     ai_command_open: bool,
     workspace_root_open: HashMap<PathBuf, bool>,
     last_shift_down: bool,
@@ -334,6 +336,7 @@ impl CodeReaderApp {
             show_right_pane: false,
             recent_workspaces_open: false,
             shortcuts_help_open: false,
+            background_status: BackgroundStatus::default(),
             ai_command_open: false,
             workspace_root_open: HashMap::new(),
             last_shift_down: false,
@@ -547,6 +550,7 @@ impl eframe::App for CodeReaderApp {
             });
         });
 
+        self.track_operation_status();
         let status_message = self.status_bar_message();
         let status_shortcuts = self.status_bar_shortcuts();
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
@@ -976,6 +980,7 @@ mod search;
 mod sessions;
 mod shortcuts;
 mod source_editor;
+mod status;
 mod virtual_editor;
 mod virtual_input;
 mod workspace;

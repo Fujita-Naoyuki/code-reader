@@ -459,9 +459,15 @@ impl TestApp {
     }
 
     fn record_status(&mut self) {
-        let status = self.harness.state().status_message.clone();
-        if self.statuses.last() != Some(&status) {
-            self.statuses.push(status);
+        // Background notices count too: tests wait for "Indexed ..." and the like.
+        let app = self.harness.state();
+        for status in [
+            app.status_message.clone(),
+            app.background_status.message.clone(),
+        ] {
+            if !self.statuses.contains(&status) {
+                self.statuses.push(status);
+            }
         }
     }
 

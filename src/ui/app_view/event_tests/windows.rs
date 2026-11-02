@@ -346,3 +346,34 @@ fn ai_cmd_edits_report_save_failures() {
     t.fill_text_field(1, "codex");
     t.assert_status_containing("Failed to save state:");
 }
+
+#[test]
+fn background_notices_wait_until_the_action_result_is_old_enough() {
+    let mut t = TestApp::plain();
+    t.click_first("notes.txt");
+    t.ctrl(egui::Key::S);
+    t.wait_for_status("Indexed");
+    t.steps(2);
+    let saved = t.app().status_message.clone();
+    assert!(saved.starts_with("Saved file:"), "{saved}");
+
+    // A notice arriving right after the action does not replace its result.
+    t.app_mut()
+        .set_background_status("Indexed 7 workspace symbols.".to_owned());
+    t.steps(2);
+    assert_eq!(t.app().visible_status(), saved);
+
+    // Once the result is old enough, the newer notice shows.
+    let old = std::time::Instant::now()
+        - super::super::OPERATION_STATUS_HOLD
+        - std::time::Duration::from_secs(1);
+    t.app_mut().background_status.operation_changed_at = Some(old);
+    t.app_mut().background_status.changed_at = Some(std::time::Instant::now());
+    t.steps(2);
+    assert_eq!(t.app().visible_status(), "Indexed 7 workspace symbols.");
+
+    // Repeating the action shows its result again, though the text is the same.
+    t.ctrl(egui::Key::S);
+    t.steps(2);
+    assert_eq!(t.app().visible_status(), saved);
+}
