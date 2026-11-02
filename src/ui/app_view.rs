@@ -383,8 +383,8 @@ impl eframe::App for CodeReaderApp {
         self.poll_workspace_changes(ui.ctx());
         self.poll_symbol_index();
         self.poll_workspace_search(ui.ctx());
-        self.poll_go_lsp(ui.ctx());
-        self.poll_rust_lsp(ui.ctx());
+        self.poll_lsp(LspLanguage::Go, ui.ctx());
+        self.poll_lsp(LspLanguage::Rust, ui.ctx());
 
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
             self.shortcuts_help_open = true;

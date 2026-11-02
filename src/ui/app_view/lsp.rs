@@ -4,6 +4,13 @@
 use super::*;
 
 impl CodeReaderApp {
+    pub(super) fn lsp_mut(&mut self, language: LspLanguage) -> &mut LspSession {
+        match language {
+            LspLanguage::Go => &mut self.go_lsp,
+            LspLanguage::Rust => &mut self.rust_lsp,
+        }
+    }
+
     pub(super) fn go_to_definition(&mut self) {
         let editor = self.focused_editor();
         let Some(path) = editor.path().map(Path::to_path_buf) else {
@@ -30,10 +37,10 @@ impl CodeReaderApp {
         // Every registered language resolves definitions through its language server.
         match language.id().0 {
             "go" => {
-                self.request_go_lsp_definition(document, position, identifier);
+                self.request_lsp_definition(LspLanguage::Go, document, position, identifier);
             }
             "rust" => {
-                self.request_rust_lsp_definition(document, position, identifier);
+                self.request_lsp_definition(LspLanguage::Rust, document, position, identifier);
             }
             other => {
                 self.status_message = format!("Go to Definition is not available for {other}.");
@@ -41,361 +48,16 @@ impl CodeReaderApp {
         }
     }
 
-    pub(super) fn ensure_go_lsp_client(&mut self) {
-        if self.go_lsp.client.is_some() {
+    pub(super) fn ensure_lsp_client(&mut self, language: LspLanguage) {
+        if self.lsp_mut(language).client.is_some() {
             return;
         }
         let roots = self
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        self.go_lsp.client = Some(platform::current().start_lsp(LspServerConfig::go(roots)));
-        self.go_lsp.debug.last_status = "starting".to_owned();
-    }
-
-    pub(super) fn sync_open_go_documents_to_lsp(&mut self) {
-        let documents = [Pane::Left, Pane::Right]
-            .into_iter()
-            .filter_map(|pane| {
-                let editor = self.editor(pane);
-                let path = editor.path()?;
-                if !is_go_path(path) {
-                    return None;
-                }
-                Some(Document::new(
-                    path.to_path_buf(),
-                    editor.text.as_str().to_owned(),
-                ))
-            })
-            .collect::<Vec<_>>();
-
-        for document in documents {
-            self.sync_go_document_to_lsp(document);
-        }
-    }
-
-    pub(super) fn sync_go_document_to_lsp(&mut self, document: Document) {
-        let text_hash = stable_hash(document.text.as_str());
-        if self.go_lsp.synced_hashes.get(&document.path) == Some(&text_hash) {
-            return;
-        }
-
-        self.ensure_go_lsp_client();
-        let result = self
-            .go_lsp
-            .client
-            .as_mut()
-            .expect("Go LSP client is initialized")
-            .sync_document(document.clone());
-
-        match result {
-            Ok(request_id) => {
-                self.go_lsp
-                    .synced_hashes
-                    .insert(document.path.clone(), text_hash);
-                self.record_go_lsp_request_started(request_id, LspRequestKind::Sync);
-                self.go_lsp.debug.sync_count += 1;
-                self.go_lsp.debug.last_status = format!("sync_queued {}", document.path.display());
-            }
-            Err(error) => {
-                self.go_lsp.debug.last_status = "sync_queue_failed".to_owned();
-                self.go_lsp.debug.last_error = Some(error);
-            }
-        }
-    }
-
-    pub(super) fn record_go_lsp_request_started(
-        &mut self,
-        request_id: u64,
-        kind: LspRequestKind,
-    ) -> Instant {
-        let started_at = Instant::now();
-        self.go_lsp
-            .request_started_at
-            .insert(request_id, started_at);
-        self.go_lsp.debug.last_request_id = Some(request_id);
-        self.go_lsp.debug.last_kind = Some(kind);
-        started_at
-    }
-
-    pub(super) fn request_go_lsp_definition(
-        &mut self,
-        document: Document,
-        position: Position,
-        identifier: String,
-    ) -> bool {
-        self.ensure_go_lsp_client();
-        let origin = self.focused_editor().navigation_point();
-
-        let Some(client) = &mut self.go_lsp.client else {
-            return false;
-        };
-        match client.request_definition(document.clone(), position) {
-            Ok(request_id) => {
-                let started_at =
-                    self.record_go_lsp_request_started(request_id, LspRequestKind::Definition);
-                self.go_lsp.pending = Some(PendingLspRequest {
-                    request_id,
-                    kind: LspRequestKind::Definition,
-                    document,
-                    position,
-                    identifier: identifier.clone(),
-                    origin,
-                    started_at,
-                });
-                self.definition_candidates.clear();
-                self.location_list_kind = LocationListKind::Definitions;
-                self.go_lsp.debug.definition_count += 1;
-                self.go_lsp.debug.last_status = "definition_queued".to_owned();
-                self.go_lsp
-                    .debug
-                    .record_definition_status("definition_queued", None, None, 0);
-                self.status_message = format!("Resolving `{identifier}` with gopls...");
-                true
-            }
-            Err(error) => {
-                self.go_lsp.debug.last_status = "definition_queue_failed".to_owned();
-                self.go_lsp.debug.last_error = Some(error.clone());
-                self.go_lsp.debug.record_definition_status(
-                    "definition_queue_failed",
-                    Some(error.clone()),
-                    None,
-                    0,
-                );
-                self.definition_candidates.clear();
-                self.location_list_kind = LocationListKind::Definitions;
-                self.status_message = format!("Go LSP unavailable. ({error})");
-                false
-            }
-        }
-    }
-
-    pub(super) fn request_go_lsp_references(&mut self, pending: PendingLspRequest) -> bool {
-        let Some(client) = &mut self.go_lsp.client else {
-            return false;
-        };
-        match client.request_references(pending.document.clone(), pending.position) {
-            Ok(request_id) => {
-                let started_at =
-                    self.record_go_lsp_request_started(request_id, LspRequestKind::References);
-                let identifier = pending.identifier.clone();
-                self.go_lsp.pending = Some(PendingLspRequest {
-                    request_id,
-                    kind: LspRequestKind::References,
-                    document: pending.document,
-                    position: pending.position,
-                    identifier: identifier.clone(),
-                    origin: pending.origin,
-                    started_at,
-                });
-                self.go_lsp.debug.reference_count += 1;
-                self.go_lsp.debug.last_status = "references_queued".to_owned();
-                self.status_message =
-                    format!("Finding references for `{identifier}` with gopls...");
-                true
-            }
-            Err(error) => {
-                self.go_lsp.debug.last_status = "references_queue_failed".to_owned();
-                self.go_lsp.debug.last_error = Some(error.clone());
-                self.status_message = format!("Go references request failed. ({error})");
-                false
-            }
-        }
-    }
-
-    pub(super) fn poll_go_lsp(&mut self, context: &egui::Context) {
-        self.sync_open_go_documents_to_lsp();
-
-        let mut responses = Vec::new();
-        if let Some(client) = &self.go_lsp.client {
-            while let Some(event) = client.try_recv() {
-                match event {
-                    LspClientEvent::Response(response) => responses.push(response),
-                    LspClientEvent::ServerEvent(event) => {
-                        self.go_lsp.debug.record_server_event(&event);
-                    }
-                }
-            }
-        }
-
-        for response in responses {
-            self.handle_go_lsp_response(response);
-        }
-
-        let Some(pending) = self.go_lsp.pending.clone() else {
-            return;
-        };
-        if pending.started_at.elapsed() < GO_LSP_REQUEST_TIMEOUT {
-            context.request_repaint_after(Duration::from_millis(50));
-            return;
-        }
-
-        self.go_lsp.pending = None;
-        self.go_lsp.request_started_at.remove(&pending.request_id);
-        self.go_lsp.debug.timeout_count += 1;
-        self.go_lsp.debug.last_duration_ms =
-            Some(pending.started_at.elapsed().as_secs_f64() * 1000.0);
-        match pending.kind {
-            LspRequestKind::WarmUp => {}
-            LspRequestKind::Definition => {
-                self.go_lsp.debug.last_status = "definition_timeout".to_owned();
-                self.go_lsp.debug.last_location_count = 0;
-                self.go_lsp.debug.record_definition_status(
-                    "definition_timeout",
-                    None,
-                    self.go_lsp.debug.last_duration_ms,
-                    0,
-                );
-                self.definition_candidates.clear();
-                self.location_list_kind = LocationListKind::Definitions;
-                self.status_message = format!(
-                    "gopls timed out for `{}`. Wait a moment and retry F12.",
-                    pending.identifier
-                );
-            }
-            LspRequestKind::References => {
-                self.definition_candidates.clear();
-                self.close_references_overlay();
-                self.location_list_kind = LocationListKind::References;
-                self.go_lsp.debug.last_status = "references_timeout".to_owned();
-                self.status_message =
-                    format!("gopls references timed out for `{}`.", pending.identifier);
-            }
-            LspRequestKind::Sync => {}
-        }
-    }
-
-    pub(super) fn handle_go_lsp_response(&mut self, response: LspLocationResponse) {
-        if response.kind == LspRequestKind::Sync {
-            self.handle_go_lsp_sync_response(response);
-            return;
-        }
-
-        let Some(pending) = self.go_lsp.pending.clone() else {
-            return;
-        };
-        if response.request_id != pending.request_id || response.kind != pending.kind {
-            return;
-        }
-        self.go_lsp.pending = None;
-        let duration_ms = self
-            .go_lsp
-            .request_started_at
-            .remove(&response.request_id)
-            .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.go_lsp.debug.last_duration_ms = duration_ms;
-
-        let locations = match response.result {
-            Ok(locations) => {
-                self.go_lsp.debug.last_status = match response.kind {
-                    LspRequestKind::WarmUp => "warmup_ok",
-                    LspRequestKind::Definition => "definition_ok",
-                    LspRequestKind::References => "references_ok",
-                    LspRequestKind::Sync => "sync_ok",
-                }
-                .to_owned();
-                self.go_lsp.debug.last_error = None;
-                self.go_lsp.debug.last_location_count = locations.len();
-                if response.kind == LspRequestKind::Definition {
-                    self.go_lsp.debug.record_definition_status(
-                        "definition_ok",
-                        None,
-                        duration_ms,
-                        locations.len(),
-                    );
-                }
-                locations
-            }
-            Err(error) => {
-                self.go_lsp.debug.last_error = Some(error.clone());
-                self.go_lsp.debug.last_status = match response.kind {
-                    LspRequestKind::WarmUp => "warmup_failed",
-                    LspRequestKind::Definition => "definition_failed",
-                    LspRequestKind::References => "references_failed",
-                    LspRequestKind::Sync => "sync_failed",
-                }
-                .to_owned();
-                if pending.kind == LspRequestKind::Definition {
-                    self.go_lsp.debug.record_definition_status(
-                        "definition_failed",
-                        Some(error.clone()),
-                        duration_ms,
-                        0,
-                    );
-                }
-                self.definition_candidates.clear();
-                self.close_references_overlay();
-                self.location_list_kind = LocationListKind::Definitions;
-                self.status_message =
-                    format!("Go LSP failed for `{}`. ({error})", pending.identifier);
-                return;
-            }
-        };
-
-        match pending.kind {
-            LspRequestKind::Definition => {
-                if locations.len() == 1
-                    && location_contains_position(
-                        &locations[0],
-                        &pending.document.path,
-                        pending.position,
-                    )
-                    && self.request_go_lsp_references(pending.clone())
-                {
-                    return;
-                }
-                self.handle_locations_with_origin(
-                    &pending.identifier,
-                    locations,
-                    LocationListKind::Definitions,
-                    pending.origin.clone(),
-                );
-            }
-            LspRequestKind::References => {
-                self.handle_locations_with_origin(
-                    &pending.identifier,
-                    locations,
-                    LocationListKind::References,
-                    pending.origin.clone(),
-                );
-            }
-            LspRequestKind::WarmUp => {}
-            LspRequestKind::Sync => {}
-        }
-    }
-
-    pub(super) fn handle_go_lsp_sync_response(&mut self, response: LspLocationResponse) {
-        self.go_lsp.debug.last_duration_ms = self
-            .go_lsp
-            .request_started_at
-            .remove(&response.request_id)
-            .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.go_lsp.debug.last_request_id = Some(response.request_id);
-        self.go_lsp.debug.last_kind = Some(response.kind);
-        match response.result {
-            Ok(locations) => {
-                self.go_lsp.debug.last_status = "sync_ok".to_owned();
-                self.go_lsp.debug.last_error = None;
-                self.go_lsp.debug.last_location_count = locations.len();
-            }
-            Err(error) => {
-                self.go_lsp.debug.last_status = "sync_failed".to_owned();
-                self.go_lsp.debug.last_error = Some(error);
-            }
-        }
-    }
-
-    pub(super) fn ensure_rust_lsp_client(&mut self) {
-        if self.rust_lsp.client.is_some() {
-            return;
-        }
-        let roots = self
-            .current_session()
-            .map(|session| session.root_folders.clone())
-            .unwrap_or_default();
-        self.rust_lsp.client =
-            Some(platform::current().start_lsp(LspServerConfig::rust_analyzer(roots)));
-        self.rust_lsp.debug.mark_started();
+        self.lsp_mut(language).client = Some(platform::current().start_lsp(language.config(roots)));
+        self.lsp_mut(language).debug.mark_started();
     }
 
     pub(super) fn warm_up_rust_lsp_for_workspace(&mut self) {
@@ -403,14 +65,18 @@ impl CodeReaderApp {
             return;
         }
 
-        self.ensure_rust_lsp_client();
+        self.ensure_lsp_client(LspLanguage::Rust);
         let Some(client) = &mut self.rust_lsp.client else {
             return;
         };
 
         match client.warm_up() {
             Ok(request_id) => {
-                self.record_rust_lsp_request_started(request_id, LspRequestKind::WarmUp);
+                self.record_lsp_request_started(
+                    LspLanguage::Rust,
+                    request_id,
+                    LspRequestKind::WarmUp,
+                );
                 self.rust_lsp.debug.warmup_count += 1;
                 self.rust_lsp.debug.last_status = "warmup_queued".to_owned();
             }
@@ -428,13 +94,13 @@ impl CodeReaderApp {
             .any(|path| is_rust_path(path) && !is_external_rust_path(path))
     }
 
-    pub(super) fn sync_open_rust_documents_to_lsp(&mut self) {
+    pub(super) fn sync_open_documents_to_lsp(&mut self, language: LspLanguage) {
         let documents = [Pane::Left, Pane::Right]
             .into_iter()
             .filter_map(|pane| {
                 let editor = self.editor(pane);
                 let path = editor.path()?;
-                if !is_rust_path(path) || is_external_rust_path(path) {
+                if !language.syncs_path(path) {
                     return None;
                 }
                 Some(Document::new(
@@ -445,72 +111,77 @@ impl CodeReaderApp {
             .collect::<Vec<_>>();
 
         for document in documents {
-            self.sync_rust_document_to_lsp(document);
+            self.sync_document_to_lsp(language, document);
         }
     }
 
-    pub(super) fn sync_rust_document_to_lsp(&mut self, document: Document) {
+    pub(super) fn sync_document_to_lsp(&mut self, language: LspLanguage, document: Document) {
         let text_hash = stable_hash(document.text.as_str());
-        if self.rust_lsp.synced_hashes.get(&document.path) == Some(&text_hash) {
+        if self.lsp_mut(language).synced_hashes.get(&document.path) == Some(&text_hash) {
             return;
         }
 
-        self.ensure_rust_lsp_client();
+        self.ensure_lsp_client(language);
         let result = self
-            .rust_lsp
+            .lsp_mut(language)
             .client
             .as_mut()
-            .expect("Rust LSP client is initialized")
+            .expect("LSP client is initialized")
             .sync_document(document.clone());
 
         match result {
             Ok(request_id) => {
-                self.rust_lsp
+                self.lsp_mut(language)
                     .synced_hashes
                     .insert(document.path.clone(), text_hash);
-                self.record_rust_lsp_request_started(request_id, LspRequestKind::Sync);
-                self.rust_lsp.debug.sync_count += 1;
-                self.rust_lsp.debug.last_status =
+                self.record_lsp_request_started(language, request_id, LspRequestKind::Sync);
+                self.lsp_mut(language).debug.sync_count += 1;
+                self.lsp_mut(language).debug.last_status =
                     format!("sync_queued {}", document.path.display());
             }
             Err(error) => {
-                self.rust_lsp.debug.last_status = "sync_queue_failed".to_owned();
-                self.rust_lsp.debug.last_error = Some(error);
+                self.lsp_mut(language).debug.last_status = "sync_queue_failed".to_owned();
+                self.lsp_mut(language).debug.last_error = Some(error);
             }
         }
     }
 
-    pub(super) fn record_rust_lsp_request_started(
+    pub(super) fn record_lsp_request_started(
         &mut self,
+        language: LspLanguage,
         request_id: u64,
         kind: LspRequestKind,
     ) -> Instant {
         let started_at = Instant::now();
-        self.rust_lsp
+        self.lsp_mut(language)
             .request_started_at
             .insert(request_id, started_at);
-        self.rust_lsp.debug.last_request_id = Some(request_id);
-        self.rust_lsp.debug.last_kind = Some(kind);
+        self.lsp_mut(language).debug.last_request_id = Some(request_id);
+        self.lsp_mut(language).debug.last_kind = Some(kind);
         started_at
     }
 
-    pub(super) fn request_rust_lsp_definition(
+    pub(super) fn request_lsp_definition(
         &mut self,
+        language: LspLanguage,
         document: Document,
         position: Position,
         identifier: String,
     ) -> bool {
-        self.ensure_rust_lsp_client();
+        self.ensure_lsp_client(language);
         let origin = self.focused_editor().navigation_point();
 
-        let Some(client) = &mut self.rust_lsp.client else {
+        let Some(client) = &mut self.lsp_mut(language).client else {
             return false;
         };
         match client.request_definition(document.clone(), position) {
             Ok(request_id) => {
-                let started_at =
-                    self.record_rust_lsp_request_started(request_id, LspRequestKind::Definition);
-                self.rust_lsp.pending = Some(PendingLspRequest {
+                let started_at = self.record_lsp_request_started(
+                    language,
+                    request_id,
+                    LspRequestKind::Definition,
+                );
+                self.lsp_mut(language).pending = Some(PendingLspRequest {
                     request_id,
                     kind: LspRequestKind::Definition,
                     document,
@@ -521,39 +192,52 @@ impl CodeReaderApp {
                 });
                 self.definition_candidates.clear();
                 self.location_list_kind = LocationListKind::Definitions;
-                self.rust_lsp.debug.definition_count += 1;
-                self.rust_lsp.debug.last_status = "definition_queued".to_owned();
-                self.rust_lsp
-                    .debug
-                    .record_definition_status("definition_queued", None, None, 0);
-                self.status_message = format!("Resolving `{identifier}` with rust-analyzer...");
+                self.lsp_mut(language).debug.definition_count += 1;
+                self.lsp_mut(language).debug.last_status = "definition_queued".to_owned();
+                self.lsp_mut(language).debug.record_definition_status(
+                    "definition_queued",
+                    None,
+                    None,
+                    0,
+                );
+                self.status_message = format!(
+                    "Resolving `{identifier}` with {}...",
+                    language.server_name()
+                );
                 true
             }
             Err(error) => {
-                self.rust_lsp.debug.last_status = "definition_queue_failed".to_owned();
-                self.rust_lsp.debug.last_error = Some(error.clone());
-                self.rust_lsp.debug.record_definition_status(
+                self.lsp_mut(language).debug.last_status = "definition_queue_failed".to_owned();
+                self.lsp_mut(language).debug.last_error = Some(error.clone());
+                self.lsp_mut(language).debug.record_definition_status(
                     "definition_queue_failed",
                     Some(error.clone()),
                     None,
                     0,
                 );
-                self.status_message = format!("Rust LSP unavailable. ({error})");
+                self.status_message = format!("{} LSP unavailable. ({error})", language.label());
                 false
             }
         }
     }
 
-    pub(super) fn request_rust_lsp_references(&mut self, pending: PendingLspRequest) -> bool {
-        let Some(client) = &mut self.rust_lsp.client else {
+    pub(super) fn request_lsp_references(
+        &mut self,
+        language: LspLanguage,
+        pending: PendingLspRequest,
+    ) -> bool {
+        let Some(client) = &mut self.lsp_mut(language).client else {
             return false;
         };
         match client.request_references(pending.document.clone(), pending.position) {
             Ok(request_id) => {
-                let started_at =
-                    self.record_rust_lsp_request_started(request_id, LspRequestKind::References);
+                let started_at = self.record_lsp_request_started(
+                    language,
+                    request_id,
+                    LspRequestKind::References,
+                );
                 let identifier = pending.identifier.clone();
-                self.rust_lsp.pending = Some(PendingLspRequest {
+                self.lsp_mut(language).pending = Some(PendingLspRequest {
                     request_id,
                     kind: LspRequestKind::References,
                     document: pending.document,
@@ -562,77 +246,91 @@ impl CodeReaderApp {
                     origin: pending.origin,
                     started_at,
                 });
-                self.rust_lsp.debug.reference_count += 1;
-                self.rust_lsp.debug.last_status = "references_queued".to_owned();
-                self.status_message =
-                    format!("Finding references for `{identifier}` with rust-analyzer...");
+                self.lsp_mut(language).debug.reference_count += 1;
+                self.lsp_mut(language).debug.last_status = "references_queued".to_owned();
+                self.status_message = format!(
+                    "Finding references for `{identifier}` with {}...",
+                    language.server_name()
+                );
                 true
             }
             Err(error) => {
-                self.rust_lsp.debug.last_status = "references_queue_failed".to_owned();
-                self.rust_lsp.debug.last_error = Some(error.clone());
-                self.status_message = format!("Rust references request failed. ({error})");
+                self.lsp_mut(language).debug.last_status = "references_queue_failed".to_owned();
+                self.lsp_mut(language).debug.last_error = Some(error.clone());
+                self.status_message =
+                    format!("{} references request failed. ({error})", language.label());
                 false
             }
         }
     }
 
-    pub(super) fn poll_rust_lsp(&mut self, context: &egui::Context) {
-        self.sync_open_rust_documents_to_lsp();
+    pub(super) fn poll_lsp(&mut self, language: LspLanguage, context: &egui::Context) {
+        self.sync_open_documents_to_lsp(language);
 
         let mut responses = Vec::new();
-        if let Some(client) = &self.rust_lsp.client {
+        let session = self.lsp_mut(language);
+        if let Some(client) = &session.client {
             while let Some(event) = client.try_recv() {
                 match event {
                     LspClientEvent::Response(response) => responses.push(response),
                     LspClientEvent::ServerEvent(event) => {
-                        self.rust_lsp.debug.record_server_event(&event);
+                        session.debug.record_server_event(&event);
                     }
                 }
             }
         }
 
         for response in responses {
-            self.handle_rust_lsp_response(response);
+            self.handle_lsp_response(language, response);
         }
 
-        let Some(pending) = self.rust_lsp.pending.clone() else {
+        let Some(pending) = self.lsp_mut(language).pending.clone() else {
             return;
         };
-        if pending.started_at.elapsed() < RUST_LSP_REQUEST_TIMEOUT {
+        if pending.started_at.elapsed() < LSP_REQUEST_TIMEOUT {
             context.request_repaint_after(Duration::from_millis(50));
             return;
         }
 
-        self.rust_lsp.pending = None;
-        self.rust_lsp.request_started_at.remove(&pending.request_id);
-        self.rust_lsp.debug.timeout_count += 1;
-        self.rust_lsp.debug.last_duration_ms =
+        self.lsp_mut(language).pending = None;
+        self.lsp_mut(language)
+            .request_started_at
+            .remove(&pending.request_id);
+        self.lsp_mut(language).debug.timeout_count += 1;
+        self.lsp_mut(language).debug.last_duration_ms =
             Some(pending.started_at.elapsed().as_secs_f64() * 1000.0);
         match pending.kind {
             LspRequestKind::WarmUp => {}
             LspRequestKind::Definition => {
-                self.rust_lsp.debug.last_status = "definition_timeout".to_owned();
-                self.rust_lsp.debug.record_definition_status(
+                self.lsp_mut(language).debug.last_status = "definition_timeout".to_owned();
+                let debug = &mut self.lsp_mut(language).debug;
+                debug.record_definition_status(
                     "definition_timeout",
                     None,
-                    self.rust_lsp.debug.last_duration_ms,
+                    debug.last_duration_ms,
                     0,
                 );
                 self.definition_candidates.clear();
                 self.location_list_kind = LocationListKind::Definitions;
-                self.status_message = self.rust_lsp_definition_pending_message(
-                    &pending.identifier,
-                    "did not answer before timeout",
-                );
+                self.status_message = match language {
+                    LspLanguage::Go => format!(
+                        "gopls timed out for `{}`. Wait a moment and retry F12.",
+                        pending.identifier
+                    ),
+                    LspLanguage::Rust => self.rust_lsp_definition_pending_message(
+                        &pending.identifier,
+                        "did not answer before timeout",
+                    ),
+                };
             }
             LspRequestKind::References => {
                 self.definition_candidates.clear();
                 self.close_references_overlay();
                 self.location_list_kind = LocationListKind::References;
-                self.rust_lsp.debug.last_status = "references_timeout".to_owned();
+                self.lsp_mut(language).debug.last_status = "references_timeout".to_owned();
                 self.status_message = format!(
-                    "rust-analyzer references timed out for `{}`.",
+                    "{} references timed out for `{}`.",
+                    language.server_name(),
                     pending.identifier
                 );
             }
@@ -640,43 +338,47 @@ impl CodeReaderApp {
         }
     }
 
-    pub(super) fn handle_rust_lsp_response(&mut self, response: LspLocationResponse) {
+    pub(super) fn handle_lsp_response(
+        &mut self,
+        language: LspLanguage,
+        response: LspLocationResponse,
+    ) {
         if response.kind == LspRequestKind::WarmUp {
-            self.handle_rust_lsp_warmup_response(response);
+            self.handle_lsp_warmup_response(language, response);
             return;
         }
         if response.kind == LspRequestKind::Sync {
-            self.handle_rust_lsp_sync_response(response);
+            self.handle_lsp_sync_response(language, response);
             return;
         }
 
-        let Some(pending) = self.rust_lsp.pending.clone() else {
+        let Some(pending) = self.lsp_mut(language).pending.clone() else {
             return;
         };
         if response.request_id != pending.request_id || response.kind != pending.kind {
             return;
         }
-        self.rust_lsp.pending = None;
+        self.lsp_mut(language).pending = None;
         let duration_ms = self
-            .rust_lsp
+            .lsp_mut(language)
             .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.rust_lsp.debug.last_duration_ms = duration_ms;
+        self.lsp_mut(language).debug.last_duration_ms = duration_ms;
 
         let locations = match response.result {
             Ok(locations) => {
-                self.rust_lsp.debug.last_status = match response.kind {
+                self.lsp_mut(language).debug.last_status = match response.kind {
                     LspRequestKind::WarmUp => "warmup_ok",
                     LspRequestKind::Definition => "definition_ok",
                     LspRequestKind::References => "references_ok",
                     LspRequestKind::Sync => "sync_ok",
                 }
                 .to_owned();
-                self.rust_lsp.debug.last_error = None;
-                self.rust_lsp.debug.last_location_count = locations.len();
+                self.lsp_mut(language).debug.last_error = None;
+                self.lsp_mut(language).debug.last_location_count = locations.len();
                 if response.kind == LspRequestKind::Definition {
-                    self.rust_lsp.debug.record_definition_status(
+                    self.lsp_mut(language).debug.record_definition_status(
                         "definition_ok",
                         None,
                         duration_ms,
@@ -686,8 +388,8 @@ impl CodeReaderApp {
                 locations
             }
             Err(error) => {
-                self.rust_lsp.debug.last_error = Some(error.clone());
-                self.rust_lsp.debug.last_status = match response.kind {
+                self.lsp_mut(language).debug.last_error = Some(error.clone());
+                self.lsp_mut(language).debug.last_status = match response.kind {
                     LspRequestKind::WarmUp => "warmup_failed",
                     LspRequestKind::Definition => "definition_failed",
                     LspRequestKind::References => "references_failed",
@@ -695,7 +397,7 @@ impl CodeReaderApp {
                 }
                 .to_owned();
                 if pending.kind == LspRequestKind::Definition {
-                    self.rust_lsp.debug.record_definition_status(
+                    self.lsp_mut(language).debug.record_definition_status(
                         "definition_failed",
                         Some(error.clone()),
                         duration_ms,
@@ -705,17 +407,20 @@ impl CodeReaderApp {
                 self.definition_candidates.clear();
                 self.close_references_overlay();
                 self.location_list_kind = LocationListKind::Definitions;
-                self.status_message =
-                    format!("Rust LSP failed for `{}`. ({error})", pending.identifier);
+                self.status_message = format!(
+                    "{} LSP failed for `{}`. ({error})",
+                    language.label(),
+                    pending.identifier
+                );
                 return;
             }
         };
 
         match pending.kind {
             LspRequestKind::Definition => {
-                if locations.is_empty() {
-                    self.rust_lsp.debug.last_status = "definition_empty".to_owned();
-                    self.rust_lsp.debug.record_definition_status(
+                if language == LspLanguage::Rust && locations.is_empty() {
+                    self.lsp_mut(language).debug.last_status = "definition_empty".to_owned();
+                    self.lsp_mut(language).debug.record_definition_status(
                         "definition_empty",
                         None,
                         duration_ms,
@@ -735,7 +440,7 @@ impl CodeReaderApp {
                         &pending.document.path,
                         pending.position,
                     )
-                    && self.request_rust_lsp_references(pending.clone())
+                    && self.request_lsp_references(language, pending.clone())
                 {
                     return;
                 }
@@ -759,44 +464,52 @@ impl CodeReaderApp {
         }
     }
 
-    pub(super) fn handle_rust_lsp_warmup_response(&mut self, response: LspLocationResponse) {
-        self.rust_lsp.debug.last_duration_ms = self
-            .rust_lsp
+    pub(super) fn handle_lsp_warmup_response(
+        &mut self,
+        language: LspLanguage,
+        response: LspLocationResponse,
+    ) {
+        self.lsp_mut(language).debug.last_duration_ms = self
+            .lsp_mut(language)
             .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.rust_lsp.debug.last_request_id = Some(response.request_id);
-        self.rust_lsp.debug.last_kind = Some(response.kind);
+        self.lsp_mut(language).debug.last_request_id = Some(response.request_id);
+        self.lsp_mut(language).debug.last_kind = Some(response.kind);
         match response.result {
             Ok(locations) => {
-                self.rust_lsp.debug.last_status = "warmup_ok".to_owned();
-                self.rust_lsp.debug.last_error = None;
-                self.rust_lsp.debug.last_location_count = locations.len();
+                self.lsp_mut(language).debug.last_status = "warmup_ok".to_owned();
+                self.lsp_mut(language).debug.last_error = None;
+                self.lsp_mut(language).debug.last_location_count = locations.len();
             }
             Err(error) => {
-                self.rust_lsp.debug.last_status = "warmup_failed".to_owned();
-                self.rust_lsp.debug.last_error = Some(error);
+                self.lsp_mut(language).debug.last_status = "warmup_failed".to_owned();
+                self.lsp_mut(language).debug.last_error = Some(error);
             }
         }
     }
 
-    pub(super) fn handle_rust_lsp_sync_response(&mut self, response: LspLocationResponse) {
-        self.rust_lsp.debug.last_duration_ms = self
-            .rust_lsp
+    pub(super) fn handle_lsp_sync_response(
+        &mut self,
+        language: LspLanguage,
+        response: LspLocationResponse,
+    ) {
+        self.lsp_mut(language).debug.last_duration_ms = self
+            .lsp_mut(language)
             .request_started_at
             .remove(&response.request_id)
             .map(|started_at| started_at.elapsed().as_secs_f64() * 1000.0);
-        self.rust_lsp.debug.last_request_id = Some(response.request_id);
-        self.rust_lsp.debug.last_kind = Some(response.kind);
+        self.lsp_mut(language).debug.last_request_id = Some(response.request_id);
+        self.lsp_mut(language).debug.last_kind = Some(response.kind);
         match response.result {
             Ok(locations) => {
-                self.rust_lsp.debug.last_status = "sync_ok".to_owned();
-                self.rust_lsp.debug.last_error = None;
-                self.rust_lsp.debug.last_location_count = locations.len();
+                self.lsp_mut(language).debug.last_status = "sync_ok".to_owned();
+                self.lsp_mut(language).debug.last_error = None;
+                self.lsp_mut(language).debug.last_location_count = locations.len();
             }
             Err(error) => {
-                self.rust_lsp.debug.last_status = "sync_failed".to_owned();
-                self.rust_lsp.debug.last_error = Some(error);
+                self.lsp_mut(language).debug.last_status = "sync_failed".to_owned();
+                self.lsp_mut(language).debug.last_error = Some(error);
             }
         }
     }
@@ -976,9 +689,7 @@ impl CodeReaderApp {
     }
 }
 
-pub(super) const GO_LSP_REQUEST_TIMEOUT: Duration = Duration::from_millis(3000);
-
-pub(super) const RUST_LSP_REQUEST_TIMEOUT: Duration = Duration::from_millis(3000);
+pub(super) const LSP_REQUEST_TIMEOUT: Duration = Duration::from_millis(3000);
 
 pub(super) fn location_contains_position(
     location: &Location,
@@ -1164,6 +875,44 @@ impl LocationListKind {
         match self {
             Self::Definitions => "definition",
             Self::References => "reference",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LspLanguage {
+    Go,
+    Rust,
+}
+
+impl LspLanguage {
+    fn server_name(self) -> &'static str {
+        match self {
+            Self::Go => "gopls",
+            Self::Rust => "rust-analyzer",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Go => "Go",
+            Self::Rust => "Rust",
+        }
+    }
+
+    fn config(self, roots: Vec<PathBuf>) -> LspServerConfig {
+        match self {
+            Self::Go => LspServerConfig::go(roots),
+            Self::Rust => LspServerConfig::rust_analyzer(roots),
+        }
+    }
+
+    /// Open documents this server gets told about. rust-analyzer already knows the
+    /// read-only sources outside the workspace.
+    fn syncs_path(self, path: &Path) -> bool {
+        match self {
+            Self::Go => is_go_path(path),
+            Self::Rust => is_rust_path(path) && !is_external_rust_path(path),
         }
     }
 }
