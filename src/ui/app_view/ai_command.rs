@@ -51,8 +51,7 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-                {
+                if self.modal_escape == Some(Modal::AiCommand) {
                     close = true;
                 }
 

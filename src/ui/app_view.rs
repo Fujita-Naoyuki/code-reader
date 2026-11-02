@@ -110,6 +110,7 @@ use git_windows::*;
 use lsp::*;
 use markdown_render::*;
 use markdown_view::*;
+use modal::*;
 use navigation::*;
 use panes::*;
 use search::*;
@@ -214,6 +215,8 @@ pub struct CodeReaderApp {
     show_right_pane: bool,
     recent_workspaces_open: bool,
     shortcuts_help_open: bool,
+    /// The layer that gets this frame's Escape; see `dispatch_modal_escape`.
+    modal_escape: Option<Modal>,
     background_status: BackgroundStatus,
     ai_command_open: bool,
     workspace_root_open: HashMap<PathBuf, bool>,
@@ -336,6 +339,7 @@ impl CodeReaderApp {
             show_right_pane: false,
             recent_workspaces_open: false,
             shortcuts_help_open: false,
+            modal_escape: None,
             background_status: BackgroundStatus::default(),
             ai_command_open: false,
             workspace_root_open: HashMap::new(),
@@ -391,13 +395,7 @@ impl eframe::App for CodeReaderApp {
                     page_key,
                 )
             });
-        // Help is drawn last but sits on top, so take its Escape before a focused search box
-        // in a panel sees it.
-        if self.shortcuts_help_open
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            self.shortcuts_help_open = false;
-        }
+        self.dispatch_modal_escape(ui);
         self.poll_workspace_changes(ui.ctx());
         self.poll_symbol_index();
         self.poll_workspace_search(ui.ctx());
@@ -974,6 +972,7 @@ mod lsp;
 mod markdown_render;
 mod markdown_source;
 mod markdown_view;
+mod modal;
 mod navigation;
 mod panes;
 mod search;

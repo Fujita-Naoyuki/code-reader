@@ -30,7 +30,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter) = ui.input_mut(|input| {
                     (
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        self.modal_escape == Some(Modal::GitCreateBranch),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                     )
                 });
@@ -123,7 +123,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, up, down, enter) = ui.input_mut(|input| {
                     (
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        self.modal_escape == Some(Modal::GitSwitchBranch),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
@@ -311,7 +311,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter) = ui.input_mut(|input| {
                     (
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        self.modal_escape == Some(Modal::GitDiscard),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                     )
                 });
@@ -369,8 +369,7 @@ impl CodeReaderApp {
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
-                let escape = ui
-                    .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                let escape = self.modal_escape == Some(Modal::GitCommitDetails);
                 if escape {
                     close = true;
                 }

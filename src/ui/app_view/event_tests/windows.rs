@@ -377,3 +377,25 @@ fn background_notices_wait_until_the_action_result_is_old_enough() {
     t.steps(2);
     assert_eq!(t.app().visible_status(), saved);
 }
+
+#[test]
+fn escape_closes_only_the_top_layer() {
+    let mut t = TestApp::plain();
+    t.click_first("notes.txt");
+    t.ctrl(egui::Key::F);
+    assert!(t.app().left.source_search.open);
+    t.click("Workspaces");
+    assert!(t.app().recent_workspaces_open);
+    t.click("Help");
+    assert!(t.app().shortcuts_help_open);
+
+    t.key(egui::Key::Escape);
+    assert!(!t.app().shortcuts_help_open);
+    assert!(t.app().recent_workspaces_open);
+    t.key(egui::Key::Escape);
+    assert!(!t.app().recent_workspaces_open);
+    assert!(
+        t.app().left.source_search.open,
+        "the find bar is under them"
+    );
+}

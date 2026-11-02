@@ -137,26 +137,15 @@ impl CodeReaderApp {
     }
 
     pub(super) fn shortcut_context_title(&self) -> &'static str {
-        if self.search_overlay.open {
-            return "Search Everywhere";
-        }
-        if self.recent_workspaces_open {
-            return "Recent Workspaces";
-        }
-        if self.git_create_branch_root.is_some() {
-            return "Create Branch";
-        }
-        if self.git_switch_branch_root.is_some() {
-            return "Switch Branch";
-        }
-        if self.pending_git_discard.is_some() {
-            return "Discard Changes";
-        }
-        if self.pending_unsaved_action.is_some() {
-            return "Unsaved Changes";
-        }
-        if self.editing_session_name {
-            return "Rename Workspace";
+        match self.top_dialog() {
+            Some(Modal::SearchEverywhere) => return "Search Everywhere",
+            Some(Modal::RecentWorkspaces) => return "Recent Workspaces",
+            Some(Modal::GitCreateBranch) => return "Create Branch",
+            Some(Modal::GitSwitchBranch) => return "Switch Branch",
+            Some(Modal::GitDiscard) => return "Discard Changes",
+            Some(Modal::UnsavedChanges) => return "Unsaved Changes",
+            Some(Modal::RenameWorkspace) => return "Rename Workspace",
+            _ => {}
         }
         if self.sidebar_view == SidebarView::Search && self.workspace_search.open {
             return "Workspace Search";
@@ -199,19 +188,19 @@ impl CodeReaderApp {
     }
 
     pub(super) fn status_bar_shortcuts(&self) -> Vec<ShortcutHint> {
-        if self.search_overlay.open {
-            return shortcuts(&[("Enter", "Open"), ("Up/Down", "Select"), ("Esc", "Close")]);
-        }
-        if self.recent_workspaces_open {
-            return shortcuts(&[("Esc", "Close")]);
-        }
-        if self.git_create_branch_root.is_some()
-            || self.git_switch_branch_root.is_some()
-            || self.pending_git_discard.is_some()
-            || self.pending_unsaved_action.is_some()
-            || self.editing_session_name
-        {
-            return shortcuts(&[("Enter", "Confirm"), ("Esc", "Close")]);
+        match self.top_dialog() {
+            Some(Modal::SearchEverywhere) => {
+                return shortcuts(&[("Enter", "Open"), ("Up/Down", "Select"), ("Esc", "Close")]);
+            }
+            Some(Modal::RecentWorkspaces) => return shortcuts(&[("Esc", "Close")]),
+            Some(
+                Modal::GitCreateBranch
+                | Modal::GitSwitchBranch
+                | Modal::GitDiscard
+                | Modal::UnsavedChanges
+                | Modal::RenameWorkspace,
+            ) => return shortcuts(&[("Enter", "Confirm"), ("Esc", "Close")]),
+            _ => {}
         }
         if self.sidebar_view == SidebarView::Search && self.workspace_search.open {
             return shortcuts(&[

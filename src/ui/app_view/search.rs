@@ -393,7 +393,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter, arrow_up, arrow_down) = ui.input_mut(|input| {
                     (
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        self.modal_escape == Some(Modal::SearchEverywhere),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
@@ -604,7 +604,7 @@ impl CodeReaderApp {
             .show(ui.ctx(), |ui| {
                 let (escape, enter, arrow_up, arrow_down) = ui.input_mut(|input| {
                     (
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                        self.modal_escape == Some(Modal::References),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp),
                         input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown),
