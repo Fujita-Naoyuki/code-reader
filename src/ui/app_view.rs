@@ -38,6 +38,7 @@ mod virtual_editor;
 mod virtual_input;
 #[cfg(test)]
 mod virtual_input_tests;
+mod virtual_line_cache;
 mod virtual_paint;
 mod virtual_pointer;
 mod workspace;
@@ -168,6 +169,7 @@ use state::*;
 use status::*;
 use virtual_editor::*;
 use virtual_input::*;
+use virtual_line_cache::*;
 use virtual_paint::*;
 use virtual_pointer::*;
 use workspace::*;
