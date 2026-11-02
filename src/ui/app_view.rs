@@ -109,6 +109,7 @@ use git_windows::*;
 use lsp::*;
 use markdown_render::*;
 use markdown_view::*;
+use navigation::*;
 use panes::*;
 use search::*;
 use shortcuts::*;
@@ -117,7 +118,6 @@ use virtual_editor::*;
 use virtual_input::*;
 use workspace::*;
 
-const NAVIGATION_BREADCRUMB_LIMIT: usize = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pane {
     Left,
@@ -1032,50 +1032,6 @@ fn text_position_from_position(position: Option<Position>) -> TextPosition {
     position
         .map(|position| TextPosition::new(position.line, position.character))
         .unwrap_or_default()
-}
-
-fn paint_navigation_breadcrumb(
-    ui: &mut egui::Ui,
-    navigation_history: &[NavigationPoint],
-    current: Option<NavigationPoint>,
-    mut open_history_entry: impl FnMut(usize),
-) {
-    if navigation_history.is_empty() {
-        return;
-    }
-
-    let Some(current) = current else {
-        return;
-    };
-
-    ui.separator();
-
-    let visible_previous_count = NAVIGATION_BREADCRUMB_LIMIT.saturating_sub(1);
-    let visible_start = navigation_history
-        .len()
-        .saturating_sub(visible_previous_count);
-    if visible_start > 0 {
-        ui.label(RichText::new("...").small().weak());
-        ui.label(RichText::new(">").small().weak());
-    }
-
-    for (index, point) in navigation_history.iter().enumerate().skip(visible_start) {
-        let response = ui
-            .small_button(RichText::new(navigation_point_label(point)).monospace())
-            .on_hover_text(navigation_point_hover_text(point));
-        if response.clicked() {
-            open_history_entry(index);
-        }
-        ui.label(RichText::new(">").small().weak());
-    }
-
-    ui.label(
-        RichText::new(navigation_point_label(&current))
-            .small()
-            .strong()
-            .monospace(),
-    )
-    .on_hover_text(navigation_point_hover_text(&current));
 }
 
 fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
