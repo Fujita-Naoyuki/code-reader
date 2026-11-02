@@ -109,6 +109,7 @@ use lsp::*;
 use markdown_render::*;
 use markdown_view::*;
 use search::*;
+use shortcuts::*;
 use source_editor::*;
 use virtual_editor::*;
 use virtual_input::*;
@@ -957,25 +958,6 @@ struct GitDiscardRequest {
     untracked: bool,
 }
 
-#[derive(Debug, Clone)]
-struct ShortcutHint {
-    keys: &'static str,
-    label: &'static str,
-}
-
-#[derive(Debug, Clone)]
-struct ShortcutGroup {
-    title: &'static str,
-    shortcuts: Vec<ShortcutHint>,
-}
-
-fn shortcuts(items: &[(&'static str, &'static str)]) -> Vec<ShortcutHint> {
-    items
-        .iter()
-        .map(|(keys, label)| ShortcutHint { keys, label })
-        .collect()
-}
-
 impl WorkspaceGitStatus {
     fn color(self) -> Color32 {
         match self {
@@ -1131,170 +1113,6 @@ fn paint_navigation_breadcrumb(
             .monospace(),
     )
     .on_hover_text(navigation_point_hover_text(&current));
-}
-
-fn consume_copy_shortcut(input: &mut egui::InputState) -> bool {
-    let mut copied = false;
-    input.events.retain(|event| {
-        let is_copy_event = matches!(
-            event,
-            egui::Event::Copy
-                | egui::Event::Key {
-                    key: egui::Key::Copy,
-                    pressed: true,
-                    ..
-                }
-        );
-        copied |= is_copy_event;
-        !is_copy_event
-    });
-
-    copied
-        || input.consume_key(egui::Modifiers::COMMAND, egui::Key::C)
-        || input.consume_key(egui::Modifiers::CTRL, egui::Key::C)
-}
-
-fn consume_paste_text(input: &mut egui::InputState) -> Option<String> {
-    let mut pasted = None;
-    input.events.retain(|event| {
-        if let egui::Event::Paste(text) = event {
-            pasted = Some(text.clone());
-            false
-        } else {
-            true
-        }
-    });
-    pasted
-}
-
-fn consume_paste_shortcut(input: &mut egui::InputState) -> bool {
-    let mut pasted = false;
-    input.events.retain(|event| {
-        let is_paste_key = matches!(
-            event,
-            egui::Event::Key {
-                key: egui::Key::Paste,
-                pressed: true,
-                ..
-            }
-        );
-        pasted |= is_paste_key;
-        !is_paste_key
-    });
-
-    pasted
-        || input.consume_key(egui::Modifiers::COMMAND, egui::Key::V)
-        || input.consume_key(egui::Modifiers::CTRL, egui::Key::V)
-}
-
-fn consume_undo_shortcut(input: &mut egui::InputState) -> bool {
-    let mut undo = false;
-    input.events.retain(|event| {
-        let is_undo_key = matches!(
-            event,
-            egui::Event::Key {
-                key: egui::Key::Z,
-                pressed: true,
-                modifiers,
-                ..
-            } if (modifiers.ctrl || modifiers.command) && !modifiers.shift
-        );
-        undo |= is_undo_key;
-        !is_undo_key
-    });
-
-    // No consume_key fallback: it ignores extra Shift and would swallow Ctrl+Shift+Z (redo).
-    undo
-}
-
-fn consume_redo_shortcut(input: &mut egui::InputState) -> bool {
-    let mut redo = false;
-    input.events.retain(|event| {
-        let is_redo_key = matches!(
-            event,
-            egui::Event::Key {
-                key: egui::Key::Y,
-                pressed: true,
-                modifiers,
-                ..
-            } if modifiers.ctrl || modifiers.command
-        ) || matches!(
-            event,
-            egui::Event::Key {
-                key: egui::Key::Z,
-                pressed: true,
-                modifiers,
-                ..
-            } if (modifiers.ctrl || modifiers.command) && modifiers.shift
-        );
-        redo |= is_redo_key;
-        !is_redo_key
-    });
-
-    redo
-}
-
-fn consume_delete_shortcut(input: &mut egui::InputState) -> bool {
-    input.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
-        || input.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
-}
-
-fn consume_navigation_back_shortcut(input: &mut egui::InputState) -> bool {
-    input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowLeft)
-        || input.consume_key(egui::Modifiers::NONE, egui::Key::BrowserBack)
-}
-
-fn consume_navigation_forward_shortcut(input: &mut egui::InputState) -> bool {
-    input.consume_key(egui::Modifiers::ALT, egui::Key::ArrowRight)
-}
-
-fn consume_ai_command_shortcut(input: &mut egui::InputState) -> bool {
-    input.consume_key(
-        egui::Modifiers {
-            ctrl: true,
-            shift: true,
-            ..Default::default()
-        },
-        egui::Key::A,
-    )
-}
-
-fn raw_enter_pressed(input: &egui::InputState) -> bool {
-    input.events.iter().any(|event| {
-        matches!(
-            event,
-            egui::Event::Key {
-                key: egui::Key::Enter,
-                pressed: true,
-                ..
-            }
-        )
-    })
-}
-
-fn raw_search_enter_direction(input: &egui::InputState) -> Option<isize> {
-    input.events.iter().find_map(|event| match event {
-        egui::Event::Key {
-            key: egui::Key::Enter,
-            pressed: true,
-            modifiers,
-            ..
-        } => Some(if modifiers.shift { -1 } else { 1 }),
-        _ => None,
-    })
-}
-
-fn raw_escape_pressed(input: &egui::InputState) -> bool {
-    input.events.iter().any(|event| {
-        matches!(
-            event,
-            egui::Event::Key {
-                key: egui::Key::Escape,
-                pressed: true,
-                ..
-            }
-        )
-    })
 }
 
 fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
