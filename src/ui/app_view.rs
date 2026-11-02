@@ -112,12 +112,9 @@ use search::*;
 use source_editor::*;
 use virtual_editor::*;
 use virtual_input::*;
+use workspace::*;
 
 const NAVIGATION_BREADCRUMB_LIMIT: usize = 5;
-const WORKSPACE_SECTION_HEADER_HEIGHT: f32 = 24.0;
-const WORKSPACE_FOOTER_BODY_ALLOWANCE: f32 = 64.0;
-const WORKSPACE_FILE_TREE_MIN_HEIGHT: f32 = 120.0;
-const WORKSPACE_CHANGE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pane {
     Left,
@@ -152,33 +149,6 @@ impl SidebarView {
             Self::Git => "Git",
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum WorkspaceFileDialog {
-    NewFile {
-        folder: PathBuf,
-        file_name: String,
-        error: Option<String>,
-    },
-    Rename {
-        path: PathBuf,
-        new_name: String,
-        select_stem: bool,
-        error: Option<String>,
-    },
-    Delete {
-        path: PathBuf,
-        error: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::enum_variant_names)] // The actions all act on files.
-enum WorkspaceFileDialogAction {
-    CreateFile { folder: PathBuf, file_name: String },
-    RenameFile { path: PathBuf, new_name: String },
-    DeleteFile { path: PathBuf },
 }
 
 pub struct CodeReaderApp {
@@ -958,13 +928,6 @@ impl eframe::App for CodeReaderApp {
     }
 }
 
-#[derive(Debug)]
-struct WorkspaceChangeScanResult {
-    roots: Vec<PathBuf>,
-    files: Vec<PathBuf>,
-    snapshot: WorkspaceSnapshot,
-}
-
 #[derive(Debug, Clone)]
 struct GitCommitDetailsWindow {
     repository_name: String,
@@ -1024,34 +987,6 @@ impl WorkspaceGitStatus {
 }
 
 impl EditorPane {}
-
-fn start_workspace_change_scan(roots: Vec<PathBuf>) -> Receiver<WorkspaceChangeScanResult> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let files = discover_workspace_files(&roots, FileDiscoveryOptions::default());
-        let snapshot = workspace_snapshot(&files);
-        let _ = sender.send(WorkspaceChangeScanResult {
-            roots,
-            files,
-            snapshot,
-        });
-    });
-    receiver
-}
-
-fn workspace_file_tree_height(available_height: f32, footer_header_count: usize) -> f32 {
-    if !available_height.is_finite() {
-        return WORKSPACE_FILE_TREE_MIN_HEIGHT;
-    }
-
-    let reserved_headers = footer_header_count as f32 * WORKSPACE_SECTION_HEADER_HEIGHT + 8.0;
-    let reserved_footer = footer_header_count as f32 * WORKSPACE_SECTION_HEADER_HEIGHT
-        + WORKSPACE_FOOTER_BODY_ALLOWANCE;
-    let max_tree_height = (available_height - reserved_headers).max(60.0);
-    (available_height - reserved_footer)
-        .max(WORKSPACE_FILE_TREE_MIN_HEIGHT)
-        .min(max_tree_height)
-}
 
 fn ellipsize_text_to_width(
     ui: &egui::Ui,
@@ -1370,179 +1305,6 @@ fn read_text_from_system_clipboard() -> Result<String, String> {
     platform::current().read_text()
 }
 
-fn draw_workspace_roots(
-    ui: &mut egui::Ui,
-    roots: &[FileNode],
-    root_count: usize,
-    git_file_statuses: &HashMap<PathBuf, WorkspaceGitStatus>,
-    app: &mut CodeReaderApp,
-) {
-    for root in roots {
-        let mut remove_root = false;
-        let has_status = node_contains_git_status(root, git_file_statuses);
-        let default_open = app
-            .workspace_root_open
-            .get(&root.path)
-            .copied()
-            .unwrap_or(true);
-        let state_id = ui.make_persistent_id(("workspace_root", &root.path));
-        let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-            ui.ctx(),
-            state_id,
-            default_open,
-        );
-        if app
-            .pending_workspace_tree_reveal_path
-            .as_deref()
-            .is_some_and(|path| path.starts_with(&root.path))
-        {
-            state.set_open(true);
-        }
-        let mut root_label_clicked = false;
-        let selected = app.selected_workspace_path.as_deref() == Some(root.path.as_path());
-        let mut header = state.show_header(ui, |ui| {
-            root_label_clicked = workspace_tree_folder_label(ui, &root.name, selected).clicked();
-            if has_status {
-                ui.label(git_folder_status_marker());
-            }
-            if root_count > 1
-                && ui
-                    .small_button("×")
-                    .on_hover_text("Remove workspace folder")
-                    .clicked()
-            {
-                remove_root = true;
-            }
-        });
-        if root_label_clicked {
-            app.workspace_sidebar_active = true;
-            app.selected_workspace_path = Some(root.path.clone());
-            app.pending_workspace_tree_reveal_path = None;
-            header.toggle();
-        }
-        app.workspace_root_open
-            .insert(root.path.clone(), header.is_open());
-        header.body(|ui| {
-            draw_file_nodes(ui, &root.children, git_file_statuses, app);
-        });
-
-        if remove_root {
-            app.remove_root_from_current_session(&root.path);
-            continue;
-        }
-        ui.add_space(6.0);
-    }
-}
-
-fn draw_file_nodes(
-    ui: &mut egui::Ui,
-    nodes: &[FileNode],
-    git_file_statuses: &HashMap<PathBuf, WorkspaceGitStatus>,
-    app: &mut CodeReaderApp,
-) {
-    for node in nodes {
-        if node.is_dir() {
-            let has_status = node_contains_git_status(node, git_file_statuses);
-            let state_id = ui.make_persistent_id(("workspace_dir", &node.path));
-            let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-                ui.ctx(),
-                state_id,
-                false,
-            );
-            if app
-                .pending_workspace_tree_reveal_path
-                .as_deref()
-                .is_some_and(|path| path.starts_with(&node.path))
-            {
-                state.set_open(true);
-            }
-            let mut folder_label_clicked = false;
-            let selected = app.selected_workspace_path.as_deref() == Some(node.path.as_path());
-            let mut header = state.show_header(ui, |ui| {
-                folder_label_clicked =
-                    workspace_tree_folder_label(ui, &node.name, selected).clicked();
-                if has_status {
-                    ui.label(git_folder_status_marker());
-                }
-            });
-            if folder_label_clicked {
-                app.workspace_sidebar_active = true;
-                app.selected_workspace_path = Some(node.path.clone());
-                app.pending_workspace_tree_reveal_path = None;
-                header.toggle();
-            }
-            header.body(|ui| {
-                draw_file_nodes(ui, &node.children, git_file_statuses, app);
-            });
-        } else {
-            let status = git_file_statuses.get(&node.path).copied();
-            let mut label = RichText::new(&node.name).monospace();
-            if let Some(status) = status {
-                label = label.color(status.color());
-            }
-            ui.horizontal(|ui| {
-                let selected = app.selected_workspace_path.as_deref() == Some(node.path.as_path());
-                let response = ui.add(
-                    egui::Button::new(label)
-                        .selected(selected)
-                        .sense(egui::Sense::click_and_drag()),
-                );
-                if response.clicked() {
-                    app.workspace_sidebar_active = true;
-                    app.selected_workspace_path = Some(node.path.clone());
-                    app.pending_workspace_tree_reveal_path = None;
-                    app.open_file_in_focused_pane(node.path.clone());
-                }
-                if app
-                    .pending_workspace_tree_reveal_path
-                    .as_deref()
-                    .is_some_and(|path| path == node.path.as_path())
-                {
-                    response.scroll_to_me(Some(egui::Align::Center));
-                    app.pending_workspace_tree_reveal_path = None;
-                }
-                if response.drag_started() || response.dragged() {
-                    app.dragging_workspace_file = Some(node.path.clone());
-                }
-                if let Some(status) = status {
-                    ui.label(
-                        RichText::new(status.label())
-                            .monospace()
-                            .color(status.color()),
-                    );
-                }
-            });
-        }
-    }
-}
-
-fn workspace_tree_folder_label(ui: &mut egui::Ui, name: &str, selected: bool) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(name).monospace())
-            .selected(selected)
-            .frame(false)
-            .sense(egui::Sense::click()),
-    )
-}
-
-fn git_folder_status_marker() -> RichText {
-    RichText::new("•")
-        .monospace()
-        .color(WorkspaceGitStatus::Modified.color())
-}
-
-fn node_contains_git_status(
-    node: &FileNode,
-    git_file_statuses: &HashMap<PathBuf, WorkspaceGitStatus>,
-) -> bool {
-    if git_file_statuses.contains_key(&node.path) {
-        return true;
-    }
-    node.children
-        .iter()
-        .any(|child| node_contains_git_status(child, git_file_statuses))
-}
-
 fn ui_was_primary_clicked(ui: &egui::Ui) -> bool {
     ui.input(|input| {
         input.pointer.button_clicked(egui::PointerButton::Primary)
@@ -1560,45 +1322,6 @@ fn ui_rect_contains_pointer(ui: &egui::Ui) -> bool {
             .interact_pos()
             .is_some_and(|position| ui.max_rect().contains(position))
     })
-}
-
-fn workspace_right_pane_drop_target(ui: &mut egui::Ui, path: &Path) -> bool {
-    let available = ui.available_size();
-    let size = egui::vec2(available.x.max(120.0), available.y.max(160.0));
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
-    let hovered = response.hovered();
-    let visuals = ui.visuals();
-    let fill = if hovered {
-        visuals.selection.bg_fill
-    } else {
-        visuals.faint_bg_color
-    };
-    let stroke = if hovered {
-        visuals.selection.stroke
-    } else {
-        visuals.widgets.noninteractive.bg_stroke
-    };
-    ui.painter().rect_filled(rect, 4.0, fill);
-    ui.painter()
-        .rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
-
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("<file>");
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        format!("Drop {file_name} here"),
-        FontId::proportional(14.0),
-        visuals.text_color(),
-    );
-
-    hovered && ui.input(|input| input.pointer.any_released())
-}
-
-fn pick_workspace_folder(title: &str) -> Option<PathBuf> {
-    platform::current().pick_folder(title)
 }
 
 mod ai_command;
