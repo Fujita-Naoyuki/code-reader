@@ -10,105 +10,22 @@ impl EditorPane {
         matches: &[MarkdownSearchMatch],
     ) {
         let search_id = ui.id().with(format!("markdown_search_{:?}", self.pane));
-        let mut close = false;
-        let mut go_next = false;
-        let mut go_previous = false;
-        let mut keep_focus = false;
+        let bar = find_bar_ui(
+            ui,
+            search_id,
+            "Search rendered markdown",
+            FindBarFields {
+                query: &mut self.markdown.search.query,
+                current_match: &mut self.markdown.search.current_match,
+                focus_requested: &mut self.markdown.search.focus_requested,
+            },
+            matches.len(),
+        );
+        if bar.query_changed {
+            self.markdown.search.scrolled_match = None;
+        }
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Find").small().strong());
-            let input_had_focus = ui.memory(|memory| memory.has_focus(search_id));
-            if input_had_focus {
-                match ui.input(raw_search_enter_direction) {
-                    Some(1) => {
-                        go_next = true;
-                        keep_focus = true;
-                    }
-                    Some(-1) => {
-                        go_previous = true;
-                        keep_focus = true;
-                    }
-                    _ => {}
-                }
-            }
-            // egui drops focus at the start of the frame that carries a plain Escape, so check
-            // who had focus in the previous frame.
-            if ui.memory(|memory| memory.had_focus_last_frame(search_id))
-                && ui.input(raw_escape_pressed)
-            {
-                close = true;
-            }
-
-            let response = ui.add(
-                TextEdit::singleline(&mut self.markdown.search.query)
-                    .id(search_id)
-                    .hint_text("Search rendered markdown")
-                    .desired_width(220.0),
-            );
-            if response.changed() {
-                self.markdown.search.current_match = 0;
-                self.markdown.search.scrolled_match = None;
-            }
-            if self.markdown.search.focus_requested {
-                response.request_focus();
-                self.markdown.search.focus_requested = false;
-            }
-            let input_has_focus =
-                response.has_focus() || ui.memory(|memory| memory.has_focus(search_id));
-            if !input_had_focus && input_has_focus {
-                match ui.input(raw_search_enter_direction) {
-                    Some(1) => {
-                        go_next = true;
-                        keep_focus = true;
-                    }
-                    Some(-1) => {
-                        go_previous = true;
-                        keep_focus = true;
-                    }
-                    _ => {}
-                }
-                if ui.input(raw_escape_pressed) {
-                    close = true;
-                }
-            }
-
-            let count_label = if self.markdown.search.query.trim().is_empty() {
-                "0 results".to_owned()
-            } else if matches.is_empty() {
-                "No results".to_owned()
-            } else {
-                format!(
-                    "{}/{}",
-                    self.markdown.search.current_match + 1,
-                    matches.len()
-                )
-            };
-            ui.label(RichText::new(count_label).small().weak());
-
-            if ui
-                .add_enabled(!matches.is_empty(), egui::Button::new("Previous"))
-                .on_hover_text("Previous search match")
-                .clicked()
-            {
-                go_previous = true;
-            }
-            if ui
-                .add_enabled(!matches.is_empty(), egui::Button::new("Next"))
-                .on_hover_text("Next search match")
-                .clicked()
-            {
-                go_next = true;
-            }
-            if ui.button("Close").on_hover_text("Close search").clicked() {
-                close = true;
-            }
-
-            if keep_focus && !close {
-                ui.memory_mut(|memory| memory.request_focus(search_id));
-            }
-        });
-
-        if close {
+        if bar.close {
             self.markdown.search.open = false;
             self.markdown.search.focus_requested = false;
             self.markdown.search.query.clear();
@@ -118,9 +35,9 @@ impl EditorPane {
             return;
         }
 
-        if go_next {
+        if bar.go_next {
             self.move_markdown_search_match(document, matches, 1);
-        } else if go_previous {
+        } else if bar.go_previous {
             self.move_markdown_search_match(document, matches, -1);
         } else {
             self.navigate_to_current_markdown_match(matches);

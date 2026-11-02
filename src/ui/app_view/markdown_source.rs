@@ -14,53 +14,14 @@ impl EditorPane {
     ) {
         let text_edit_id = ui.id().with(format!("markdown_source_{:?}", self.pane));
         let (source_len, source_hash) = self.text_fingerprint();
-        let source_search_matches = if self.source_search.open {
-            let matches = self.cached_source_search_matches(source_len, source_hash);
-            self.source_search.match_count = matches.len();
-            if self.source_search.current_match >= matches.len() {
-                self.source_search.current_match = matches.len().saturating_sub(1);
-                self.source_search.scrolled_match = None;
-            }
-            if focused {
-                self.handle_source_search_global_shortcuts(ui, matches.as_slice());
-            }
-            self.source_search_ui(ui, matches.as_slice());
-            matches
-        } else {
-            self.source_search.match_count = 0;
-            Rc::new(Vec::new())
-        };
-        if self.source_search.open {
-            ui.separator();
-        }
+        self.source_search_frame(ui, focused, source_len, source_hash);
 
-        let pending_navigation = self.pending_navigation.take();
-        let pending_position = pending_navigation.map(|navigation| navigation.position);
-        let pending_focus_editor =
-            pending_navigation.is_some_and(|navigation| navigation.focus_editor);
-        let pending_scroll_y = pending_position.map(|position| {
-            let row_height = editor_scroll_row_height(ui);
-            (position.line as f32 * row_height - ui.available_height() * 0.35).max(0.0)
-        });
+        let pending = self.take_pending_source_navigation(ui);
         let viewport_height = ui.available_height();
-        if let Some(offset) = pending_scroll_y {
-            self.scroll.y = offset;
-        }
         let metrics = self.cached_editor_metrics(source_len, source_hash);
         let editor_width = metrics.editor_width(ui, ui.available_width());
         let line_count = metrics.line_count;
-        let estimated_max_scroll_y =
-            estimated_textedit_source_max_scroll_y(ui, line_count, viewport_height);
-        let max_scroll_y = if self.scroll.max_y > 0.0 {
-            self.scroll.max_y
-        } else {
-            estimated_max_scroll_y
-        };
-        self.scroll.y = self.scroll.y.clamp(0.0, max_scroll_y);
-        if let Some(delta) = editor_page_scroll_delta(ui, focused, text_edit_id, viewport_height) {
-            self.scroll.y = (self.scroll.y + delta).clamp(0.0, max_scroll_y);
-        }
-        self.apply_immediate_wheel_scroll(ui, max_scroll_y);
+        self.prepare_source_scroll(ui, focused, text_edit_id, line_count, viewport_height);
 
         let scroll_area = ScrollArea::both()
             .id_salt(format!("markdown_source_scroll_{:?}", self.pane))
@@ -68,18 +29,7 @@ impl EditorPane {
             .vertical_scroll_offset(self.scroll.y);
 
         let scroll_output = scroll_area.show(ui, |ui| {
-            if let Some(target_position) = pending_position
-                && let Some(char_index) = self.text.position_to_char_index(target_position)
-            {
-                let cursor = CCursor::new(char_index);
-                let mut state = TextEditState::load(ui.ctx(), text_edit_id).unwrap_or_default();
-                state.cursor.set_char_range(Some(CCursorRange::one(cursor)));
-                state.store(ui.ctx(), text_edit_id);
-                if pending_focus_editor {
-                    ui.memory_mut(|memory| memory.request_focus(text_edit_id));
-                }
-                self.cursor_position = Some(target_position);
-            }
+            self.apply_pending_source_cursor(ui, text_edit_id, pending);
 
             if focused && !self.read_only() {
                 self.handle_input_assistance(ui, text_edit_id, tab_width);
@@ -101,18 +51,7 @@ impl EditorPane {
                     job.wrap.max_width = f32::INFINITY;
                     ui.fonts_mut(|fonts| fonts.layout_job(job))
                 };
-
-                let interactive = !self.read_only();
-                let output = TextEdit::multiline(&mut self.text)
-                    .id(text_edit_id)
-                    .font(TextStyle::Monospace)
-                    .code_editor()
-                    .frame(egui::Frame::NONE)
-                    .desired_width(editor_width)
-                    .desired_rows(TEXTEDIT_SOURCE_MIN_ROWS)
-                    .layouter(&mut layouter)
-                    .interactive(interactive)
-                    .show(ui);
+                let output = self.source_text_edit(ui, text_edit_id, editor_width, &mut layouter);
 
                 if let Some(cursor_range) = output.cursor_range {
                     let next_position =
@@ -126,32 +65,11 @@ impl EditorPane {
                     }
                 }
 
-                let current_line = self.cursor_position.map(|position| position.line);
-                let row_height = editor_row_height(ui);
+                let current_line = self.record_source_render_debug(ui, &output, line_count);
                 let viewport_rect = ui.clip_rect();
-                self.debug.render = Some(capture_editor_render_debug(
-                    &output,
-                    line_count,
-                    line_count,
-                    row_height,
-                    self.scroll.y,
-                    viewport_rect,
-                    current_line,
-                ));
                 paint_markdown_page_range_background(ui, &output, viewport_rect, active_page_range);
                 paint_current_line_background(ui, &output, viewport_rect, current_line);
-                if let Some(line) = paint_line_number_gutter(
-                    ui,
-                    gutter_rect,
-                    line_count,
-                    current_line,
-                    bookmark_lines,
-                    &output,
-                    viewport_rect,
-                ) && let Some(path) = self.path().map(Path::to_path_buf)
-                {
-                    self.pending_action = Some(EditorAction::ToggleBookmark { path, line });
-                }
+                self.source_gutter_ui(ui, gutter_rect, line_count, bookmark_lines, &output);
 
                 if output.response.changed() {
                     self.mark_text_changed();
@@ -166,10 +84,7 @@ impl EditorPane {
                 }
             });
         });
-        self.scroll.max_y =
-            scroll_area_vertical_max_scroll_y(scroll_output.content_size, scroll_output.inner_rect);
-        self.scroll.y = scroll_output.state.offset.y.clamp(0.0, self.scroll.max_y);
-        drop(source_search_matches);
+        self.finish_source_scroll(&scroll_output);
     }
 
     pub(super) fn prepare_markdown_source_entry(&mut self, document: &MarkdownDocument) {
