@@ -735,3 +735,239 @@ impl CodeReaderApp {
         self.status_message = format!("Opened {kind}: {label}");
     }
 }
+
+pub(super) const WORKSPACE_SEARCH_MAX_MATCHES: usize = 2000;
+
+pub(super) const WORKSPACE_SEARCH_PREVIEW_CHARS: usize = 140;
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct SearchOverlay {
+    pub(super) open: bool,
+    pub(super) query: String,
+    pub(super) selected_index: usize,
+    pub(super) cache: Option<SearchOverlayCache>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct ReferencesOverlay {
+    pub(super) open: bool,
+    pub(super) query: String,
+    pub(super) selected_index: usize,
+    pub(super) symbol: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ReferenceOverlayEntry {
+    pub(super) path: PathBuf,
+    pub(super) display_path: String,
+    pub(super) line_number: u32,
+    pub(super) preview: String,
+    pub(super) location: Location,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct SearchOverlayCache {
+    pub(super) query: String,
+    pub(super) revision: u64,
+    pub(super) results: Vec<SearchResult>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct WorkspaceSearchState {
+    pub(super) open: bool,
+    pub(super) focus_requested: bool,
+    pub(super) searching: bool,
+    pub(super) active_search_id: u64,
+    pub(super) query: String,
+    pub(super) searched_query: String,
+    pub(super) results: Vec<WorkspaceSearchFileResult>,
+}
+
+impl WorkspaceSearchState {
+    pub(super) fn match_count(&self) -> usize {
+        self.results.iter().map(|result| result.matches.len()).sum()
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct WorkspaceSearchResult {
+    pub(super) search_id: u64,
+    pub(super) query: String,
+    pub(super) results: Vec<WorkspaceSearchFileResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkspaceSearchFileResult {
+    pub(super) path: PathBuf,
+    pub(super) matches: Vec<WorkspaceSearchMatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WorkspaceSearchMatch {
+    pub(super) position: Position,
+    pub(super) preview: String,
+}
+
+pub(super) fn workspace_search_results(
+    files: &[PathBuf],
+    query: &str,
+    max_matches: usize,
+) -> Vec<WorkspaceSearchFileResult> {
+    let query = query.trim();
+    if query.is_empty() || max_matches == 0 {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+    let mut remaining_matches = max_matches;
+
+    for path in files {
+        let Ok(text) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(mut result) = workspace_search_file(path.clone(), &text, query) else {
+            continue;
+        };
+
+        if result.matches.len() > remaining_matches {
+            result.matches.truncate(remaining_matches);
+        }
+        remaining_matches = remaining_matches.saturating_sub(result.matches.len());
+        results.push(result);
+
+        if remaining_matches == 0 {
+            break;
+        }
+    }
+
+    results
+}
+
+pub(super) fn workspace_search_file(
+    path: PathBuf,
+    text: &str,
+    query: &str,
+) -> Option<WorkspaceSearchFileResult> {
+    if query.is_empty() {
+        return None;
+    }
+
+    let mut matches = Vec::new();
+
+    for (line_index, line) in text.lines().enumerate() {
+        let mut cursor = 0;
+        while let Some(relative_start) = line[cursor..].find(query) {
+            let character = cursor + relative_start;
+            matches.push(WorkspaceSearchMatch {
+                position: Position::new(line_index as u32, character as u32),
+                preview: workspace_search_preview(line),
+            });
+            cursor = character + query.len();
+        }
+    }
+
+    if matches.is_empty() {
+        None
+    } else {
+        Some(WorkspaceSearchFileResult { path, matches })
+    }
+}
+
+pub(super) fn workspace_search_preview(line: &str) -> String {
+    let trimmed = line.trim();
+    let mut preview = trimmed
+        .chars()
+        .take(WORKSPACE_SEARCH_PREVIEW_CHARS)
+        .collect::<String>();
+    if trimmed.chars().count() > WORKSPACE_SEARCH_PREVIEW_CHARS {
+        preview.push_str("...");
+    }
+    preview
+}
+
+pub(super) fn location_result_label_with_preview(
+    location: &Location,
+    kind: LocationListKind,
+    preview: Option<&str>,
+) -> String {
+    let base = format!(
+        "{}:{}",
+        location.path.display(),
+        location.range.start.line + 1
+    );
+    if kind != LocationListKind::References {
+        return base;
+    }
+
+    match preview {
+        Some(preview) if !preview.is_empty() => format!("{base}  {preview}"),
+        _ => base,
+    }
+}
+
+pub(super) fn location_line_preview(location: &Location) -> Option<String> {
+    let text = fs::read_to_string(&location.path).ok()?;
+    let line = text.lines().nth(location.range.start.line as usize)?;
+    Some(truncate_location_preview(line.trim()))
+}
+
+pub(super) fn reference_overlay_entries(
+    candidates: &[DefinitionCandidate],
+    roots: &[PathBuf],
+    query: &str,
+) -> Vec<ReferenceOverlayEntry> {
+    let query = query.trim().to_lowercase();
+    let mut entries = candidates
+        .iter()
+        .filter_map(|candidate| {
+            let display_path = workspace_search_display_path(&candidate.location.path, roots);
+            let line_number = candidate.location.range.start.line + 1;
+            let preview = candidate.preview.clone().unwrap_or_default();
+            let file_name = candidate
+                .location
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            let search_text =
+                format!("{display_path} {file_name} {line_number} {preview}").to_lowercase();
+            if !query.is_empty() && !search_text.contains(&query) {
+                return None;
+            }
+            Some(ReferenceOverlayEntry {
+                path: candidate.location.path.clone(),
+                display_path,
+                line_number,
+                preview,
+                location: candidate.location.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    entries.sort_by(|left, right| {
+        left.display_path
+            .cmp(&right.display_path)
+            .then_with(|| left.line_number.cmp(&right.line_number))
+            .then_with(|| {
+                left.location
+                    .range
+                    .start
+                    .character
+                    .cmp(&right.location.range.start.character)
+            })
+    });
+    entries
+}
+
+pub(super) fn truncate_location_preview(value: &str) -> String {
+    const LIMIT: usize = 120;
+    if value.chars().count() <= LIMIT {
+        return value.to_owned();
+    }
+    let mut preview = value
+        .chars()
+        .take(LIMIT.saturating_sub(3))
+        .collect::<String>();
+    preview.push_str("...");
+    preview
+}
