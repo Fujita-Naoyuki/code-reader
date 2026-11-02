@@ -2,20 +2,30 @@
 
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
+/// What the pointer did this frame, for starting or extending a selection.
+#[derive(Clone, Copy)]
+pub(super) struct DiffPointerInput {
+    pub(super) char_width: f32,
+    pub(super) pointer_pos: egui::Pos2,
+    pub(super) start_selection: bool,
+    pub(super) primary_down: bool,
+}
+
 pub(super) fn handle_diff_selection_input(
     ui: &mut egui::Ui,
-    rows: &[DiffRenderRow<'_>],
+    visible: &DiffVisibleRows<'_>,
     mode: DiffDisplayMode,
-    start: usize,
-    end: usize,
-    visible_rect: egui::Rect,
-    row_height: f32,
-    gutter_width: f32,
     side_selection: &mut Option<DiffSideSelection>,
     unified_selection: &mut Option<DiffUnifiedSelection>,
     side_scroll: DiffSideBySideScroll,
 ) {
+    let DiffVisibleRows {
+        start,
+        end,
+        visible_rect,
+        ..
+    } = *visible;
+
     if start >= end || !visible_rect.is_positive() {
         return;
     }
@@ -34,51 +44,51 @@ pub(super) fn handle_diff_selection_input(
     match mode {
         DiffDisplayMode::Unified => handle_unified_diff_selection_input(
             ui,
-            rows,
-            start,
-            end,
-            visible_rect,
-            row_height,
-            gutter_width,
+            visible,
             unified_selection,
-            char_width,
-            pointer_pos,
-            primary_pressed && pointer_in_visible,
-            primary_down,
+            DiffPointerInput {
+                char_width,
+                pointer_pos,
+                start_selection: primary_pressed && pointer_in_visible,
+                primary_down,
+            },
         ),
         DiffDisplayMode::SideBySide => handle_side_by_side_diff_selection_input(
             ui,
-            rows,
-            start,
-            end,
-            visible_rect,
-            row_height,
-            gutter_width,
+            visible,
             side_selection,
             side_scroll,
-            char_width,
-            pointer_pos,
-            primary_pressed && pointer_in_visible,
-            primary_down,
+            DiffPointerInput {
+                char_width,
+                pointer_pos,
+                start_selection: primary_pressed && pointer_in_visible,
+                primary_down,
+            },
         ),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_unified_diff_selection_input(
     ui: &egui::Ui,
-    rows: &[DiffRenderRow<'_>],
-    start: usize,
-    end: usize,
-    visible_rect: egui::Rect,
-    row_height: f32,
-    gutter_width: f32,
+    visible: &DiffVisibleRows<'_>,
     unified_selection: &mut Option<DiffUnifiedSelection>,
-    char_width: f32,
-    pointer_pos: egui::Pos2,
-    start_selection: bool,
-    primary_down: bool,
+    input: DiffPointerInput,
 ) {
+    let DiffVisibleRows {
+        rows,
+        start,
+        end,
+        visible_rect,
+        row_height,
+        gutter_width,
+    } = *visible;
+    let DiffPointerInput {
+        char_width,
+        pointer_pos,
+        start_selection,
+        primary_down,
+    } = input;
+
     if start_selection {
         let Some((row_index, row_rect)) =
             diff_row_at_pointer(visible_rect, start, end, row_height, pointer_pos.y, false)
@@ -134,22 +144,28 @@ pub(super) fn handle_unified_diff_selection_input(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_side_by_side_diff_selection_input(
     ui: &egui::Ui,
-    rows: &[DiffRenderRow<'_>],
-    start: usize,
-    end: usize,
-    visible_rect: egui::Rect,
-    row_height: f32,
-    gutter_width: f32,
+    visible: &DiffVisibleRows<'_>,
     side_selection: &mut Option<DiffSideSelection>,
     side_scroll: DiffSideBySideScroll,
-    char_width: f32,
-    pointer_pos: egui::Pos2,
-    start_selection: bool,
-    primary_down: bool,
+    input: DiffPointerInput,
 ) {
+    let DiffVisibleRows {
+        rows,
+        start,
+        end,
+        visible_rect,
+        row_height,
+        gutter_width,
+    } = *visible;
+    let DiffPointerInput {
+        char_width,
+        pointer_pos,
+        start_selection,
+        primary_down,
+    } = input;
+
     if start_selection {
         let Some((row_index, row_rect)) =
             diff_row_at_pointer(visible_rect, start, end, row_height, pointer_pos.y, false)
@@ -257,7 +273,6 @@ pub(super) fn unified_diff_selection_target(
     Some((text, content_rect))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn side_by_side_diff_selection_target(
     rows: &[DiffRenderRow<'_>],
     row_index: usize,
@@ -349,8 +364,7 @@ pub(super) fn paint_diff_side_selection_for_cell(
     row_index: usize,
     side: DiffSide,
     selection: Option<&DiffSideSelection>,
-    text_left: f32,
-    char_width: f32,
+    (text_left, char_width): (f32, f32),
 ) {
     let Some((start_column, end_column)) =
         diff_side_selection_columns_for_cell(selection, side, row_index, content.chars().count())

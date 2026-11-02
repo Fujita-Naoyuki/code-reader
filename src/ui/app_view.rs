@@ -30,7 +30,7 @@ use crate::core::csv::{
     serialize_csv_for_save,
 };
 use crate::core::diff::{
-    DiffDisplayMode, DiffDisplayRow, DiffLineKind, DiffMarkerKind, DiffRenderRow,
+    DiffCell, DiffDisplayMode, DiffDisplayRow, DiffLineKind, DiffMarkerKind, DiffRenderRow,
     DiffRenderSummary, DiffSide, DiffSideSelection, DiffSideSelectionPoint, DiffUnifiedSelection,
     diff_overview_markers, diff_render_rows, diff_row_char_width, diff_side_background_kind,
     diff_side_selection_columns_for_cell, diff_side_selection_text_from_render_rows,

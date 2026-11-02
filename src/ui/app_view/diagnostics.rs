@@ -265,7 +265,6 @@ impl CodeReaderApp {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn record_app_perf_sample(
         &mut self,
         total_ms: f32,

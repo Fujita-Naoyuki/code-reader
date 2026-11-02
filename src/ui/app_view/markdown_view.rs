@@ -3,6 +3,14 @@
 
 use super::*;
 
+/// What a pane's views take from the app each frame.
+#[derive(Clone, Copy)]
+pub(super) struct EditorEnv<'a> {
+    pub(super) language_registry: &'a LanguageRegistry,
+    pub(super) tab_width: usize,
+    pub(super) bookmark_lines: &'a [u32],
+}
+
 impl EditorPane {
     pub(super) fn is_markdown(&self) -> bool {
         self.path().is_some_and(is_markdown_path)
@@ -133,11 +141,13 @@ impl EditorPane {
                 ui,
                 focused,
                 &document,
-                language_registry,
-                tab_width,
+                EditorEnv {
+                    language_registry,
+                    tab_width,
+                    bookmark_lines,
+                },
                 active_page_range,
                 active_search_match,
-                bookmark_lines,
             ),
         }
     }
@@ -304,12 +314,16 @@ impl EditorPane {
         ui: &mut egui::Ui,
         focused: bool,
         document: &MarkdownDocument,
-        language_registry: &LanguageRegistry,
-        tab_width: usize,
+        env: EditorEnv<'_>,
         active_page_range: Option<(u32, u32)>,
         active_search_match: Option<MarkdownSearchMatch>,
-        bookmark_lines: &[u32],
     ) {
+        let EditorEnv {
+            language_registry,
+            tab_width,
+            bookmark_lines,
+        } = env;
+
         let available_height = ui.available_height();
         let available_width = ui.available_width();
         let separator_width = 8.0;

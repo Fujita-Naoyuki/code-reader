@@ -3,6 +3,42 @@
 
 use super::*;
 
+/// The rows on screen and where they are.
+#[derive(Clone, Copy)]
+pub(super) struct DiffVisibleRows<'a> {
+    pub(super) rows: &'a [DiffRenderRow<'a>],
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) visible_rect: egui::Rect,
+    pub(super) row_height: f32,
+    pub(super) gutter_width: f32,
+}
+
+/// The screen band row backgrounds are painted in.
+#[derive(Clone, Copy)]
+pub(super) struct DiffBand {
+    pub(super) left: f32,
+    pub(super) top: f32,
+    pub(super) width: f32,
+    pub(super) row_height: f32,
+}
+
+/// What every row of the diff is painted with.
+#[derive(Clone, Copy)]
+pub(super) struct DiffRowContext<'a> {
+    pub(super) gutter_width: f32,
+    pub(super) side_selection: Option<&'a DiffSideSelection>,
+    pub(super) unified_selection: Option<&'a DiffUnifiedSelection>,
+    pub(super) side_scroll: DiffSideBySideScroll,
+}
+
+/// The parts of the pane's diff state that painting changes.
+pub(super) struct DiffRowsState<'a> {
+    pub(super) collapsed_files: &'a mut HashMap<String, bool>,
+    pub(super) side_selection: &'a mut Option<DiffSideSelection>,
+    pub(super) unified_selection: &'a mut Option<DiffUnifiedSelection>,
+}
+
 impl EditorPane {
     pub(super) fn has_diff_text_selection(&self) -> bool {
         match self.diff.display_mode {
@@ -204,9 +240,11 @@ impl EditorPane {
                 ui,
                 rows.as_slice(),
                 display_mode,
-                &mut self.diff.collapsed_files,
-                &mut self.diff.side_selection,
-                &mut self.diff.unified_selection,
+                DiffRowsState {
+                    collapsed_files: &mut self.diff.collapsed_files,
+                    side_selection: &mut self.diff.side_selection,
+                    unified_selection: &mut self.diff.unified_selection,
+                },
                 self.scroll.y,
                 side_scroll,
             )
@@ -343,12 +381,16 @@ pub(super) fn render_diff_rows(
     ui: &mut egui::Ui,
     rows: &[DiffDisplayRow],
     mode: DiffDisplayMode,
-    collapsed_files: &mut HashMap<String, bool>,
-    side_selection: &mut Option<DiffSideSelection>,
-    unified_selection: &mut Option<DiffUnifiedSelection>,
+    state: DiffRowsState<'_>,
     scroll_y: f32,
     side_scroll: DiffSideBySideScroll,
 ) -> DiffRenderSummary {
+    let DiffRowsState {
+        collapsed_files,
+        side_selection,
+        unified_selection,
+    } = state;
+
     let render_rows = diff_render_rows(rows, mode, collapsed_files);
     let markers = diff_overview_markers(&render_rows);
     let row_height = editor_scroll_row_height(ui);
@@ -367,13 +409,15 @@ pub(super) fn render_diff_rows(
     );
     handle_diff_selection_input(
         ui,
-        &render_rows,
+        &DiffVisibleRows {
+            rows: &render_rows,
+            start,
+            end,
+            visible_rect,
+            row_height,
+            gutter_width,
+        },
         mode,
-        start,
-        end,
-        visible_rect,
-        row_height,
-        gutter_width,
         side_selection,
         unified_selection,
         side_scroll,
@@ -395,10 +439,12 @@ pub(super) fn render_diff_rows(
             start + row_index,
             row,
             collapsed_files,
-            gutter_width,
-            side_selection.as_ref(),
-            unified_selection.as_ref(),
-            side_scroll,
+            &DiffRowContext {
+                gutter_width,
+                side_selection: side_selection.as_ref(),
+                unified_selection: unified_selection.as_ref(),
+                side_scroll,
+            },
         );
     }
     ui.add_space(render_rows.len().saturating_sub(end) as f32 * row_height);
@@ -439,11 +485,29 @@ pub(super) fn paint_diff_visible_background_runs(
     let top = visible_rect.top();
     let width = visible_rect.width().max(1.0);
     match mode {
-        DiffDisplayMode::Unified => {
-            paint_unified_diff_background_runs(ui, rows, start, end, left, top, width, row_height)
-        }
+        DiffDisplayMode::Unified => paint_unified_diff_background_runs(
+            ui,
+            rows,
+            start,
+            end,
+            DiffBand {
+                left,
+                top,
+                width,
+                row_height,
+            },
+        ),
         DiffDisplayMode::SideBySide => paint_side_by_side_diff_background_runs(
-            ui, rows, start, end, left, top, width, row_height,
+            ui,
+            rows,
+            start,
+            end,
+            DiffBand {
+                left,
+                top,
+                width,
+                row_height,
+            },
         ),
     }
 }
@@ -453,26 +517,19 @@ pub(super) fn paint_unified_diff_background_runs(
     rows: &[DiffRenderRow<'_>],
     start: usize,
     end: usize,
-    left: f32,
-    top: f32,
-    width: f32,
-    row_height: f32,
+    band: DiffBand,
 ) {
     let mut run_kind = None;
     let mut run_start = start;
     for (row_index, row) in rows.iter().enumerate().take(end).skip(start) {
         let kind = diff_unified_background_kind(row);
         if kind != run_kind {
-            paint_diff_background_run(
-                ui, run_kind, run_start, row_index, start, left, top, width, row_height,
-            );
+            paint_diff_background_run(ui, run_kind, run_start, row_index, start, band);
             run_kind = kind;
             run_start = row_index;
         }
     }
-    paint_diff_background_run(
-        ui, run_kind, run_start, end, start, left, top, width, row_height,
-    );
+    paint_diff_background_run(ui, run_kind, run_start, end, start, band);
 }
 
 pub(super) fn paint_side_by_side_diff_background_runs(
@@ -480,11 +537,15 @@ pub(super) fn paint_side_by_side_diff_background_runs(
     rows: &[DiffRenderRow<'_>],
     start: usize,
     end: usize,
-    left: f32,
-    top: f32,
-    width: f32,
-    row_height: f32,
+    band: DiffBand,
 ) {
+    let DiffBand {
+        left,
+        top,
+        width,
+        row_height,
+    } = band;
+
     let center_x = left + width * 0.5;
     let left_width = (center_x - 1.0 - left).max(0.0);
     let right_left = center_x + 1.0;
@@ -495,10 +556,12 @@ pub(super) fn paint_side_by_side_diff_background_runs(
         DiffSide::Old,
         start,
         end,
-        left,
-        top,
-        left_width,
-        row_height,
+        DiffBand {
+            left,
+            top,
+            width: left_width,
+            row_height,
+        },
     );
     paint_side_diff_background_runs_for_side(
         ui,
@@ -506,10 +569,12 @@ pub(super) fn paint_side_by_side_diff_background_runs(
         DiffSide::New,
         start,
         end,
-        right_left,
-        top,
-        right_width,
-        row_height,
+        DiffBand {
+            left: right_left,
+            top,
+            width: right_width,
+            row_height,
+        },
     );
 }
 
@@ -519,11 +584,9 @@ pub(super) fn paint_side_diff_background_runs_for_side(
     side: DiffSide,
     start: usize,
     end: usize,
-    left: f32,
-    top: f32,
-    width: f32,
-    row_height: f32,
+    band: DiffBand,
 ) {
+    let width = band.width;
     if width <= 0.0 {
         return;
     }
@@ -532,16 +595,12 @@ pub(super) fn paint_side_diff_background_runs_for_side(
     for (row_index, row) in rows.iter().enumerate().take(end).skip(start) {
         let kind = diff_side_background_kind(row, side);
         if kind != run_kind {
-            paint_diff_background_run(
-                ui, run_kind, run_start, row_index, start, left, top, width, row_height,
-            );
+            paint_diff_background_run(ui, run_kind, run_start, row_index, start, band);
             run_kind = kind;
             run_start = row_index;
         }
     }
-    paint_diff_background_run(
-        ui, run_kind, run_start, end, start, left, top, width, row_height,
-    );
+    paint_diff_background_run(ui, run_kind, run_start, end, start, band);
 }
 
 pub(super) fn paint_diff_background_run(
@@ -550,11 +609,15 @@ pub(super) fn paint_diff_background_run(
     run_start: usize,
     run_end: usize,
     visible_start: usize,
-    left: f32,
-    top: f32,
-    width: f32,
-    row_height: f32,
+    band: DiffBand,
 ) {
+    let DiffBand {
+        left,
+        top,
+        width,
+        row_height,
+    } = band;
+
     let Some(kind) = kind else {
         return;
     };
@@ -595,10 +658,7 @@ pub(super) fn render_diff_render_row(
     row_index: usize,
     row: &DiffRenderRow<'_>,
     collapsed_files: &mut HashMap<String, bool>,
-    gutter_width: f32,
-    side_selection: Option<&DiffSideSelection>,
-    unified_selection: Option<&DiffUnifiedSelection>,
-    side_scroll: DiffSideBySideScroll,
+    context: &DiffRowContext<'_>,
 ) {
     match row {
         DiffRenderRow::Section(title) => {
@@ -626,29 +686,13 @@ pub(super) fn render_diff_render_row(
                 ui,
                 rect,
                 row_index,
-                line_label,
-                marker,
-                content,
-                *kind,
-                gutter_width,
-                unified_selection,
+                (line_label, marker, content, *kind),
+                context.gutter_width,
+                context.unified_selection,
             );
         }
         DiffRenderRow::SideBySide { old, new } => {
-            side_by_side_diff_row_ui(
-                ui,
-                rect,
-                row_index,
-                old.line_label,
-                old.content,
-                old.kind,
-                new.line_label,
-                new.content,
-                new.kind,
-                gutter_width,
-                side_selection,
-                side_scroll,
-            );
+            side_by_side_diff_row_ui(ui, rect, row_index, *old, *new, context);
         }
         DiffRenderRow::Message(text) => {
             ui.painter().text(
@@ -720,10 +764,7 @@ pub(super) fn unified_diff_row_ui(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     row_index: usize,
-    line_label: &str,
-    marker: &str,
-    content: &str,
-    kind: DiffLineKind,
+    (line_label, marker, content, kind): (&str, &str, &str, DiffLineKind),
     gutter_width: f32,
     unified_selection: Option<&DiffUnifiedSelection>,
 ) {
@@ -812,16 +853,12 @@ pub(super) fn side_by_side_diff_row_ui(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     row_index: usize,
-    old_label: &str,
-    old_content: &str,
-    old_kind: DiffLineKind,
-    new_label: &str,
-    new_content: &str,
-    new_kind: DiffLineKind,
-    gutter_width: f32,
-    side_selection: Option<&DiffSideSelection>,
-    side_scroll: DiffSideBySideScroll,
+    old: DiffCell<'_>,
+    new: DiffCell<'_>,
+    context: &DiffRowContext<'_>,
 ) {
+    let side_scroll = context.side_scroll;
+
     let width = rect.width().max(1.0);
     let center_x = rect.left() + width * 0.5;
     let left_rect = egui::Rect::from_min_max(rect.min, egui::pos2(center_x - 1.0, rect.max.y));
@@ -836,18 +873,13 @@ pub(super) fn side_by_side_diff_row_ui(
         egui::Stroke::new(2.0, ui.visuals().widgets.noninteractive.fg_stroke.color),
     );
 
-    let row_y = rect.center().y;
     paint_side_by_side_cell_text(
         ui,
         row_index,
         DiffSide::Old,
         left_rect,
-        row_y,
-        old_label,
-        old_content,
-        old_kind,
-        gutter_width,
-        side_selection,
+        old,
+        context,
         side_scroll.left_x,
     );
     paint_side_by_side_cell_text(
@@ -855,12 +887,8 @@ pub(super) fn side_by_side_diff_row_ui(
         row_index,
         DiffSide::New,
         right_rect,
-        row_y,
-        new_label,
-        new_content,
-        new_kind,
-        gutter_width,
-        side_selection,
+        new,
+        context,
         side_scroll.right_x,
     );
 }
@@ -870,14 +898,18 @@ pub(super) fn paint_side_by_side_cell_text(
     row_index: usize,
     side: DiffSide,
     rect: egui::Rect,
-    _y: f32,
-    line_label: &str,
-    content: &str,
-    kind: DiffLineKind,
-    gutter_width: f32,
-    side_selection: Option<&DiffSideSelection>,
+    cell: DiffCell<'_>,
+    context: &DiffRowContext<'_>,
     scroll_x: f32,
 ) {
+    let DiffCell {
+        line_label,
+        content,
+        kind,
+    } = cell;
+    let gutter_width = context.gutter_width;
+    let side_selection = context.side_selection;
+
     let gutter_rect = egui::Rect::from_min_max(
         rect.min,
         egui::pos2(
@@ -907,8 +939,7 @@ pub(super) fn paint_side_by_side_cell_text(
         row_index,
         side,
         side_selection,
-        text_left,
-        char_width,
+        (text_left, char_width),
     );
     let content_painter = ui.painter_at(content_rect);
     content_painter.text(

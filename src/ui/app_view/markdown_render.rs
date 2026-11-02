@@ -3,6 +3,15 @@
 
 use super::*;
 
+/// What every node of a rendered fragment is drawn with.
+#[derive(Clone, Copy)]
+pub(super) struct MarkdownRenderFrame<'a> {
+    pub(super) document: &'a MarkdownDocument,
+    pub(super) language_registry: &'a LanguageRegistry,
+    pub(super) fragment_start_offset: usize,
+    pub(super) search_query: Option<&'a str>,
+}
+
 impl EditorPane {
     pub(super) fn markdown_render_source_fragment_ui(
         &mut self,
@@ -43,65 +52,45 @@ impl EditorPane {
             return;
         };
 
-        self.markdown_render_node_ui(
-            ui,
+        let frame = MarkdownRenderFrame {
             document,
             language_registry,
-            &ast,
             fragment_start_offset,
-            0,
-            0,
             search_query,
-        );
+        };
+        self.markdown_render_node_ui(ui, &frame, &ast, 0, 0);
     }
 
     pub(super) fn markdown_render_nodes_ui(
         &mut self,
         ui: &mut egui::Ui,
-        document: &MarkdownDocument,
-        language_registry: &LanguageRegistry,
+        frame: &MarkdownRenderFrame<'_>,
         nodes: &[Node],
-        fragment_start_offset: usize,
         depth: usize,
         ordered_start: u32,
-        search_query: Option<&str>,
     ) {
         for (index, node) in nodes.iter().enumerate() {
-            self.markdown_render_node_ui(
-                ui,
-                document,
-                language_registry,
-                node,
-                fragment_start_offset,
-                depth,
-                ordered_start + index as u32,
-                search_query,
-            );
+            self.markdown_render_node_ui(ui, frame, node, depth, ordered_start + index as u32);
         }
     }
 
     pub(super) fn markdown_render_node_ui(
         &mut self,
         ui: &mut egui::Ui,
-        document: &MarkdownDocument,
-        language_registry: &LanguageRegistry,
+        frame: &MarkdownRenderFrame<'_>,
         node: &Node,
-        fragment_start_offset: usize,
         depth: usize,
         list_index: u32,
-        search_query: Option<&str>,
     ) {
+        let MarkdownRenderFrame {
+            document,
+            language_registry,
+            fragment_start_offset,
+            search_query,
+        } = *frame;
+
         match node {
-            Node::Root(root) => self.markdown_render_nodes_ui(
-                ui,
-                document,
-                language_registry,
-                &root.children,
-                fragment_start_offset,
-                depth,
-                0,
-                search_query,
-            ),
+            Node::Root(root) => self.markdown_render_nodes_ui(ui, frame, &root.children, depth, 0),
             Node::Paragraph(paragraph) => {
                 let plain_text = markdown_inline_plain_text(&paragraph.children);
                 if markdown_nodes_need_widgets(&paragraph.children) {
@@ -153,13 +142,10 @@ impl EditorPane {
                     .show(ui, |ui| {
                         self.markdown_render_nodes_ui(
                             ui,
-                            document,
-                            language_registry,
+                            frame,
                             &blockquote.children,
-                            fragment_start_offset,
                             depth + 1,
                             0,
-                            search_query,
                         );
                     });
                 ui.add_space(6.0);
@@ -172,16 +158,7 @@ impl EditorPane {
                     } else {
                         0
                     };
-                    self.markdown_render_node_ui(
-                        ui,
-                        document,
-                        language_registry,
-                        child,
-                        fragment_start_offset,
-                        depth,
-                        marker,
-                        search_query,
-                    );
+                    self.markdown_render_node_ui(ui, frame, child, depth, marker);
                 }
                 ui.add_space(4.0);
             }
@@ -197,16 +174,7 @@ impl EditorPane {
                         ui.label(RichText::new("-").monospace());
                     }
                     ui.vertical(|ui| {
-                        self.markdown_render_nodes_ui(
-                            ui,
-                            document,
-                            language_registry,
-                            &item.children,
-                            fragment_start_offset,
-                            depth + 1,
-                            0,
-                            search_query,
-                        );
+                        self.markdown_render_nodes_ui(ui, frame, &item.children, depth + 1, 0);
                     });
                 });
             }
@@ -257,16 +225,7 @@ impl EditorPane {
             Node::FootnoteDefinition(_) => {}
             _ => {
                 if let Some(children) = node.children() {
-                    self.markdown_render_nodes_ui(
-                        ui,
-                        document,
-                        language_registry,
-                        children,
-                        fragment_start_offset,
-                        depth,
-                        0,
-                        search_query,
-                    );
+                    self.markdown_render_nodes_ui(ui, frame, children, depth, 0);
                 }
             }
         }
@@ -597,17 +556,19 @@ impl EditorPane {
                     ui.vertical(|ui| {
                         self.markdown_render_nodes_ui(
                             ui,
-                            document,
-                            language_registry,
+                            &MarkdownRenderFrame {
+                                document,
+                                language_registry,
+                                fragment_start_offset: definition
+                                    .position
+                                    .as_ref()
+                                    .map(|position| position.start.offset)
+                                    .unwrap_or(page.source_range.start.offset),
+                                search_query,
+                            },
                             &definition.children,
-                            definition
-                                .position
-                                .as_ref()
-                                .map(|position| position.start.offset)
-                                .unwrap_or(page.source_range.start.offset),
                             0,
                             0,
-                            search_query,
                         );
                     });
                     if ui
