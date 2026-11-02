@@ -98,6 +98,7 @@ use crate::core::{
 use crate::features::search::{SearchResult, search_everywhere};
 use crate::languages::LanguageRegistry;
 use crate::platform;
+use editor_debug::*;
 
 const DEFAULT_TAB_WIDTH: usize = 4;
 const MARKDOWN_SIDE_PANE_DEFAULT_WIDTH: f32 = 180.0;
@@ -1350,261 +1351,6 @@ struct DiffDisplayCache {
     source_len: usize,
     source_hash: u64,
     rows: Rc<Vec<DiffDisplayRow>>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct EditorPerfDebug {
-    view: &'static str,
-    total_ms: f32,
-    header_ms: f32,
-    body_ms: f32,
-    visible_rows: usize,
-    total_rows: usize,
-    galley_hits: usize,
-    galley_misses: usize,
-    line_number_hits: usize,
-    line_number_misses: usize,
-    text_len: usize,
-    scroll_y: f32,
-    scroll_x: f32,
-    scroll_delta_y: f32,
-    source_search_open: bool,
-    source_search_matches: usize,
-    syntax_spans: usize,
-    virtual_cache_entries: usize,
-    line_number_cache_entries: usize,
-}
-
-#[derive(Debug, Clone, Default)]
-struct VirtualClickDebug {
-    next_event_index: u64,
-    events: Vec<VirtualClickEventDebug>,
-    last_accept: Option<VirtualClickAcceptDebug>,
-}
-
-#[derive(Debug, Clone)]
-struct VirtualClickEventDebug {
-    index: u64,
-    source: &'static str,
-    accepted: bool,
-    reason: &'static str,
-    pointer_pos: Option<egui::Pos2>,
-    response_rect: egui::Rect,
-    viewport_rect: egui::Rect,
-    text_clip_rect: egui::Rect,
-    response_hovered: bool,
-    response_contains_pointer: bool,
-    response_clicked: bool,
-    response_primary_clicked: bool,
-    primary_pressed: bool,
-    primary_released: bool,
-    primary_clicked: bool,
-    any_pressed: bool,
-    any_released: bool,
-    any_click: bool,
-    dragging: bool,
-    response_hit: bool,
-    viewport_hit: bool,
-    text_hit: bool,
-    scrollbar_hit: bool,
-    pane_focused: bool,
-    text_edit_focused: bool,
-    scroll_x: f32,
-    scroll_y: f32,
-    row_height: f32,
-    line_count: usize,
-    visible_range: std::ops::Range<usize>,
-}
-
-#[derive(Debug, Clone)]
-struct VirtualClickAcceptDebug {
-    event_index: u64,
-    pointer_pos: egui::Pos2,
-    line: usize,
-    character: u32,
-    cursor_position: Position,
-    text_left: f32,
-    text_clip_left: f32,
-    x_offset: f32,
-}
-
-impl VirtualClickDebug {
-    fn push_event(&mut self, mut event: VirtualClickEventDebug) -> u64 {
-        self.next_event_index = self.next_event_index.wrapping_add(1);
-        event.index = self.next_event_index;
-        self.events.push(event);
-        if self.events.len() > 8 {
-            let remove_count = self.events.len().saturating_sub(8);
-            self.events.drain(0..remove_count);
-        }
-        self.next_event_index
-    }
-
-    fn report_lines(&self, pane: Pane) -> Vec<String> {
-        let pane_label = pane.label();
-        let mut lines = Vec::new();
-        if let Some(accept) = &self.last_accept {
-            lines.push(accept.report_line(pane_label));
-        } else {
-            lines.push(format!("{pane_label} virtual_click_accept: none"));
-        }
-        if self.events.is_empty() {
-            lines.push(format!("{pane_label} virtual_click_events: none"));
-        } else {
-            for event in &self.events {
-                lines.push(event.report_line(pane_label));
-            }
-        }
-        lines
-    }
-}
-
-impl VirtualClickEventDebug {
-    fn report_line(&self, pane_label: &str) -> String {
-        format!(
-            "{pane_label} virtual_click_event#{}: source={} accepted={} reason={} pointer={} hits(response/view/text/scrollbar)={}/{}/{}/{} input(primary p/r/c={}/{}/{}, any p/r/c={}/{}/{}, dragging={}) response(hovered={} contains={} clicked={} primary_clicked={}) focus(pane={} text_edit={}) scroll=({:.1},{:.1}) row_h={:.2} lines={} visible={:?} rects(response={} viewport={} text_clip={})",
-            self.index,
-            self.source,
-            self.accepted,
-            self.reason,
-            format_virtual_pos(self.pointer_pos),
-            self.response_hit,
-            self.viewport_hit,
-            self.text_hit,
-            self.scrollbar_hit,
-            self.primary_pressed,
-            self.primary_released,
-            self.primary_clicked,
-            self.any_pressed,
-            self.any_released,
-            self.any_click,
-            self.dragging,
-            self.response_hovered,
-            self.response_contains_pointer,
-            self.response_clicked,
-            self.response_primary_clicked,
-            self.pane_focused,
-            self.text_edit_focused,
-            self.scroll_x,
-            self.scroll_y,
-            self.row_height,
-            self.line_count,
-            self.visible_range,
-            format_virtual_rect(self.response_rect),
-            format_virtual_rect(self.viewport_rect),
-            format_virtual_rect(self.text_clip_rect),
-        )
-    }
-}
-
-impl VirtualClickAcceptDebug {
-    fn report_line(&self, pane_label: &str) -> String {
-        format!(
-            "{pane_label} virtual_click_accept: event#{} line={} char={} cursor={}:{} pointer={} text_left={:.1} text_clip_left={:.1} x_offset={:.1}",
-            self.event_index,
-            self.line + 1,
-            self.character + 1,
-            self.cursor_position.line + 1,
-            self.cursor_position.character + 1,
-            format_virtual_pos(Some(self.pointer_pos)),
-            self.text_left,
-            self.text_clip_left,
-            self.x_offset,
-        )
-    }
-}
-
-fn format_virtual_pos(position: Option<egui::Pos2>) -> String {
-    position
-        .map(|position| format!("({:.1},{:.1})", position.x, position.y))
-        .unwrap_or_else(|| "None".to_owned())
-}
-
-fn format_virtual_rect(rect: egui::Rect) -> String {
-    format!(
-        "({:.1},{:.1})-({:.1},{:.1})",
-        rect.left(),
-        rect.top(),
-        rect.right(),
-        rect.bottom()
-    )
-}
-
-#[derive(Debug, Clone, Default)]
-struct VirtualFrameCounters {
-    galley_hits: usize,
-    galley_misses: usize,
-    line_number_hits: usize,
-    line_number_misses: usize,
-}
-
-#[derive(Debug, Clone)]
-struct AppPerfDebug {
-    last_total_ms: f32,
-    last_stable_dt_ms: f32,
-    last_unstable_dt_ms: f32,
-    avg_total_ms: f32,
-    max_total_ms: f32,
-    frame_samples: Vec<f32>,
-    frame_index: u64,
-    focused_pane: Pane,
-    scroll_before_y: f32,
-    scroll_after_y: f32,
-    scroll_delta_y: f32,
-    raw_wheel_delta: egui::Vec2,
-    smooth_scroll_delta: egui::Vec2,
-    page_key: Option<&'static str>,
-}
-
-impl Default for AppPerfDebug {
-    fn default() -> Self {
-        Self {
-            last_total_ms: 0.0,
-            last_stable_dt_ms: 0.0,
-            last_unstable_dt_ms: 0.0,
-            avg_total_ms: 0.0,
-            max_total_ms: 0.0,
-            frame_samples: Vec::new(),
-            frame_index: 0,
-            focused_pane: Pane::Left,
-            scroll_before_y: 0.0,
-            scroll_after_y: 0.0,
-            scroll_delta_y: 0.0,
-            raw_wheel_delta: egui::Vec2::ZERO,
-            smooth_scroll_delta: egui::Vec2::ZERO,
-            page_key: None,
-        }
-    }
-}
-
-impl EditorPerfDebug {
-    fn report_line(&self, pane: Pane, title: &str) -> String {
-        let pane_label = pane.label();
-        format!(
-            "{}: title={:?} view={} total_ms={:.2} header_ms={:.2} body_ms={:.2} rows={}/{} text_len={} scroll=({:.1},{:.1}) scroll_delta_y={:.1} galley_hit/miss={}/{} line_no_hit/miss={}/{} search_open={} search_matches={} syntax_spans={} cache_entries={}/{}",
-            pane_label,
-            title,
-            self.view,
-            self.total_ms,
-            self.header_ms,
-            self.body_ms,
-            self.visible_rows,
-            self.total_rows,
-            self.text_len,
-            self.scroll_x,
-            self.scroll_y,
-            self.scroll_delta_y,
-            self.galley_hits,
-            self.galley_misses,
-            self.line_number_hits,
-            self.line_number_misses,
-            self.source_search_open,
-            self.source_search_matches,
-            self.syntax_spans,
-            self.virtual_cache_entries,
-            self.line_number_cache_entries
-        )
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -6698,142 +6444,6 @@ impl EditorPane {
         });
     }
 
-    fn debug_report_lines(&self, tab_width: usize) -> Vec<String> {
-        let mut lines = Vec::new();
-        lines.push(format!(
-            "{} editor: title={} tab_width={}",
-            self.pane.label(),
-            self.title,
-            tab_width
-        ));
-        if let Some(path) = &self.path {
-            lines.push(format!("{} path={}", self.pane.label(), path.display()));
-        } else {
-            lines.push(format!("{} path=none", self.pane.label()));
-        }
-        if let Some(position) = self.cursor_position {
-            lines.push(format!(
-                "{} cursor={}:{}",
-                self.pane.label(),
-                position.line + 1,
-                position.character + 1
-            ));
-        }
-        if let Some(position) = self.target_position {
-            lines.push(format!(
-                "{} definition_target={}:{}",
-                self.pane.label(),
-                position.line + 1,
-                position.character + 1
-            ));
-        }
-        if self.is_csv() {
-            lines.push(format!(
-                "{} csv_mode={}",
-                self.pane.label(),
-                self.csv_mode.label()
-            ));
-            if self.csv_mode == CsvMode::Grid
-                && let Some(cell) = self.selected_csv_cell
-            {
-                lines.push(format!(
-                    "{} csv_cell=R{}C{}",
-                    self.pane.label(),
-                    cell.row + 1,
-                    cell.column + 1
-                ));
-            }
-        }
-        if self.is_markdown() {
-            lines.push(format!(
-                "{} markdown_mode={}",
-                self.pane.label(),
-                self.markdown_mode.label()
-            ));
-            if !self.markdown_search.query.is_empty() {
-                lines.push(format!(
-                    "{} markdown_search={}/{} query={}",
-                    self.pane.label(),
-                    self.markdown_search.current_match + 1,
-                    self.markdown_search.match_count,
-                    self.markdown_search.query
-                ));
-            }
-        } else if self.source_search.open && !self.source_search.query.is_empty() {
-            lines.push(format!(
-                "{} source_search={}/{} query={}",
-                self.pane.label(),
-                self.source_search.current_match + 1,
-                self.source_search.match_count,
-                self.source_search.query
-            ));
-        }
-        if let Some(debug) = &self.editor_render_debug {
-            lines.push(format!(
-                "{} render: lines={} text_lines={} galley_rows={} delta={}",
-                self.pane.label(),
-                debug.line_count,
-                debug.text_line_count,
-                debug.galley_rows,
-                debug.galley_rows as isize - debug.text_line_count as isize
-            ));
-            lines.push(format!(
-                "{} render_scroll: y={:.1} row_h={:.2} clip={:.1}..{:.1} viewport={:.1}..{:.1} galley_y={:.1}",
-                self.pane.label(),
-                debug.scroll_y,
-                debug.row_height,
-                debug.clip_top,
-                debug.clip_bottom,
-                debug.viewport_top,
-                debug.viewport_bottom,
-                debug.galley_pos_y
-            ));
-            lines.push(format!(
-                "{} visible_rows: first={:?}@{:?} last={:?} anchor={:?}@{:?} range={:?} current_line={:?}",
-                self.pane.label(),
-                debug.first_visible_row,
-                debug.first_visible_top.map(|value| format!("{value:.1}")),
-                debug.last_visible_row,
-                debug.anchor_line,
-                debug.anchor_top.map(|value| format!("{value:.1}")),
-                debug.anchored_range,
-                debug.current_line
-            ));
-        }
-        if let Some(perf) = &self.editor_perf_debug {
-            lines.push(format!(
-                "{} perf: view={} total={:.2}ms body={:.2}ms rows={}/{} scroll_delta_y={:.1}",
-                self.pane.label(),
-                perf.view,
-                perf.total_ms,
-                perf.body_ms,
-                perf.visible_rows,
-                perf.total_rows,
-                perf.scroll_delta_y
-            ));
-            lines.push(format!(
-                "{} perf_cache: galley={}/{} line_no={}/{} syntax={} search={}/{}",
-                self.pane.label(),
-                perf.galley_hits,
-                perf.galley_misses,
-                perf.line_number_hits,
-                perf.line_number_misses,
-                perf.syntax_spans,
-                perf.source_search_open,
-                perf.source_search_matches
-            ));
-        }
-        if let Some(accept) = &self.virtual_click_debug.last_accept {
-            lines.push(accept.report_line(self.pane.label()));
-        } else {
-            lines.push(format!("{} virtual_click_accept: none", self.pane.label()));
-        }
-        for event in self.virtual_click_debug.events.iter().rev().take(4) {
-            lines.push(event.report_line(self.pane.label()));
-        }
-        lines
-    }
-
     fn reload_current_file_diff_context(&mut self, context_mode: GitDiffContextMode) {
         let Some(diff_view) = self.diff_view.clone() else {
             return;
@@ -8040,27 +7650,6 @@ struct CsvSelectionDrag {
 enum BookmarkAction {
     Open(SessionBookmark),
     Remove(usize),
-}
-
-#[derive(Debug, Clone)]
-struct EditorRenderDebug {
-    line_count: usize,
-    text_line_count: usize,
-    galley_rows: usize,
-    scroll_y: f32,
-    row_height: f32,
-    clip_top: f32,
-    clip_bottom: f32,
-    viewport_top: f32,
-    viewport_bottom: f32,
-    galley_pos_y: f32,
-    first_visible_row: Option<usize>,
-    first_visible_top: Option<f32>,
-    last_visible_row: Option<usize>,
-    anchor_line: Option<usize>,
-    anchor_top: Option<f32>,
-    anchored_range: Option<std::ops::Range<usize>>,
-    current_line: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -10023,10 +9612,6 @@ fn diff_row_background_rect(rect: egui::Rect) -> egui::Rect {
     )
 }
 
-fn elapsed_ms(start: Instant) -> f32 {
-    start.elapsed().as_secs_f32() * 1000.0
-}
-
 fn allocate_line_number_gutter(ui: &mut egui::Ui, line_count: usize) -> egui::Rect {
     let row_height = editor_scroll_row_height(ui);
     let visible_rows = line_count.max(TEXTEDIT_SOURCE_MIN_ROWS);
@@ -10602,40 +10187,6 @@ fn highlighted_line_layout_job(
     job
 }
 
-fn capture_virtual_editor_render_debug(
-    line_count: usize,
-    row_height: f32,
-    scroll_y: f32,
-    viewport_rect: egui::Rect,
-    visible_rows: std::ops::Range<usize>,
-    current_line: Option<u32>,
-) -> EditorRenderDebug {
-    let first_visible_row = (visible_rows.start < visible_rows.end).then_some(visible_rows.start);
-    let first_visible_top =
-        first_visible_row.map(|line| viewport_rect.top() + line as f32 * row_height - scroll_y);
-    let last_visible_row = visible_rows.end.checked_sub(1);
-
-    EditorRenderDebug {
-        line_count,
-        text_line_count: line_count,
-        galley_rows: line_count,
-        scroll_y,
-        row_height,
-        clip_top: viewport_rect.top(),
-        clip_bottom: viewport_rect.bottom(),
-        viewport_top: viewport_rect.top(),
-        viewport_bottom: viewport_rect.bottom(),
-        galley_pos_y: viewport_rect.top() - scroll_y,
-        first_visible_row,
-        first_visible_top,
-        last_visible_row,
-        anchor_line: Some(visible_rows.start),
-        anchor_top: first_visible_top,
-        anchored_range: Some(visible_rows),
-        current_line,
-    }
-}
-
 fn handle_and_paint_virtual_scrollbars(
     ui: &egui::Ui,
     viewport_rect: egui::Rect,
@@ -10868,41 +10419,6 @@ fn paint_indent_guides(
                 egui::Stroke::new(1.0, color),
             );
         }
-    }
-}
-
-fn capture_editor_render_debug(
-    output: &egui::text_edit::TextEditOutput,
-    line_count: usize,
-    text_line_count: usize,
-    row_height: f32,
-    scroll_y: f32,
-    viewport_rect: egui::Rect,
-    current_line: Option<u32>,
-) -> EditorRenderDebug {
-    let visible_rows = visible_galley_row_range(output, line_count, viewport_rect);
-    let first_visible_row = (visible_rows.start < visible_rows.end).then_some(visible_rows.start);
-    let first_visible_top = first_visible_row.map(|index| galley_line_rect(output, index).top());
-    let last_visible_row = visible_rows.end.checked_sub(1);
-
-    EditorRenderDebug {
-        line_count,
-        text_line_count,
-        galley_rows: output.galley.rows.len(),
-        scroll_y,
-        row_height,
-        clip_top: output.text_clip_rect.top(),
-        clip_bottom: output.text_clip_rect.bottom(),
-        viewport_top: viewport_rect.top(),
-        viewport_bottom: viewport_rect.bottom(),
-        galley_pos_y: output.galley_pos.y,
-        first_visible_row,
-        first_visible_top,
-        last_visible_row,
-        anchor_line: Some(visible_rows.start),
-        anchor_top: Some(galley_line_rect(output, visible_rows.start).top()),
-        anchored_range: Some(visible_rows),
-        current_line,
     }
 }
 
@@ -12195,20 +11711,6 @@ fn csv_navigation_target(
     })
 }
 
-fn debug_or_none(value: &str) -> String {
-    if value.is_empty() {
-        "none".to_owned()
-    } else {
-        value.to_owned()
-    }
-}
-
-fn debug_instant_age_ms(value: Option<Instant>) -> String {
-    value
-        .map(|instant| format!("{:.0}", instant.elapsed().as_secs_f64() * 1000.0))
-        .unwrap_or_else(|| "none".to_owned())
-}
-
 fn start_syntax_highlighting(
     path: PathBuf,
     text: String,
@@ -12473,6 +11975,7 @@ fn pick_workspace_folder(title: &str) -> Option<PathBuf> {
 mod ai_command;
 mod clipboard;
 mod diagnostics;
+mod editor_debug;
 #[cfg(test)]
 mod event_tests;
 mod git_actions;
