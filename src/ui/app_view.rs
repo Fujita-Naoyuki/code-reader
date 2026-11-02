@@ -105,6 +105,7 @@ use editor_pane::*;
 use editor_style::*;
 use fonts::*;
 use git_history_view::*;
+use lsp::*;
 use markdown_render::*;
 use markdown_view::*;
 use search::*;
@@ -117,9 +118,6 @@ const WORKSPACE_SECTION_HEADER_HEIGHT: f32 = 24.0;
 const WORKSPACE_FOOTER_BODY_ALLOWANCE: f32 = 64.0;
 const WORKSPACE_FILE_TREE_MIN_HEIGHT: f32 = 120.0;
 const WORKSPACE_CHANGE_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const GO_LSP_REQUEST_TIMEOUT: Duration = Duration::from_millis(3000);
-const RUST_LSP_REQUEST_TIMEOUT: Duration = Duration::from_millis(3000);
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pane {
     Left,
@@ -1096,33 +1094,6 @@ fn ellipsize_text_to_width(
     format!("{}...", text.chars().take(low).collect::<String>())
 }
 
-fn location_contains_position(location: &Location, path: &Path, position: Position) -> bool {
-    paths_match(&location.path, path) && range_contains_position(location.range, position)
-}
-
-fn paths_match(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
-}
-
-fn range_contains_position(range: Range, position: Position) -> bool {
-    if position.line < range.start.line || position.line > range.end.line {
-        return false;
-    }
-    if position.line == range.start.line && position.character < range.start.character {
-        return false;
-    }
-    if position.line == range.end.line && position.character > range.end.character {
-        return false;
-    }
-    true
-}
-
 fn elide_text_to_width(
     ui: &egui::Ui,
     text: &str,
@@ -1225,174 +1196,6 @@ fn paint_navigation_breadcrumb(
             .monospace(),
     )
     .on_hover_text(navigation_point_hover_text(&current));
-}
-
-#[derive(Debug, Clone)]
-struct DefinitionCandidate {
-    label: String,
-    location: Location,
-    preview: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct LspDebugState {
-    last_status: String,
-    last_error: Option<String>,
-    last_kind: Option<LspRequestKind>,
-    last_request_id: Option<u64>,
-    last_duration_ms: Option<f64>,
-    last_location_count: usize,
-    last_definition_status: String,
-    last_definition_error: Option<String>,
-    last_definition_duration_ms: Option<f64>,
-    last_definition_location_count: usize,
-    warmup_count: usize,
-    sync_count: usize,
-    definition_count: usize,
-    reference_count: usize,
-    fallback_count: usize,
-    timeout_count: usize,
-    initialized: bool,
-    started_at: Option<Instant>,
-    initialized_at: Option<Instant>,
-    last_progress_at: Option<Instant>,
-    last_diagnostics_at: Option<Instant>,
-    last_definition_success_at: Option<Instant>,
-    active_progress_count: usize,
-    server_request_count: usize,
-    server_notification_count: usize,
-    reader_error_count: usize,
-    progress_count: usize,
-    diagnostics_count: usize,
-    last_server_kind: String,
-    last_server_method: String,
-    last_server_message: Option<String>,
-}
-
-impl LspDebugState {
-    fn mark_started(&mut self) {
-        let now = Instant::now();
-        self.started_at = Some(now);
-        self.last_status = "starting".to_owned();
-    }
-
-    fn record_definition_status(
-        &mut self,
-        status: &str,
-        error: Option<String>,
-        duration_ms: Option<f64>,
-        location_count: usize,
-    ) {
-        self.last_definition_status = status.to_owned();
-        self.last_definition_error = error;
-        self.last_definition_duration_ms = duration_ms;
-        self.last_definition_location_count = location_count;
-        if status == "definition_ok" && location_count > 0 {
-            self.last_definition_success_at = Some(Instant::now());
-        }
-    }
-
-    fn record_server_event(&mut self, event: &LspServerEvent) {
-        let now = Instant::now();
-        match event.kind {
-            LspServerEventKind::Request => self.server_request_count += 1,
-            LspServerEventKind::Notification => self.server_notification_count += 1,
-            LspServerEventKind::ReaderError => self.reader_error_count += 1,
-            LspServerEventKind::Initialized => {
-                self.initialized = true;
-                self.initialized_at = Some(now);
-            }
-        }
-        if event.method == "$/progress" {
-            self.progress_count += 1;
-            self.last_progress_at = Some(now);
-            if event
-                .message
-                .as_deref()
-                .is_some_and(|message| message.contains("kind=begin"))
-            {
-                self.active_progress_count += 1;
-            } else if event
-                .message
-                .as_deref()
-                .is_some_and(|message| message.contains("kind=end"))
-            {
-                self.active_progress_count = self.active_progress_count.saturating_sub(1);
-            }
-        }
-        if let Some(count) = event.diagnostics_count {
-            self.diagnostics_count = count;
-            self.last_diagnostics_at = Some(now);
-        }
-        self.last_server_kind = format!("{:?}", event.kind);
-        self.last_server_method = event.method.clone();
-        self.last_server_message = event.message.clone();
-        if event.kind == LspServerEventKind::ReaderError {
-            self.last_error = event.message.clone();
-            self.last_status = "reader_error".to_owned();
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RustLspReadinessStatus {
-    NotStarted,
-    WarmingUp(&'static str),
-    Ready(&'static str),
-    Error,
-}
-
-impl RustLspReadinessStatus {
-    fn status_bar_label(self) -> String {
-        match self {
-            Self::NotStarted => "not started".to_owned(),
-            Self::WarmingUp(reason) => format!("warming up... ({reason})"),
-            Self::Ready(reason) => format!("ready ({reason})"),
-            Self::Error => "error".to_owned(),
-        }
-    }
-
-    fn report_label(self) -> String {
-        match self {
-            Self::NotStarted => "not_started".to_owned(),
-            Self::WarmingUp(reason) => format!("warming_up reason={reason}"),
-            Self::Ready(reason) => format!("ready reason={reason}"),
-            Self::Error => "error".to_owned(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LocationListKind {
-    Definitions,
-    References,
-}
-
-impl LocationListKind {
-    fn report_title(self) -> &'static str {
-        match self {
-            Self::Definitions => "Definition locations",
-            Self::References => "References",
-        }
-    }
-
-    fn singular_label(self) -> &'static str {
-        match self {
-            Self::Definitions => "definition",
-            Self::References => "reference",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct PendingGoLspRequest {
-    request_id: u64,
-    kind: LspRequestKind,
-    document: Document,
-    position: Position,
-    identifier: String,
-    origin: Option<NavigationPoint>,
-    started_at: Instant,
 }
 
 fn consume_copy_shortcut(input: &mut egui::InputState) -> bool {
