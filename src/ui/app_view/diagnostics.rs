@@ -54,12 +54,12 @@ impl CodeReaderApp {
         ));
         for pane in [Pane::Left, Pane::Right] {
             let editor = self.editor(pane);
-            if let Some(perf) = &editor.editor_perf_debug {
+            if let Some(perf) = &editor.debug.perf {
                 lines.push(perf.report_line(pane, &editor.title));
             } else {
                 lines.push(format!("{}: no perf sample", pane.label()));
             }
-            lines.extend(editor.virtual_click_debug.report_lines(pane));
+            lines.extend(editor.debug.virtual_click.report_lines(pane));
         }
         lines.join("\n")
     }

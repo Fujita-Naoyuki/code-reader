@@ -95,7 +95,7 @@ fn md_app() -> TestApp {
 #[test]
 fn preview_renders_the_first_page_with_navigation() {
     let mut t = md_app();
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Preview);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Preview);
     assert!(t.has_label("MARKDOWN"));
     assert!(t.has_label("Pages"));
     assert!(t.has_label("1/5"));
@@ -158,7 +158,7 @@ fn pages_list_rows_select_pages() {
     ));
     assert!(t.has_label("3/5"));
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Body
     );
 }
@@ -167,24 +167,24 @@ fn pages_list_rows_select_pages() {
 fn mode_toggles_and_alt_shortcuts() {
     let mut t = md_app();
     t.click_text_label("Markdown");
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Markdown);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Markdown);
     assert!(
         !t.has_label("Outline"),
         "side panes are hidden in source mode"
     );
     t.click_text_label("Both");
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Both);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Both);
     t.click_text_label("Preview");
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Preview);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Preview);
 
     t.alt(egui::Key::Num2);
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Markdown);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Markdown);
     t.alt(egui::Key::Num3);
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Both);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Both);
     t.alt(egui::Key::Num1);
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Preview);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Preview);
     t.alt(egui::Key::Num1);
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Preview);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Preview);
 }
 
 #[test]
@@ -192,18 +192,18 @@ fn outline_and_pages_panes_toggle() {
     let mut t = md_app();
     t.click_nth("Next", 0);
     t.click_text_label("Outline");
-    assert!(t.app().left.markdown_show_outline);
+    assert!(t.app().left.markdown.show_outline);
     assert!(t.has_label("Section Beta"));
     t.click_nth("Section Beta", 0);
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-section-beta")
     );
 
     t.click_text_label("Pages");
-    assert!(!t.app().left.markdown_show_pages);
+    assert!(!t.app().left.markdown.show_pages);
     t.click_text_label("Pages");
-    assert!(t.app().left.markdown_show_pages);
+    assert!(t.app().left.markdown.show_pages);
 
     // Both mode shows the outline next to the source editor.
     t.alt(egui::Key::Num3);
@@ -213,7 +213,7 @@ fn outline_and_pages_panes_toggle() {
     t.click_nth("Previous", 0);
     assert!(t.has_label("No headings"));
     t.click_text_label("Outline");
-    assert!(!t.app().left.markdown_show_outline);
+    assert!(!t.app().left.markdown.show_outline);
 }
 
 #[test]
@@ -223,7 +223,7 @@ fn pages_and_outline_take_the_keyboard_when_clicked_or_with_f6() {
     // The pane titles are the second "Pages" / "Outline" (after the header toggles).
     t.click_nth("Pages", 1);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Pages
     );
     assert!(t.app().context_shortcuts()[0].keys == "Up/Down");
@@ -232,59 +232,59 @@ fn pages_and_outline_take_the_keyboard_when_clicked_or_with_f6() {
     t.key(egui::Key::ArrowUp);
     t.key(egui::Key::Enter);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Body
     );
 
     t.click_nth("Next", 0);
     t.click_nth("Outline", 1);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Outline
     );
     t.key(egui::Key::ArrowDown);
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-section-beta")
     );
     t.key(egui::Key::ArrowUp);
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-section-alpha")
     );
     t.key(egui::Key::Enter);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Body
     );
 
     // F6 / Shift+F6 cycle Pages -> Body -> Outline.
     t.key(egui::Key::F6);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Outline
     );
     t.key(egui::Key::F6);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Pages
     );
     t.shift(egui::Key::F6);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Outline
     );
 
     // Hiding a pane while it has the keyboard moves it back to the body.
     t.click_text_label("Outline");
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Body
     );
     t.key(egui::Key::F6);
     t.alt(egui::Key::Num3);
     assert_eq!(
-        t.app().left.markdown_focus_target,
+        t.app().left.markdown.focus_target,
         MarkdownFocusTarget::Body
     );
 }
@@ -299,7 +299,7 @@ fn local_markdown_links_open_with_fragments() {
         Some(t.path("guide.md").as_path())
     );
     assert_eq!(
-        t.app().left.markdown_active_page_id.as_deref(),
+        t.app().left.markdown.active_page_id.as_deref(),
         Some("target-section")
     );
     assert_eq!(t.app().left.cursor_position, Some(Position::new(4, 0)));
@@ -317,7 +317,7 @@ fn local_markdown_links_open_with_fragments() {
     t.click_nth("Next", 0);
     t.click_text_label("same page");
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-section-alpha")
     );
 }
@@ -381,17 +381,17 @@ fn footnote_reference_and_back_button() {
     // Footnotes are numbered in definition order: the near one comes first.
     t.click_text_label("[1]");
     t.steps(2);
-    assert!(t.app().left.markdown_pending_footnote_scroll.is_none());
+    assert!(t.app().left.markdown.pending_footnote_scroll.is_none());
     t.click_text_label("Back");
     t.steps(2);
-    assert!(t.app().left.markdown_pending_footnote_scroll.is_none());
+    assert!(t.app().left.markdown.pending_footnote_scroll.is_none());
 }
 
 #[test]
 fn rendered_search_finds_text_across_pages() {
     let mut t = md_app();
     t.ctrl(egui::Key::F);
-    assert!(t.app().left.markdown_search.open);
+    assert!(t.app().left.markdown.search.open);
     assert!(!t.app().left.source_search.open);
     t.type_text("needle");
     assert!(t.has_label("1/1"));
@@ -399,13 +399,13 @@ fn rendered_search_finds_text_across_pages() {
     assert!(t.has_label("3/5"), "jumps to the page with the match");
 
     t.fill_markdown_search("page");
-    let count = t.app().left.markdown_search.match_count;
+    let count = t.app().left.markdown.search.match_count;
     assert!(count >= 3);
     t.key(egui::Key::Enter);
-    assert_eq!(t.app().left.markdown_search.current_match, 1);
+    assert_eq!(t.app().left.markdown.search.current_match, 1);
     t.steps(30);
     t.shift(egui::Key::Enter);
-    assert_eq!(t.app().left.markdown_search.current_match, 0);
+    assert_eq!(t.app().left.markdown.search.current_match, 0);
     t.click_nth("Next", 0);
     t.click_nth("Previous", 0);
     t.key(egui::Key::F3);
@@ -415,10 +415,10 @@ fn rendered_search_finds_text_across_pages() {
     assert!(t.has_label("No results"));
     t.key(egui::Key::F3);
     t.key(egui::Key::Escape);
-    assert!(!t.app().left.markdown_search.open);
+    assert!(!t.app().left.markdown.search.open);
     t.ctrl(egui::Key::F);
     t.click("Close");
-    assert!(!t.app().left.markdown_search.open);
+    assert!(!t.app().left.markdown.search.open);
 }
 
 #[test]
@@ -434,7 +434,7 @@ fn markdown_source_mode_edits_and_tracks_the_active_page() {
     t.type_text("Second Page");
     t.steps(3);
     assert_eq!(
-        t.app().left.markdown_active_page_id.as_deref(),
+        t.app().left.markdown.active_page_id.as_deref(),
         Some("second-page")
     );
     t.click("Close");
@@ -461,26 +461,26 @@ fn markdown_mode_is_remembered_per_file() {
     let mut t = md_app();
     t.alt(egui::Key::Num2);
     t.click_first("guide.md");
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Preview);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Preview);
     t.click_first("doc.md");
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Markdown);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Markdown);
 }
 
 #[test]
 fn pages_pane_can_be_resized_by_dragging() {
     let mut t = md_app();
-    let before = t.app().left.markdown_pages_width;
+    let before = t.app().left.markdown.pages_width;
     let pages = t.nth_label_rect("Pages", 1);
     let handle = egui::pos2(pages.left() + before + 4.0, pages.bottom() + 100.0);
     t.drag(handle, handle + egui::vec2(80.0, 0.0));
-    assert!(t.app().left.markdown_pages_width > before + 40.0);
+    assert!(t.app().left.markdown.pages_width > before + 40.0);
 
     t.alt(egui::Key::Num3);
-    let width = t.app().left.markdown_pages_width;
+    let width = t.app().left.markdown.pages_width;
     let pages = t.nth_label_rect("Pages", 1);
     let handle = egui::pos2(pages.left() + width + 4.0, pages.bottom() + 100.0);
     t.drag(handle, handle - egui::vec2(60.0, 0.0));
-    assert!(t.app().left.markdown_pages_width < width);
+    assert!(t.app().left.markdown.pages_width < width);
 }
 
 #[test]

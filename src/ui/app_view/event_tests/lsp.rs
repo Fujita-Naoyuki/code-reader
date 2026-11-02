@@ -944,7 +944,9 @@ fn go_types_are_highlighted() {
         .file("types.go", "package main\n\ntype Point struct {\n    X int\n}\n\nfunc (p Point) Norm() int { return p.X }\n")
         .build();
     t.click_first("types.go");
-    t.wait_until("highlight", |app| app.left.syntax_highlight_cache.is_some());
+    t.wait_until("highlight", |app| {
+        app.left.caches.syntax_highlight.is_some()
+    });
     t.ctrl(egui::Key::P);
     t.type_text("Norm");
     let results = t.app_mut().search_overlay_results(&[]);

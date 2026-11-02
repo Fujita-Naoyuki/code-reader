@@ -64,7 +64,8 @@ fn all_diffs_collapse_and_expand_files() {
     assert_eq!(
         t.app()
             .left
-            .diff_collapsed_files
+            .diff
+            .collapsed_files
             .values()
             .filter(|c| **c)
             .count(),
@@ -75,7 +76,8 @@ fn all_diffs_collapse_and_expand_files() {
     assert_eq!(
         t.app()
             .left
-            .diff_collapsed_files
+            .diff
+            .collapsed_files
             .values()
             .filter(|c| **c)
             .count(),
@@ -90,7 +92,8 @@ fn all_diffs_collapse_and_expand_files() {
     assert_eq!(
         t.app()
             .left
-            .diff_collapsed_files
+            .diff
+            .collapsed_files
             .values()
             .filter(|c| **c)
             .count(),
@@ -148,7 +151,7 @@ fn side_by_side_selection_on_each_side_and_horizontal_scroll() {
     t.click_at(egui::pos2(plus.left() - 120.0, plus.center().y));
     t.click("Side by Side");
     t.steps(2);
-    assert_eq!(t.app().left.diff_display_mode, DiffDisplayMode::SideBySide);
+    assert_eq!(t.app().left.diff.display_mode, DiffDisplayMode::SideBySide);
 
     let unified = t.label_rect("Unified");
     let editor_right = 1480.0;
@@ -156,7 +159,7 @@ fn side_by_side_selection_on_each_side_and_horizontal_scroll() {
 
     // Old (left) side.
     t.drag(row_pos(&t, 3, 90.0), row_pos(&t, 5, 200.0));
-    let selection = t.app().left.diff_side_selection.unwrap();
+    let selection = t.app().left.diff.side_selection.unwrap();
     assert_eq!(selection.side, super::super::DiffSide::Old);
     t.copy_event();
     t.assert_status_containing("Copied diff selection:");
@@ -165,7 +168,7 @@ fn side_by_side_selection_on_each_side_and_horizontal_scroll() {
     let right_x = center - unified.left() + 90.0;
     t.steps(20);
     t.drag(row_pos(&t, 3, right_x), row_pos(&t, 6, right_x + 120.0));
-    let selection = t.app().left.diff_side_selection.unwrap();
+    let selection = t.app().left.diff.side_selection.unwrap();
     assert_eq!(selection.side, super::super::DiffSide::New);
     t.copy_event();
 
@@ -175,15 +178,15 @@ fn side_by_side_selection_on_each_side_and_horizontal_scroll() {
     let start = egui::pos2(center + 40.0, y);
     t.steps(20);
     t.drag(start, start + egui::vec2(300.0, 0.0));
-    assert!(t.app().left.diff_side_right_scroll_x > 0.0);
-    assert!(t.app().left.diff_side_left_scroll_x > 0.0);
+    assert!(t.app().left.diff.side_right_scroll_x > 0.0);
+    assert!(t.app().left.diff.side_left_scroll_x > 0.0);
     t.steps(20);
     t.click_at(egui::pos2(unified.left() + 40.0, y));
-    assert_eq!(t.app().left.diff_side_left_scroll_x, 0.0);
-    assert_eq!(t.app().left.diff_side_right_scroll_x, 0.0);
+    assert_eq!(t.app().left.diff.side_left_scroll_x, 0.0);
+    assert_eq!(t.app().left.diff.side_right_scroll_x, 0.0);
 
     t.click("Unified");
-    assert!(t.app().left.diff_side_selection.is_none());
+    assert!(t.app().left.diff.side_selection.is_none());
 }
 
 #[test]
@@ -202,11 +205,11 @@ fn diff_view_scrolls_with_keys_and_wheel() {
     t.click_at(egui::pos2(plus.left() - 120.0, plus.center().y));
     t.click_at(row_pos(&t, 3, 10.0));
     t.key(egui::Key::PageDown);
-    assert!(t.app().left.scroll_y > 0.0);
+    assert!(t.app().left.scroll.y > 0.0);
     t.key(egui::Key::PageUp);
     let pos = row_pos(&t, 5, 300.0);
     t.scroll(pos, egui::vec2(0.0, -500.0));
-    assert!(t.app().left.scroll_y > 0.0);
+    assert!(t.app().left.scroll.y > 0.0);
     t.click("Full File");
 }
 
@@ -344,11 +347,11 @@ fn light_theme_diff_and_one_sided_scrolling() {
     let center = (unified.left() + 1480.0) * 0.5;
     t.steps(20);
     t.drag(egui::pos2(center + 40.0, y), egui::pos2(center + 200.0, y));
-    assert!(t.app().left.diff_side_right_scroll_x > 0.0);
+    assert!(t.app().left.diff.side_right_scroll_x > 0.0);
     // The old column is short: its scrollbar stays inactive.
     t.steps(20);
     t.click_at(egui::pos2(unified.left() + 40.0, y));
-    assert_eq!(t.app().left.diff_side_left_scroll_x, 0.0);
+    assert_eq!(t.app().left.diff.side_left_scroll_x, 0.0);
 }
 
 #[test]

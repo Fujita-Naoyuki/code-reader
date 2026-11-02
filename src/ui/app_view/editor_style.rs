@@ -14,7 +14,7 @@ impl EditorPane {
         self.poll_syntax_highlight(ui);
 
         let path = self.path.clone();
-        if let Some(cache) = &self.syntax_highlight_cache
+        if let Some(cache) = &self.caches.syntax_highlight
             && cache.path == path
             && cache.source_len == source_len
             && cache.source_hash == source_hash
@@ -26,7 +26,7 @@ impl EditorPane {
             && source_len > EXTERNAL_RUST_HIGHLIGHT_MAX_BYTES
         {
             let spans = Rc::new(Vec::new());
-            self.syntax_highlight_cache = Some(SyntaxHighlightCache {
+            self.caches.syntax_highlight = Some(SyntaxHighlightCache {
                 path,
                 source_len,
                 source_hash,
@@ -42,7 +42,7 @@ impl EditorPane {
             .is_none()
         {
             let spans = Rc::new(Vec::new());
-            self.syntax_highlight_cache = Some(SyntaxHighlightCache {
+            self.caches.syntax_highlight = Some(SyntaxHighlightCache {
                 path,
                 source_len,
                 source_hash,
@@ -52,16 +52,17 @@ impl EditorPane {
             return spans;
         }
 
-        let pending_matches = self
-            .syntax_highlight_pending
-            .as_ref()
-            .is_some_and(|pending| {
-                pending.path == path
-                    && pending.source_len == source_len
-                    && pending.source_hash == source_hash
-            });
+        let pending_matches =
+            self.caches
+                .syntax_highlight_pending
+                .as_ref()
+                .is_some_and(|pending| {
+                    pending.path == path
+                        && pending.source_len == source_len
+                        && pending.source_hash == source_hash
+                });
         if !pending_matches {
-            self.syntax_highlight_receiver = path.as_ref().map(|path| {
+            self.caches.syntax_highlight_receiver = path.as_ref().map(|path| {
                 start_syntax_highlighting(
                     path.clone(),
                     self.text.as_str().to_owned(),
@@ -70,7 +71,7 @@ impl EditorPane {
                     source_hash,
                 )
             });
-            self.syntax_highlight_pending = Some(SyntaxHighlightPending {
+            self.caches.syntax_highlight_pending = Some(SyntaxHighlightPending {
                 path: path.clone(),
                 source_len,
                 source_hash,
@@ -82,7 +83,7 @@ impl EditorPane {
     }
 
     pub(super) fn poll_syntax_highlight(&mut self, ui: &egui::Ui) {
-        let Some(receiver) = self.syntax_highlight_receiver.take() else {
+        let Some(receiver) = self.caches.syntax_highlight_receiver.take() else {
             return;
         };
 
@@ -91,7 +92,8 @@ impl EditorPane {
                 let (current_source_len, current_source_hash) = self.text_fingerprint();
                 let current_path = self.path.clone();
                 let pending_matches =
-                    self.syntax_highlight_pending
+                    self.caches
+                        .syntax_highlight_pending
                         .as_ref()
                         .is_some_and(|pending| {
                             pending.path == result.path
@@ -102,7 +104,7 @@ impl EditorPane {
                     && current_source_len == result.source_len
                     && current_source_hash == result.source_hash;
                 if pending_matches && current_matches {
-                    self.syntax_highlight_cache = Some(SyntaxHighlightCache {
+                    self.caches.syntax_highlight = Some(SyntaxHighlightCache {
                         path: result.path,
                         source_len: result.source_len,
                         source_hash: result.source_hash,
@@ -112,17 +114,17 @@ impl EditorPane {
                         )),
                         spans: Rc::new(result.spans),
                     });
-                    self.syntax_highlight_pending = None;
-                    self.virtual_line_layout_cache = None;
+                    self.caches.syntax_highlight_pending = None;
+                    self.virtual_editor.line_layout_cache = None;
                     ui.ctx().request_repaint();
                 }
             }
             Err(mpsc::TryRecvError::Empty) => {
-                self.syntax_highlight_receiver = Some(receiver);
+                self.caches.syntax_highlight_receiver = Some(receiver);
                 ui.ctx().request_repaint_after(Duration::from_millis(30));
             }
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.syntax_highlight_pending = None;
+                self.caches.syntax_highlight_pending = None;
             }
         }
     }
@@ -132,7 +134,8 @@ impl EditorPane {
         source_len: usize,
         source_hash: u64,
     ) -> Rc<Vec<std::ops::Range<usize>>> {
-        self.syntax_highlight_cache
+        self.caches
+            .syntax_highlight
             .as_ref()
             .filter(|cache| {
                 cache.path == self.path
@@ -148,7 +151,7 @@ impl EditorPane {
         source_len: usize,
         source_hash: u64,
     ) -> EditorMetricsCache {
-        if let Some(cache) = self.editor_metrics_cache
+        if let Some(cache) = self.caches.editor_metrics
             && cache.source_len == source_len
             && cache.source_hash == source_hash
         {
@@ -163,7 +166,7 @@ impl EditorPane {
             line_count: line_index.line_count(),
             longest_line_chars: line_index.longest_line_chars,
         };
-        self.editor_metrics_cache = Some(cache);
+        self.caches.editor_metrics = Some(cache);
         cache
     }
 

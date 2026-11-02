@@ -5,14 +5,16 @@ use super::*;
 
 impl EditorPane {
     pub(super) fn has_virtual_text_selection(&self) -> bool {
-        self.virtual_selection
+        self.virtual_editor
+            .selection
             .and_then(|selection| selection.normalized())
             .is_some()
     }
 
     pub(super) fn virtual_selection_text(&self) -> Option<String> {
         let selection = self
-            .virtual_selection
+            .virtual_editor
+            .selection
             .and_then(|selection| selection.normalized())?;
         virtual_selection_text(&self.text, selection)
     }
@@ -59,7 +61,7 @@ impl EditorPane {
         if edited {
             self.mark_text_changed();
             self.target_position = None;
-            self.virtual_ime_preedit = None;
+            self.virtual_editor.ime_preedit = None;
             ui.ctx().request_repaint();
         } else if ime_changed {
             ui.ctx().request_repaint();
@@ -130,19 +132,21 @@ impl EditorPane {
     ) -> Option<VirtualEditCommand> {
         match ime_event {
             egui::ImeEvent::Enabled => {
-                self.virtual_ime_preedit.get_or_insert_with(String::new);
+                self.virtual_editor
+                    .ime_preedit
+                    .get_or_insert_with(String::new);
                 None
             }
             egui::ImeEvent::Preedit(text) => {
                 if text == "\n" || text == "\r" || text.is_empty() {
-                    self.virtual_ime_preedit = None;
+                    self.virtual_editor.ime_preedit = None;
                 } else {
-                    self.virtual_ime_preedit = Some(text.clone());
+                    self.virtual_editor.ime_preedit = Some(text.clone());
                 }
                 None
             }
             egui::ImeEvent::Commit(text) => {
-                self.virtual_ime_preedit = None;
+                self.virtual_editor.ime_preedit = None;
                 if text != "\n" && text != "\r" && !text.is_empty() {
                     Some(VirtualEditCommand::Insert(text.clone()))
                 } else {
@@ -150,7 +154,7 @@ impl EditorPane {
                 }
             }
             egui::ImeEvent::Disabled => {
-                self.virtual_ime_preedit = None;
+                self.virtual_editor.ime_preedit = None;
                 None
             }
         }
@@ -199,7 +203,8 @@ impl EditorPane {
             }
 
             let has_selection = self
-                .virtual_selection
+                .virtual_editor
+                .selection
                 .is_some_and(|selection| selection.anchor != selection.head);
             // AltGr arrives as Ctrl+Alt on Windows and types characters (`@`, `{`, ...);
             // plain Ctrl / Cmd text is a shortcut, not input.
@@ -251,7 +256,7 @@ impl EditorPane {
     ) -> bool {
         if line_index.line_count() == 0 {
             self.cursor_position = Some(Position::new(0, 0));
-            self.virtual_selection = None;
+            self.virtual_editor.selection = None;
             return true;
         }
 
@@ -260,10 +265,11 @@ impl EditorPane {
             .map(|position| clamp_virtual_position(line_index, position))
             .unwrap_or_else(|| Position::new(0, 0));
         let anchor = self
-            .virtual_selection
+            .virtual_editor
+            .selection
             .map(|selection| selection.anchor)
             .unwrap_or(current);
-        let goal_column = match self.virtual_vertical_goal {
+        let goal_column = match self.virtual_editor.vertical_goal {
             Some((position, column)) if position == current => column,
             _ => current.character,
         };
@@ -279,23 +285,23 @@ impl EditorPane {
             VirtualNavigationTarget::End => virtual_position_line_end(line_index, current),
             VirtualNavigationTarget::PageUp => {
                 let rows = virtual_page_row_delta(row_height, viewport_height);
-                self.scroll_y = (self.scroll_y - rows as f32 * row_height).clamp(0.0, max_scroll_y);
+                self.scroll.y = (self.scroll.y - rows as f32 * row_height).clamp(0.0, max_scroll_y);
                 virtual_position_vertical(line_index, vertical_from, -rows)
             }
             VirtualNavigationTarget::PageDown => {
                 let rows = virtual_page_row_delta(row_height, viewport_height);
-                self.scroll_y = (self.scroll_y + rows as f32 * row_height).clamp(0.0, max_scroll_y);
+                self.scroll.y = (self.scroll.y + rows as f32 * row_height).clamp(0.0, max_scroll_y);
                 virtual_position_vertical(line_index, vertical_from, rows)
             }
             VirtualNavigationTarget::SelectAll => {
                 let start = Position::new(0, 0);
                 let end = virtual_document_end(line_index);
                 self.cursor_position = Some(end);
-                self.virtual_selection = Some(VirtualTextSelection {
+                self.virtual_editor.selection = Some(VirtualTextSelection {
                     anchor: start,
                     head: end,
                 });
-                self.virtual_ime_preedit = None;
+                self.virtual_editor.ime_preedit = None;
                 self.ensure_virtual_cursor_visible(
                     line_index,
                     row_height,
@@ -318,13 +324,13 @@ impl EditorPane {
                 | VirtualNavigationTarget::PageUp
                 | VirtualNavigationTarget::PageDown
         );
-        self.virtual_vertical_goal = vertical.then_some((next, goal_column));
+        self.virtual_editor.vertical_goal = vertical.then_some((next, goal_column));
         if command.extend_selection {
-            self.virtual_selection = Some(VirtualTextSelection { anchor, head: next });
+            self.virtual_editor.selection = Some(VirtualTextSelection { anchor, head: next });
         } else {
-            self.virtual_selection = None;
+            self.virtual_editor.selection = None;
         }
-        self.virtual_ime_preedit = None;
+        self.virtual_editor.ime_preedit = None;
         self.ensure_virtual_cursor_visible(
             line_index,
             row_height,
@@ -354,19 +360,19 @@ impl EditorPane {
         let position = clamp_virtual_position(line_index, position);
         let cursor_top = position.line as f32 * row_height;
         let cursor_bottom = cursor_top + row_height;
-        if cursor_top < self.scroll_y {
-            self.scroll_y = cursor_top.clamp(0.0, max_scroll_y);
-        } else if cursor_bottom > self.scroll_y + viewport_height {
-            self.scroll_y = (cursor_bottom - viewport_height).clamp(0.0, max_scroll_y);
+        if cursor_top < self.scroll.y {
+            self.scroll.y = cursor_top.clamp(0.0, max_scroll_y);
+        } else if cursor_bottom > self.scroll.y + viewport_height {
+            self.scroll.y = (cursor_bottom - viewport_height).clamp(0.0, max_scroll_y);
         }
 
         let cursor_x =
             visual_column_for_position(None, &self.text, line_index, position, char_width);
         let horizontal_padding = 8.0 * char_width;
-        if cursor_x < self.scroll_x {
-            self.scroll_x = cursor_x.clamp(0.0, max_scroll_x);
-        } else if cursor_x + horizontal_padding > self.scroll_x + text_clip_width {
-            self.scroll_x =
+        if cursor_x < self.scroll.x {
+            self.scroll.x = cursor_x.clamp(0.0, max_scroll_x);
+        } else if cursor_x + horizontal_padding > self.scroll.x + text_clip_width {
+            self.scroll.x =
                 (cursor_x + horizontal_padding - text_clip_width).clamp(0.0, max_scroll_x);
         }
     }
@@ -392,7 +398,7 @@ impl EditorPane {
             self.cursor_position = self
                 .text
                 .byte_index_to_position(cursor_byte - close.len_utf8());
-            if let Some(entry) = self.virtual_undo_stack.last_mut() {
+            if let Some(entry) = self.virtual_editor.undo_stack.last_mut() {
                 entry.after_cursor = self.cursor_position;
             }
         }
@@ -455,16 +461,16 @@ impl EditorPane {
         if self.read_only {
             return false;
         }
-        let Some(entry) = self.virtual_undo_stack.pop() else {
+        let Some(entry) = self.virtual_editor.undo_stack.pop() else {
             return false;
         };
         let start = entry.start;
         let end = start + entry.inserted.len();
         self.text.replace_byte_range(start..end, &entry.removed);
         self.cursor_position = entry.before_cursor;
-        self.virtual_selection = entry.before_selection;
-        self.virtual_redo_stack.push(entry);
-        limit_virtual_edit_history(&mut self.virtual_redo_stack);
+        self.virtual_editor.selection = entry.before_selection;
+        self.virtual_editor.redo_stack.push(entry);
+        limit_virtual_edit_history(&mut self.virtual_editor.redo_stack);
         true
     }
 
@@ -472,16 +478,16 @@ impl EditorPane {
         if self.read_only {
             return false;
         }
-        let Some(entry) = self.virtual_redo_stack.pop() else {
+        let Some(entry) = self.virtual_editor.redo_stack.pop() else {
             return false;
         };
         let start = entry.start;
         let end = start + entry.removed.len();
         self.text.replace_byte_range(start..end, &entry.inserted);
         self.cursor_position = entry.after_cursor;
-        self.virtual_selection = entry.after_selection;
-        self.virtual_undo_stack.push(entry);
-        limit_virtual_edit_history(&mut self.virtual_undo_stack);
+        self.virtual_editor.selection = entry.after_selection;
+        self.virtual_editor.undo_stack.push(entry);
+        limit_virtual_edit_history(&mut self.virtual_editor.undo_stack);
         true
     }
 
@@ -495,7 +501,8 @@ impl EditorPane {
 
     pub(super) fn virtual_selection_byte_range(&self) -> Option<std::ops::Range<usize>> {
         let selection = self
-            .virtual_selection
+            .virtual_editor
+            .selection
             .and_then(|selection| selection.normalized())?;
         virtual_selection_byte_range(&self.text, selection)
     }
@@ -512,25 +519,44 @@ impl EditorPane {
             return false;
         }
         let before_cursor = self.cursor_position;
-        let before_selection = self.virtual_selection;
+        let before_selection = self.virtual_editor.selection;
         let start = range.start;
         self.text.replace_byte_range(range, replacement);
         let cursor_byte = start + replacement.len();
         self.cursor_position = self.text.byte_index_to_position(cursor_byte);
-        self.virtual_selection = None;
-        self.virtual_undo_stack.push(VirtualEditHistoryEntry {
-            start,
-            removed,
-            inserted: replacement.to_owned(),
-            before_cursor,
-            after_cursor: self.cursor_position,
-            before_selection,
-            after_selection: self.virtual_selection,
-        });
-        limit_virtual_edit_history(&mut self.virtual_undo_stack);
-        self.virtual_redo_stack.clear();
+        self.virtual_editor.selection = None;
+        self.virtual_editor
+            .undo_stack
+            .push(VirtualEditHistoryEntry {
+                start,
+                removed,
+                inserted: replacement.to_owned(),
+                before_cursor,
+                after_cursor: self.cursor_position,
+                before_selection,
+                after_selection: self.virtual_editor.selection,
+            });
+        limit_virtual_edit_history(&mut self.virtual_editor.undo_stack);
+        self.virtual_editor.redo_stack.clear();
         true
     }
+}
+
+/// State only the large-file editor uses.
+#[derive(Default)]
+pub(super) struct VirtualEditorState {
+    pub(super) selection: Option<VirtualTextSelection>,
+    pub(super) ime_preedit: Option<String>,
+    pub(super) undo_stack: Vec<VirtualEditHistoryEntry>,
+    pub(super) redo_stack: Vec<VirtualEditHistoryEntry>,
+    /// Wheel scrolling applied immediately but egui is still going to deliver as smoothed
+    /// deltas on later frames; those are skipped up to this amount.
+    pub(super) wheel_lead: egui::Vec2,
+    /// Where Up/Down last left the cursor and the column it was aiming for, so passing
+    /// through shorter lines does not lose the column (only while the cursor stays there).
+    pub(super) vertical_goal: Option<(Position, u32)>,
+    pub(super) line_layout_cache: Option<VirtualLineLayoutCache>,
+    pub(super) line_number_layout_cache: Option<VirtualLineNumberLayoutCache>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -946,7 +972,7 @@ mod tests {
         assert!(editor.apply_virtual_insert("X"));
         assert_eq!(editor.text.as_str(), "abXcd");
         assert_eq!(editor.cursor_position, Some(Position::new(0, 3)));
-        assert_eq!(editor.virtual_selection, None);
+        assert_eq!(editor.virtual_editor.selection, None);
     }
 
     #[test]
@@ -955,7 +981,7 @@ mod tests {
         editor.text = EditorTextBuffer::new("abcd".to_owned());
         editor.read_only = false;
         editor.cursor_position = Some(Position::new(0, 3));
-        editor.virtual_selection = Some(VirtualTextSelection {
+        editor.virtual_editor.selection = Some(VirtualTextSelection {
             anchor: Position::new(0, 1),
             head: Position::new(0, 3),
         });
@@ -963,7 +989,7 @@ mod tests {
         assert!(editor.apply_virtual_insert("X"));
         assert_eq!(editor.text.as_str(), "aXd");
         assert_eq!(editor.cursor_position, Some(Position::new(0, 2)));
-        assert_eq!(editor.virtual_selection, None);
+        assert_eq!(editor.virtual_editor.selection, None);
     }
 
     #[test]
@@ -1024,20 +1050,20 @@ mod tests {
 
         assert!(editor.apply_virtual_insert("X"));
         assert_eq!(editor.text.as_str(), "aXb");
-        assert_eq!(editor.virtual_undo_stack.len(), 1);
-        assert_eq!(editor.virtual_redo_stack.len(), 0);
+        assert_eq!(editor.virtual_editor.undo_stack.len(), 1);
+        assert_eq!(editor.virtual_editor.redo_stack.len(), 0);
 
         assert!(editor.apply_virtual_undo());
         assert_eq!(editor.text.as_str(), "ab");
         assert_eq!(editor.cursor_position, Some(Position::new(0, 1)));
-        assert_eq!(editor.virtual_undo_stack.len(), 0);
-        assert_eq!(editor.virtual_redo_stack.len(), 1);
+        assert_eq!(editor.virtual_editor.undo_stack.len(), 0);
+        assert_eq!(editor.virtual_editor.redo_stack.len(), 1);
 
         assert!(editor.apply_virtual_redo());
         assert_eq!(editor.text.as_str(), "aXb");
         assert_eq!(editor.cursor_position, Some(Position::new(0, 2)));
-        assert_eq!(editor.virtual_undo_stack.len(), 1);
-        assert_eq!(editor.virtual_redo_stack.len(), 0);
+        assert_eq!(editor.virtual_editor.undo_stack.len(), 1);
+        assert_eq!(editor.virtual_editor.redo_stack.len(), 0);
     }
 
     #[test]
@@ -1046,20 +1072,20 @@ mod tests {
         editor.text = EditorTextBuffer::new("abcd".to_owned());
         editor.read_only = false;
         editor.cursor_position = Some(Position::new(0, 3));
-        editor.virtual_selection = Some(VirtualTextSelection {
+        editor.virtual_editor.selection = Some(VirtualTextSelection {
             anchor: Position::new(0, 1),
             head: Position::new(0, 3),
         });
 
         assert!(editor.apply_virtual_insert("X"));
         assert_eq!(editor.text.as_str(), "aXd");
-        assert_eq!(editor.virtual_selection, None);
+        assert_eq!(editor.virtual_editor.selection, None);
 
         assert!(editor.apply_virtual_undo());
         assert_eq!(editor.text.as_str(), "abcd");
         assert_eq!(editor.cursor_position, Some(Position::new(0, 3)));
         assert_eq!(
-            editor.virtual_selection,
+            editor.virtual_editor.selection,
             Some(VirtualTextSelection {
                 anchor: Position::new(0, 1),
                 head: Position::new(0, 3),
@@ -1069,7 +1095,7 @@ mod tests {
         assert!(editor.apply_virtual_redo());
         assert_eq!(editor.text.as_str(), "aXd");
         assert_eq!(editor.cursor_position, Some(Position::new(0, 2)));
-        assert_eq!(editor.virtual_selection, None);
+        assert_eq!(editor.virtual_editor.selection, None);
     }
 
     #[test]
@@ -1102,11 +1128,11 @@ mod tests {
 
         assert!(editor.apply_virtual_insert("X"));
         assert!(editor.apply_virtual_undo());
-        assert_eq!(editor.virtual_redo_stack.len(), 1);
+        assert_eq!(editor.virtual_editor.redo_stack.len(), 1);
 
         assert!(editor.apply_virtual_insert("Y"));
         assert_eq!(editor.text.as_str(), "aYb");
-        assert_eq!(editor.virtual_redo_stack.len(), 0);
+        assert_eq!(editor.virtual_editor.redo_stack.len(), 0);
         assert!(!editor.apply_virtual_redo());
     }
 
@@ -1122,13 +1148,13 @@ mod tests {
             None
         );
         assert_eq!(editor.text.as_str(), "ab");
-        assert_eq!(editor.virtual_ime_preedit, Some("に".to_owned()));
+        assert_eq!(editor.virtual_editor.ime_preedit, Some("に".to_owned()));
 
         assert_eq!(
             editor.apply_virtual_ime_event(&egui::ImeEvent::Commit("日".to_owned())),
             Some(VirtualEditCommand::Insert("日".to_owned()))
         );
-        assert_eq!(editor.virtual_ime_preedit, None);
+        assert_eq!(editor.virtual_editor.ime_preedit, None);
     }
 
     #[test]
@@ -1146,7 +1172,7 @@ mod tests {
         }
 
         assert_eq!(editor.text.as_str(), "a日b");
-        assert_eq!(editor.virtual_undo_stack.len(), 1);
+        assert_eq!(editor.virtual_editor.undo_stack.len(), 1);
         assert!(editor.apply_virtual_undo());
         assert_eq!(editor.text.as_str(), "ab");
     }
@@ -1154,13 +1180,13 @@ mod tests {
     #[test]
     fn virtual_ime_disabled_clears_preedit() {
         let mut editor = EditorPane::empty(Pane::Left);
-        editor.virtual_ime_preedit = Some("変換中".to_owned());
+        editor.virtual_editor.ime_preedit = Some("変換中".to_owned());
 
         assert_eq!(
             editor.apply_virtual_ime_event(&egui::ImeEvent::Disabled),
             None
         );
-        assert_eq!(editor.virtual_ime_preedit, None);
+        assert_eq!(editor.virtual_editor.ime_preedit, None);
     }
 
     #[test]
@@ -1223,7 +1249,7 @@ mod tests {
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(0, 2)));
         assert_eq!(
-            editor.virtual_selection,
+            editor.virtual_editor.selection,
             Some(VirtualTextSelection {
                 anchor: Position::new(0, 1),
                 head: Position::new(0, 2),
@@ -1244,7 +1270,7 @@ mod tests {
             1000.0,
         ));
         assert_eq!(
-            editor.virtual_selection,
+            editor.virtual_editor.selection,
             Some(VirtualTextSelection {
                 anchor: Position::new(0, 1),
                 head: Position::new(1, 2),
@@ -1303,7 +1329,7 @@ mod tests {
             1000.0,
         ));
         assert_eq!(
-            editor.virtual_selection,
+            editor.virtual_editor.selection,
             Some(VirtualTextSelection {
                 anchor: Position::new(0, 0),
                 head: Position::new(1, 2),
@@ -1332,7 +1358,7 @@ mod tests {
             900.0,
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(9, 0)));
-        assert_eq!(editor.scroll_y, 90.0);
+        assert_eq!(editor.scroll.y, 90.0);
 
         assert!(editor.apply_virtual_navigation(
             VirtualNavigationCommand {
@@ -1348,6 +1374,6 @@ mod tests {
             900.0,
         ));
         assert_eq!(editor.cursor_position, Some(Position::new(0, 0)));
-        assert_eq!(editor.scroll_y, 0.0);
+        assert_eq!(editor.scroll.y, 0.0);
     }
 }

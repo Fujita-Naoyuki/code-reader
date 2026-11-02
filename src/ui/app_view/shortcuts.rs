@@ -169,25 +169,25 @@ impl CodeReaderApp {
         }
 
         let editor = self.focused_editor();
-        if editor.markdown_search.open {
+        if editor.markdown.search.open {
             "Markdown Search"
         } else if editor.source_search.open {
             "Source Search"
         } else if editor.is_markdown() {
-            match editor.markdown_mode {
-                MarkdownMode::Preview => match editor.markdown_focus_target {
+            match editor.markdown.mode {
+                MarkdownMode::Preview => match editor.markdown.focus_target {
                     MarkdownFocusTarget::Pages => "Markdown Pages",
                     MarkdownFocusTarget::Outline => "Markdown Outline",
                     MarkdownFocusTarget::Body => "Markdown Preview",
                 },
                 MarkdownMode::Markdown => "Markdown Source",
-                MarkdownMode::Both => match editor.markdown_focus_target {
+                MarkdownMode::Both => match editor.markdown.focus_target {
                     MarkdownFocusTarget::Pages => "Markdown Pages",
                     MarkdownFocusTarget::Outline => "Markdown Outline",
                     MarkdownFocusTarget::Body => "Markdown Both",
                 },
             }
-        } else if editor.is_csv() && editor.csv_mode == CsvMode::Grid {
+        } else if editor.is_csv() && editor.csv.mode == CsvMode::Grid {
             "CSV Grid"
         } else if editor.diff_view.is_some() {
             "Diff View"
@@ -229,8 +229,8 @@ impl CodeReaderApp {
 
         let editor = self.focused_editor();
         if editor.is_markdown() {
-            return match editor.markdown_mode {
-                MarkdownMode::Preview => match editor.markdown_focus_target {
+            return match editor.markdown.mode {
+                MarkdownMode::Preview => match editor.markdown.focus_target {
                     MarkdownFocusTarget::Pages => {
                         shortcuts(&[("Up/Down", "Page"), ("Enter", "Open"), ("Ctrl+F", "Find")])
                     }
@@ -258,7 +258,7 @@ impl CodeReaderApp {
                 ]),
             };
         }
-        if editor.is_csv() && editor.csv_mode == CsvMode::Grid {
+        if editor.is_csv() && editor.csv.mode == CsvMode::Grid {
             return if editor.has_active_csv_selection() {
                 shortcuts(&[
                     ("Ctrl+C", "Copy Row/Column"),

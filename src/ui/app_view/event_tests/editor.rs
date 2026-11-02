@@ -228,14 +228,14 @@ fn page_keys_and_wheel_scroll_long_files() {
     t.click_first("long.txt");
     t.click_text(0, 0);
     t.key(egui::Key::PageDown);
-    assert!(t.app().left.scroll_y > 100.0);
-    let after_page = t.app().left.scroll_y;
+    assert!(t.app().left.scroll.y > 100.0);
+    let after_page = t.app().left.scroll.y;
     t.key(egui::Key::PageUp);
-    assert!(t.app().left.scroll_y < after_page);
+    assert!(t.app().left.scroll.y < after_page);
 
     let pos = t.editor_text_pos(3, 3);
     t.scroll(pos, egui::vec2(0.0, -300.0));
-    assert!(t.app().left.scroll_y > 0.0);
+    assert!(t.app().left.scroll.y > 0.0);
     assert!(t.app().app_perf_debug.frame_index > 0);
 }
 

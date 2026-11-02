@@ -54,7 +54,8 @@ fn grid(t: &TestApp) -> Grid {
     let selected = t
         .app()
         .left
-        .selected_csv_cell
+        .csv
+        .selected_cell
         .unwrap_or(CsvCellPosition { row: 0, column: 0 });
     let (font_row_height, _) = t.editor_metrics();
     let column_count = document.column_count();
@@ -116,13 +117,13 @@ fn grid_shows_cells_and_edits_the_selected_one() {
     assert!(t.has_label("CSV VIEW"));
     assert!(t.has_label("Grid"));
     assert_eq!(
-        t.app().left.selected_csv_cell,
+        t.app().left.csv.selected_cell,
         Some(CsvCellPosition { row: 0, column: 0 })
     );
     let g = grid(&t);
     t.click_at(g.cell(1, 1));
     assert_eq!(
-        t.app().left.selected_csv_cell,
+        t.app().left.csv.selected_cell,
         Some(CsvCellPosition { row: 1, column: 1 })
     );
     t.assert_status_containing("Indexed");
@@ -155,7 +156,7 @@ fn keyboard_moves_between_cells() {
     let mut t = csv_app();
     let g = grid(&t);
     t.click_at(g.cell(1, 0));
-    let at = |t: &TestApp| t.app().left.selected_csv_cell.unwrap();
+    let at = |t: &TestApp| t.app().left.csv.selected_cell.unwrap();
     t.key(egui::Key::Tab);
     assert_eq!(at(&t), CsvCellPosition { row: 1, column: 1 });
     t.key(egui::Key::End);
@@ -191,17 +192,17 @@ fn navigating_past_the_edge_stays_inside_the_table() {
     t.click_at(g.cell(0, 2));
     t.key(egui::Key::Tab);
     assert_eq!(
-        t.app().left.selected_csv_cell,
+        t.app().left.csv.selected_cell,
         Some(CsvCellPosition { row: 0, column: 2 }),
         "Tab on the last column stays put"
     );
     t.key(egui::Key::End);
     t.key(egui::Key::ArrowRight);
-    assert_eq!(t.app().left.selected_csv_cell.unwrap().column, 2);
+    assert_eq!(t.app().left.csv.selected_cell.unwrap().column, 2);
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::ArrowDown);
     t.key(egui::Key::ArrowDown);
-    assert_eq!(t.app().left.selected_csv_cell.unwrap().row, 2);
+    assert_eq!(t.app().left.csv.selected_cell.unwrap().row, 2);
     t.ctrl(egui::Key::S);
     assert_eq!(
         t.read("data.csv"),
@@ -212,7 +213,7 @@ fn navigating_past_the_edge_stays_inside_the_table() {
     // Enter on the last row is the explicit way to append one; it holds no data, so
     // saving trims it again.
     t.key(egui::Key::Enter);
-    assert_eq!(t.app().left.selected_csv_cell.unwrap().row, 3);
+    assert_eq!(t.app().left.csv.selected_cell.unwrap().row, 3);
     t.ctrl(egui::Key::S);
     assert_eq!(t.read("data.csv"), CSV);
 }
@@ -223,7 +224,7 @@ fn row_and_column_headers_select_and_copy() {
     let g = grid(&t);
     t.click_at(g.row_header(1));
     assert_eq!(
-        t.app().left.csv_selection,
+        t.app().left.csv.selection,
         Some(CsvSelection::Rows { start: 1, end: 1 })
     );
     assert!(t.has_label("Selected row 2"));
@@ -233,20 +234,20 @@ fn row_and_column_headers_select_and_copy() {
 
     t.drag(g.row_header(1), g.row_header(2));
     assert_eq!(
-        t.app().left.csv_selection,
+        t.app().left.csv.selection,
         Some(CsvSelection::Rows { start: 1, end: 2 })
     );
     assert!(t.has_label("Selected rows 2-3"));
 
     t.click_at(g.column_header(1));
     assert_eq!(
-        t.app().left.csv_selection,
+        t.app().left.csv.selection,
         Some(CsvSelection::Columns { start: 1, end: 1 })
     );
     assert!(t.has_label("Selected column B"));
     t.drag(g.column_header(0), g.column_header(2));
     assert_eq!(
-        t.app().left.csv_selection,
+        t.app().left.csv.selection,
         Some(CsvSelection::Columns { start: 0, end: 2 })
     );
     assert!(t.has_label("Selected columns A-C"));
@@ -259,7 +260,7 @@ fn row_and_column_headers_select_and_copy() {
 
     // Clicking a cell clears the header selection.
     t.click_at(g.cell(2, 2));
-    assert!(t.app().left.csv_selection.is_none());
+    assert!(t.app().left.csv.selection.is_none());
 }
 
 #[test]
@@ -355,7 +356,7 @@ fn csv_files_in_library_folders_are_read_only() {
 fn source_mode_edits_text_and_searches() {
     let mut t = csv_app();
     t.click("Source");
-    assert_eq!(t.app().left.csv_mode, CsvMode::Source);
+    assert_eq!(t.app().left.csv.mode, CsvMode::Source);
     assert!(t.has_label("Source"));
     t.ctrl(egui::Key::F);
     assert!(t.app().left.source_search.open);
@@ -363,7 +364,7 @@ fn source_mode_edits_text_and_searches() {
     assert!(t.has_label("1/1"));
     // Switching back to Grid closes the source search.
     t.click("Grid");
-    assert_eq!(t.app().left.csv_mode, CsvMode::Grid);
+    assert_eq!(t.app().left.csv.mode, CsvMode::Grid);
     assert!(!t.app().left.source_search.open);
     t.click("Grid");
     // Ctrl+F in grid mode falls back to Search Everywhere.
@@ -475,5 +476,5 @@ fn csv_edit_history_is_capped() {
         t.click_at(g.row_header(index % 2));
         t.paste_event(&format!("{index}"));
     }
-    assert_eq!(t.app().left.csv_undo_stack.len(), 256);
+    assert_eq!(t.app().left.csv.undo_stack.len(), 256);
 }

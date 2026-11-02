@@ -413,17 +413,17 @@ impl EditorPane {
                         .link(RichText::new(format!("[{number}]")).small().raised())
                         .on_hover_text(format!("Jump to footnote {}", footnote.identifier));
                     if response.clicked() {
-                        self.markdown_pending_footnote_scroll = Some(
+                        self.markdown.pending_footnote_scroll = Some(
                             MarkdownFootnoteScrollTarget::Definition(footnote.identifier.clone()),
                         );
                     }
                     if self
-                        .markdown_pending_footnote_scroll
+                        .markdown.pending_footnote_scroll
                         .as_ref()
                         .is_some_and(|target| matches!(target, MarkdownFootnoteScrollTarget::Reference(identifier) if identifier == &footnote.identifier))
                     {
                         response.scroll_to_me(Some(egui::Align::Center));
-                        self.markdown_pending_footnote_scroll = None;
+                        self.markdown.pending_footnote_scroll = None;
                     }
                 }
                 Node::InlineMath(math) => {
@@ -523,14 +523,15 @@ impl EditorPane {
         code: &str,
     ) {
         let render_result = self
-            .markdown_mermaid_cache
+            .markdown
+            .mermaid_cache
             .entry(code.to_owned())
             .or_insert_with(|| render_mermaid_svg(code))
             .clone();
 
         let Ok(svg) = render_result else {
             self.markdown_code_block_ui(ui, language_registry, block_id, Some("mermaid"), code);
-            if let Some(Err(error)) = self.markdown_mermaid_cache.get(code) {
+            if let Some(Err(error)) = self.markdown.mermaid_cache.get(code) {
                 ui.label(
                     RichText::new(format!("Mermaid rendering failed: {error}"))
                         .small()
@@ -614,19 +615,19 @@ impl EditorPane {
                         .on_hover_text("Back to footnote reference")
                         .clicked()
                     {
-                        self.markdown_pending_footnote_scroll = Some(
+                        self.markdown.pending_footnote_scroll = Some(
                             MarkdownFootnoteScrollTarget::Reference(definition.identifier.clone()),
                         );
                     }
                 })
                 .response;
             if self
-                .markdown_pending_footnote_scroll
+                .markdown.pending_footnote_scroll
                 .as_ref()
                 .is_some_and(|target| matches!(target, MarkdownFootnoteScrollTarget::Definition(identifier) if identifier == &definition.identifier))
             {
                 response.scroll_to_me(Some(egui::Align::Center));
-                self.markdown_pending_footnote_scroll = None;
+                self.markdown.pending_footnote_scroll = None;
             }
         }
         ui.add_space(8.0);
@@ -692,7 +693,8 @@ impl EditorPane {
         };
 
         let result = self
-            .markdown_image_cache
+            .markdown
+            .image_cache
             .entry(path.clone())
             .or_insert_with(|| load_markdown_image_texture(ui.ctx(), &path));
 

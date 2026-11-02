@@ -42,11 +42,7 @@ fn virtual_app(name: &str) -> TestApp {
     t.click_first(name);
     t.steps(2);
     assert_eq!(
-        t.app()
-            .left
-            .editor_perf_debug
-            .as_ref()
-            .map(|perf| perf.view),
+        t.app().left.debug.perf.as_ref().map(|perf| perf.view),
         Some("source-virtual")
     );
     t
@@ -153,20 +149,20 @@ fn keyboard_navigation_and_selection() {
     assert!(text(&t).starts_with("// replaced\n"));
 
     t.key(egui::Key::PageDown);
-    assert!(t.app().left.scroll_y > 0.0);
+    assert!(t.app().left.scroll.y > 0.0);
     let line_after_page = t.app().left.cursor_position.unwrap().line;
     assert!(line_after_page > 10);
     t.shift_held(&[egui::Key::PageUp]);
     assert!(t.app().left.has_virtual_text_selection());
     t.key(egui::Key::PageUp);
-    assert_eq!(t.app().left.scroll_y, 0.0);
+    assert_eq!(t.app().left.scroll.y, 0.0);
 
     t.key_with(CTRL, egui::Key::A);
-    let selection = t.app().left.virtual_selection.unwrap();
+    let selection = t.app().left.virtual_editor.selection.unwrap();
     assert_eq!(selection.anchor, Position::new(0, 0));
     assert_eq!(selection.head.line as usize, LINES);
     assert!(
-        t.app().left.scroll_y > 1000.0,
+        t.app().left.scroll.y > 1000.0,
         "select all scrolls to the end"
     );
 
@@ -214,16 +210,19 @@ fn ime_preedit_and_commit() {
     t.click_virtual(0, 0);
     t.harness.event(egui::Event::Ime(egui::ImeEvent::Enabled));
     t.step();
-    assert_eq!(t.app().left.virtual_ime_preedit.as_deref(), Some(""));
+    assert_eq!(t.app().left.virtual_editor.ime_preedit.as_deref(), Some(""));
     t.harness.event(egui::Event::Ime(egui::ImeEvent::Preedit(
         "にほん".to_owned(),
     )));
     t.step();
-    assert_eq!(t.app().left.virtual_ime_preedit.as_deref(), Some("にほん"));
+    assert_eq!(
+        t.app().left.virtual_editor.ime_preedit.as_deref(),
+        Some("にほん")
+    );
     t.harness
         .event(egui::Event::Ime(egui::ImeEvent::Preedit(String::new())));
     t.step();
-    assert!(t.app().left.virtual_ime_preedit.is_none());
+    assert!(t.app().left.virtual_editor.ime_preedit.is_none());
     t.harness
         .event(egui::Event::Ime(egui::ImeEvent::Preedit("ご".to_owned())));
     t.step();
@@ -237,7 +236,7 @@ fn ime_preedit_and_commit() {
     assert!(text(&t).starts_with("日本fn"));
     t.harness.event(egui::Event::Ime(egui::ImeEvent::Disabled));
     t.step();
-    assert!(t.app().left.virtual_ime_preedit.is_none());
+    assert!(t.app().left.virtual_editor.ime_preedit.is_none());
 }
 
 #[test]
@@ -249,7 +248,8 @@ fn double_click_selects_a_word_and_drag_selects_text() {
     let selection = t
         .app()
         .left
-        .virtual_selection
+        .virtual_editor
+        .selection
         .unwrap()
         .normalized()
         .unwrap();
@@ -269,7 +269,8 @@ fn double_click_selects_a_word_and_drag_selects_text() {
     let selection = t
         .app()
         .left
-        .virtual_selection
+        .virtual_editor
+        .selection
         .unwrap()
         .normalized()
         .unwrap();
@@ -287,10 +288,10 @@ fn wheel_and_scrollbars_scroll_the_view() {
     let mut t = virtual_app("big.txt");
     let pos = t.virtual_pos(5, 5);
     t.scroll(pos, egui::vec2(0.0, -400.0));
-    assert!(t.app().left.scroll_y >= 400.0);
+    assert!(t.app().left.scroll.y >= 400.0);
     t.scroll(pos, egui::vec2(0.0, 2000.0));
     t.steps(30);
-    assert_eq!(t.app().left.scroll_y, 0.0);
+    assert_eq!(t.app().left.scroll.y, 0.0);
 
     // Line-based wheel units scroll by lines.
     t.move_pointer(pos);
@@ -301,7 +302,7 @@ fn wheel_and_scrollbars_scroll_the_view() {
         phase: egui::TouchPhase::Move,
     });
     t.steps(2);
-    assert!(t.app().left.scroll_y > 0.0);
+    assert!(t.app().left.scroll.y > 0.0);
     t.harness.event(egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Page,
         delta: egui::vec2(0.0, -1.0),
@@ -313,9 +314,9 @@ fn wheel_and_scrollbars_scroll_the_view() {
     // Dragging the vertical scrollbar thumb.
     let g = t.virtual_geometry();
     let thumb = egui::pos2(g.full_rect.right() - 3.0, g.full_rect.top() + 6.0);
-    let before = t.app().left.scroll_y;
+    let before = t.app().left.scroll.y;
     t.drag(thumb, thumb + egui::vec2(0.0, 200.0));
-    assert!(t.app().left.scroll_y > before);
+    assert!(t.app().left.scroll.y > before);
     // Clicking the scrollbar track does not move the text cursor.
     let cursor = t.app().left.cursor_position;
     t.click_at(egui::pos2(
@@ -355,10 +356,10 @@ fn one_wheel_event_scrolls_exactly_once() {
         phase: egui::TouchPhase::Move,
     });
     t.step();
-    assert_eq!(t.app().left.scroll_y, 100.0);
+    assert_eq!(t.app().left.scroll.y, 100.0);
     t.steps(30);
     assert_eq!(
-        t.app().left.scroll_y,
+        t.app().left.scroll.y,
         100.0,
         "egui's smoothed copy of the notch is not applied again"
     );
@@ -374,15 +375,15 @@ fn long_lines_scroll_horizontally() {
     t.steps(2);
     t.click_virtual(0, 0);
     t.key(egui::Key::End);
-    assert!(t.app().left.scroll_x > 0.0, "cursor kept visible");
+    assert!(t.app().left.scroll.x > 0.0, "cursor kept visible");
     t.key(egui::Key::Home);
-    assert_eq!(t.app().left.scroll_x, 0.0);
+    assert_eq!(t.app().left.scroll.x, 0.0);
 
     let pos = t.virtual_pos(2, 2);
     t.set_modifiers(egui::Modifiers::SHIFT);
     t.scroll(pos, egui::vec2(0.0, -200.0));
     t.set_modifiers(egui::Modifiers::NONE);
-    assert!(t.app().left.scroll_x > 0.0);
+    assert!(t.app().left.scroll.x > 0.0);
 
     // Horizontal scrollbar.
     let g = t.virtual_geometry();
@@ -421,7 +422,7 @@ fn find_in_a_large_file_highlights_and_jumps() {
     assert!(t.has_label("1/1"));
     t.steps(3);
     assert_eq!(t.app().left.cursor_position, Some(Position::new(11999, 0)));
-    assert!(t.app().left.scroll_y > 1000.0);
+    assert!(t.app().left.scroll.y > 1000.0);
     // While the find box is open the editor ignores typing.
     t.click("Close");
     assert!(!t.app().left.source_search.open);
@@ -433,13 +434,13 @@ fn rust_large_files_are_highlighted_in_the_background() {
     t.click_first("big.rs");
     t.steps(2);
     t.wait_until("syntax highlight", |app| {
-        app.left.syntax_highlight_cache.is_some()
+        app.left.caches.syntax_highlight.is_some()
     });
     t.steps(3);
     t.click_virtual(1, 16);
     t.steps(2);
     // Matching bracket highlighting near the cursor.
-    assert!(t.app().left.bracket_pair_cache.is_some());
+    assert!(t.app().left.caches.bracket_pair.is_some());
 }
 
 #[test]
@@ -470,12 +471,15 @@ fn unfocused_right_pane_virtual_editor_drops_preedit() {
     t.harness
         .event(egui::Event::Ime(egui::ImeEvent::Preedit("x".to_owned())));
     t.step();
-    assert_eq!(t.app().left.virtual_ime_preedit.as_deref(), Some("x"));
+    assert_eq!(
+        t.app().left.virtual_editor.ime_preedit.as_deref(),
+        Some("x")
+    );
     t.click("Right Pane");
     // Focus the right pane: the left one is no longer focused.
     let right = t.nth_label_rect("No file open", 0);
     t.click_at(right.center() + egui::vec2(0.0, 60.0));
-    assert!(t.app().left.virtual_ime_preedit.is_none());
+    assert!(t.app().left.virtual_editor.ime_preedit.is_none());
 }
 
 #[test]
@@ -492,7 +496,7 @@ fn edits_without_a_cursor_and_no_op_replacements() {
     t.shift_held(&[egui::Key::ArrowRight, egui::Key::ArrowRight]);
     t.paste_event("fn");
     assert_eq!(text(&t), big_text());
-    assert!(t.app().left.virtual_undo_stack.is_empty());
+    assert!(t.app().left.virtual_editor.undo_stack.is_empty());
 
     // An IME update together with a key that edits nothing still repaints.
     t.key_with(CTRL, egui::Key::A);
@@ -509,7 +513,10 @@ fn edits_without_a_cursor_and_no_op_replacements() {
     });
     t.step();
     assert_eq!(text(&t), big_text());
-    assert_eq!(t.app().left.virtual_ime_preedit.as_deref(), Some("a"));
+    assert_eq!(
+        t.app().left.virtual_editor.ime_preedit.as_deref(),
+        Some("a")
+    );
 }
 
 #[test]
@@ -522,7 +529,8 @@ fn word_selection_at_line_edges_and_multibyte_backspace() {
     let selection = t
         .app()
         .left
-        .virtual_selection
+        .virtual_editor
+        .selection
         .unwrap()
         .normalized()
         .unwrap();
@@ -534,7 +542,8 @@ fn word_selection_at_line_edges_and_multibyte_backspace() {
     let selection = t
         .app()
         .left
-        .virtual_selection
+        .virtual_editor
+        .selection
         .unwrap()
         .normalized()
         .unwrap();
@@ -567,9 +576,9 @@ fn cursor_moves_scroll_the_view_back_into_place() {
     t.scroll(pos, egui::vec2(0.0, -3000.0));
     // Let the smoothed wheel remainder settle first (see D09).
     t.steps(90);
-    assert!(t.app().left.scroll_y > 1000.0);
+    assert!(t.app().left.scroll.y > 1000.0);
     t.key(egui::Key::ArrowUp);
-    assert!(t.app().left.scroll_y < 100.0);
+    assert!(t.app().left.scroll.y < 100.0);
 
     // ArrowRight at the very end of the document stays there.
     t.key_with(super::support::CTRL, egui::Key::A);
@@ -590,7 +599,13 @@ fn long_scrolling_prunes_the_layout_caches() {
         t.step();
     }
     t.steps(200);
-    let cache = t.app().left.virtual_line_layout_cache.as_ref().unwrap();
+    let cache = t
+        .app()
+        .left
+        .virtual_editor
+        .line_layout_cache
+        .as_ref()
+        .unwrap();
     assert!(cache.entries.len() <= 4096);
 }
 
@@ -602,7 +617,7 @@ fn theme_changes_rebuild_cached_layouts() {
     t.steps(3);
     t.harness.ctx.set_theme(egui::Theme::Dark);
     t.steps(3);
-    assert!(t.app().left.virtual_line_layout_cache.is_some());
+    assert!(t.app().left.virtual_editor.line_layout_cache.is_some());
 }
 
 #[test]
@@ -613,7 +628,7 @@ fn edit_history_is_capped() {
         t.harness.event(egui::Event::Text("x".to_owned()));
         t.step();
     }
-    assert_eq!(t.app().left.virtual_undo_stack.len(), 512);
+    assert_eq!(t.app().left.virtual_editor.undo_stack.len(), 512);
 }
 
 #[test]
@@ -709,12 +724,19 @@ fn page_bursts_prune_the_layout_caches() {
         });
         t.step();
     }
-    let cache = t.app().left.virtual_line_layout_cache.as_ref().unwrap();
+    let cache = t
+        .app()
+        .left
+        .virtual_editor
+        .line_layout_cache
+        .as_ref()
+        .unwrap();
     assert!(cache.entries.len() <= 4096);
     let numbers = t
         .app()
         .left
-        .virtual_line_number_layout_cache
+        .virtual_editor
+        .line_number_layout_cache
         .as_ref()
         .unwrap();
     assert!(numbers.entries.len() <= 4096);
@@ -742,6 +764,6 @@ fn huge_external_rust_files_skip_highlighting() {
     t.click_nth("Add", 0);
     t.click_first("huge.rs");
     t.steps(3);
-    let cache = t.app().left.syntax_highlight_cache.as_ref().unwrap();
+    let cache = t.app().left.caches.syntax_highlight.as_ref().unwrap();
     assert!(cache.spans.is_empty());
 }

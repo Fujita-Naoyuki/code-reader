@@ -44,28 +44,28 @@ impl EditorPane {
         });
         let viewport_height = ui.available_height();
         if let Some(offset) = pending_scroll_y {
-            self.scroll_y = offset;
+            self.scroll.y = offset;
         }
         let metrics = self.cached_editor_metrics(source_len, source_hash);
         let editor_width = metrics.editor_width(ui, ui.available_width());
         let line_count = metrics.line_count;
         let estimated_max_scroll_y =
             estimated_textedit_source_max_scroll_y(ui, line_count, viewport_height);
-        let max_scroll_y = if self.scroll_max_y > 0.0 {
-            self.scroll_max_y
+        let max_scroll_y = if self.scroll.max_y > 0.0 {
+            self.scroll.max_y
         } else {
             estimated_max_scroll_y
         };
-        self.scroll_y = self.scroll_y.clamp(0.0, max_scroll_y);
+        self.scroll.y = self.scroll.y.clamp(0.0, max_scroll_y);
         if let Some(delta) = editor_page_scroll_delta(ui, focused, text_edit_id, viewport_height) {
-            self.scroll_y = (self.scroll_y + delta).clamp(0.0, max_scroll_y);
+            self.scroll.y = (self.scroll.y + delta).clamp(0.0, max_scroll_y);
         }
         self.apply_immediate_wheel_scroll(ui, max_scroll_y);
 
         let scroll_area = ScrollArea::both()
             .id_salt(format!("markdown_source_scroll_{:?}", self.pane))
             .auto_shrink([false, false])
-            .vertical_scroll_offset(self.scroll_y);
+            .vertical_scroll_offset(self.scroll.y);
 
         let scroll_output = scroll_area.show(ui, |ui| {
             if let Some(target_position) = pending_position
@@ -86,7 +86,7 @@ impl EditorPane {
             }
             if focused
                 && !self.read_only
-                && !self.markdown_search.open
+                && !self.markdown.search.open
                 && !self.source_search.open
                 && !ui.memory(|memory| memory.has_focus(text_edit_id))
             {
@@ -128,12 +128,12 @@ impl EditorPane {
                 let current_line = self.cursor_position.map(|position| position.line);
                 let row_height = editor_row_height(ui);
                 let viewport_rect = ui.clip_rect();
-                self.editor_render_debug = Some(capture_editor_render_debug(
+                self.debug.render = Some(capture_editor_render_debug(
                     &output,
                     line_count,
                     line_count,
                     row_height,
-                    self.scroll_y,
+                    self.scroll.y,
                     viewport_rect,
                     current_line,
                 ));
@@ -158,21 +158,21 @@ impl EditorPane {
                         self.source_search.scrolled_match = None;
                     }
                     self.target_position = None;
-                    self.markdown_active_heading_id = None;
+                    self.markdown.active_heading_id = None;
                     if let Some(document) = document {
                         self.update_markdown_active_page_from_cursor(document);
                     }
                 }
             });
         });
-        self.scroll_max_y =
+        self.scroll.max_y =
             scroll_area_vertical_max_scroll_y(scroll_output.content_size, scroll_output.inner_rect);
-        self.scroll_y = scroll_output.state.offset.y.clamp(0.0, self.scroll_max_y);
+        self.scroll.y = scroll_output.state.offset.y.clamp(0.0, self.scroll.max_y);
         drop(source_search_matches);
     }
 
     pub(super) fn prepare_markdown_source_entry(&mut self, document: &MarkdownDocument) {
-        let Some(page) = document.active_or_first_page(self.markdown_active_page_id.as_deref())
+        let Some(page) = document.active_or_first_page(self.markdown.active_page_id.as_deref())
         else {
             return;
         };
@@ -191,7 +191,7 @@ impl EditorPane {
         &self,
         document: &MarkdownDocument,
     ) -> Option<(u32, u32)> {
-        let page = document.active_or_first_page(self.markdown_active_page_id.as_deref())?;
+        let page = document.active_or_first_page(self.markdown.active_page_id.as_deref())?;
         let start = page.source_range.start.line as u32;
         let mut end = page.source_range.end.line as u32;
 
@@ -218,9 +218,9 @@ impl EditorPane {
             return;
         };
 
-        if self.markdown_active_page_id.as_deref() != Some(page.id.as_str()) {
-            self.markdown_active_heading_id = None;
-            self.markdown_active_page_id = Some(page.id.clone());
+        if self.markdown.active_page_id.as_deref() != Some(page.id.as_str()) {
+            self.markdown.active_heading_id = None;
+            self.markdown.active_page_id = Some(page.id.clone());
         }
     }
 }
@@ -352,7 +352,7 @@ mod tests {
         )
         .unwrap();
         let mut editor = EditorPane::empty(Pane::Left);
-        editor.markdown_active_page_id = Some("second".to_owned());
+        editor.markdown.active_page_id = Some("second".to_owned());
 
         assert_eq!(
             editor.markdown_active_source_line_range(&document),

@@ -5,7 +5,7 @@ use super::*;
 impl EditorPane {
     pub(super) fn git_history_ui(&mut self, ui: &mut egui::Ui, focused: bool) {
         let total_start = Instant::now();
-        let scroll_before_y = self.scroll_y;
+        let scroll_before_y = self.scroll.y;
         let Some(history_view) = self.git_history_view.clone() else {
             return;
         };
@@ -30,14 +30,14 @@ impl EditorPane {
 
         let viewport_height = ui.available_height();
         if let Some(delta) = diff_page_scroll_delta(ui, focused, viewport_height) {
-            self.scroll_y = (self.scroll_y + delta).max(0.0);
+            self.scroll.y = (self.scroll.y + delta).max(0.0);
         }
-        self.apply_immediate_wheel_scroll(ui, self.scroll_max_y);
+        self.apply_immediate_wheel_scroll(ui, self.scroll.max_y);
 
         let scroll_area = ScrollArea::both()
             .id_salt(format!("git_history_view_{:?}", self.pane))
             .auto_shrink([false, false])
-            .vertical_scroll_offset(self.scroll_y);
+            .vertical_scroll_offset(self.scroll.y);
 
         let mut clicked_commit = None;
         let body_start = Instant::now();
@@ -71,10 +71,10 @@ impl EditorPane {
             });
             ui.ctx().request_repaint();
         }
-        self.scroll_max_y =
+        self.scroll.max_y =
             scroll_area_vertical_max_scroll_y(scroll_output.content_size, scroll_output.inner_rect);
-        self.scroll_y = scroll_output.state.offset.y.clamp(0.0, self.scroll_max_y);
-        self.editor_perf_debug = Some(EditorPerfDebug {
+        self.scroll.y = scroll_output.state.offset.y.clamp(0.0, self.scroll.max_y);
+        self.debug.perf = Some(EditorPerfDebug {
             view: "git-history",
             total_ms: elapsed_ms(total_start),
             header_ms,
@@ -82,9 +82,9 @@ impl EditorPane {
             visible_rows: history_view.rows.len(),
             total_rows: history_view.rows.len(),
             text_len: 0,
-            scroll_y: self.scroll_y,
-            scroll_x: self.scroll_x,
-            scroll_delta_y: self.scroll_y - scroll_before_y,
+            scroll_y: self.scroll.y,
+            scroll_x: self.scroll.x,
+            scroll_delta_y: self.scroll.y - scroll_before_y,
             ..Default::default()
         });
     }

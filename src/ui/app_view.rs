@@ -358,7 +358,7 @@ impl eframe::App for CodeReaderApp {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
         let focused_pane_at_start = self.focused_pane;
-        let scroll_before_y = self.focused_editor().scroll_y;
+        let scroll_before_y = self.focused_editor().scroll.y;
         let (stable_dt_ms, unstable_dt_ms, raw_wheel_delta, smooth_scroll_delta, page_key) = ui
             .input(|input| {
                 let raw_wheel_delta = input
@@ -917,7 +917,7 @@ impl eframe::App for CodeReaderApp {
         self.show_git_commit_details_window(ui);
         self.show_shortcuts_help_window(ui);
 
-        let scroll_after_y = self.editor(focused_pane_at_start).scroll_y;
+        let scroll_after_y = self.editor(focused_pane_at_start).scroll.y;
         self.record_app_perf_sample(
             elapsed_ms(app_frame_start),
             stable_dt_ms,

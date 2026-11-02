@@ -129,8 +129,8 @@ impl CodeReaderApp {
             let editor = self.focused_editor();
             GitHistoryReturnState {
                 view,
-                scroll_y: editor.scroll_y,
-                scroll_x: editor.scroll_x,
+                scroll_y: editor.scroll.y,
+                scroll_x: editor.scroll.x,
             }
         });
         match git_commit_diff_text(&details.root, &details.commit.hash) {

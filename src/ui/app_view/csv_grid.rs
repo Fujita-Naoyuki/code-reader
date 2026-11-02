@@ -7,10 +7,10 @@ impl EditorPane {
     pub(super) fn capture_csv_history_entry(&self) -> CsvEditHistoryEntry {
         CsvEditHistoryEntry {
             text: self.text.as_str().to_owned(),
-            csv_selection: self.csv_selection,
-            selected_csv_cell: self.selected_csv_cell,
-            scroll_y: self.scroll_y,
-            scroll_x: self.scroll_x,
+            csv_selection: self.csv.selection,
+            selected_csv_cell: self.csv.selected_cell,
+            scroll_y: self.scroll.y,
+            scroll_x: self.scroll.x,
         }
     }
 
@@ -20,54 +20,54 @@ impl EditorPane {
     }
 
     pub(super) fn push_csv_undo_entry_value(&mut self, entry: CsvEditHistoryEntry) {
-        if self.csv_undo_stack.last() != Some(&entry) {
-            self.csv_undo_stack.push(entry);
-            limit_csv_edit_history(&mut self.csv_undo_stack);
+        if self.csv.undo_stack.last() != Some(&entry) {
+            self.csv.undo_stack.push(entry);
+            limit_csv_edit_history(&mut self.csv.undo_stack);
         }
-        self.csv_redo_stack.clear();
+        self.csv.redo_stack.clear();
     }
 
     pub(super) fn restore_csv_history_entry(&mut self, entry: CsvEditHistoryEntry) {
         self.text.replace(entry.text);
         self.text.refresh_metadata();
-        self.syntax_highlight_pending = None;
-        self.syntax_highlight_receiver = None;
-        self.virtual_line_layout_cache = None;
-        self.virtual_line_number_layout_cache = None;
-        self.editor_metrics_cache = None;
-        self.source_search_cache = None;
-        self.csv_selection = entry.csv_selection;
-        self.selected_csv_cell = entry.selected_csv_cell;
-        self.csv_drag = None;
-        self.csv_edit_history_cell = None;
-        self.scroll_y = entry.scroll_y;
-        self.scroll_x = entry.scroll_x;
+        self.caches.syntax_highlight_pending = None;
+        self.caches.syntax_highlight_receiver = None;
+        self.virtual_editor.line_layout_cache = None;
+        self.virtual_editor.line_number_layout_cache = None;
+        self.caches.editor_metrics = None;
+        self.caches.source_search = None;
+        self.csv.selection = entry.csv_selection;
+        self.csv.selected_cell = entry.selected_csv_cell;
+        self.csv.drag = None;
+        self.csv.edit_history_cell = None;
+        self.scroll.y = entry.scroll_y;
+        self.scroll.x = entry.scroll_x;
         self.cursor_position = entry
             .selected_csv_cell
             .map(|cell| Position::new(cell.row as u32, cell.column as u32));
     }
 
     pub(super) fn apply_csv_undo(&mut self) -> bool {
-        let Some(entry) = self.csv_undo_stack.pop() else {
+        let Some(entry) = self.csv.undo_stack.pop() else {
             return false;
         };
         let current = self.capture_csv_history_entry();
         self.restore_csv_history_entry(entry);
-        self.csv_redo_stack.push(current);
-        limit_csv_edit_history(&mut self.csv_redo_stack);
-        self.csv_debug_message = Some("csv undo".to_owned());
+        self.csv.redo_stack.push(current);
+        limit_csv_edit_history(&mut self.csv.redo_stack);
+        self.csv.debug_message = Some("csv undo".to_owned());
         true
     }
 
     pub(super) fn apply_csv_redo(&mut self) -> bool {
-        let Some(entry) = self.csv_redo_stack.pop() else {
+        let Some(entry) = self.csv.redo_stack.pop() else {
             return false;
         };
         let current = self.capture_csv_history_entry();
         self.restore_csv_history_entry(entry);
-        self.csv_undo_stack.push(current);
-        limit_csv_edit_history(&mut self.csv_undo_stack);
-        self.csv_debug_message = Some("csv redo".to_owned());
+        self.csv.undo_stack.push(current);
+        limit_csv_edit_history(&mut self.csv.undo_stack);
+        self.csv.debug_message = Some("csv redo".to_owned());
         true
     }
 
@@ -76,18 +76,18 @@ impl EditorPane {
     }
 
     pub(super) fn is_csv_grid(&self) -> bool {
-        self.is_csv() && self.csv_mode == CsvMode::Grid
+        self.is_csv() && self.csv.mode == CsvMode::Grid
     }
 
     pub(super) fn has_active_csv_selection(&self) -> bool {
-        self.is_csv_grid() && self.csv_selection.is_some()
+        self.is_csv_grid() && self.csv.selection.is_some()
     }
 
     pub(super) fn csv_selection_text(&self) -> Option<String> {
         if !self.has_active_csv_selection() {
             return None;
         }
-        let selection = self.csv_selection?;
+        let selection = self.csv.selection?;
         let document = parse_csv(&self.text).ok()?;
         Some(copy_csv_selection_as_csv(&document, selection))
     }
@@ -98,17 +98,18 @@ impl EditorPane {
         }
 
         let selection = self
-            .csv_selection
+            .csv
+            .selection
             .ok_or_else(|| "No CSV row or column selection.".to_owned())?;
         let mut document = parse_csv(&self.text)?;
         self.push_csv_undo_entry();
-        self.csv_edit_history_cell = None;
+        self.csv.edit_history_cell = None;
         let cell_count = paste_csv_selection_from_text(&mut document, selection, text)?;
         self.replace_text(serialize_csv(
             &document,
             CsvTextStyle::of(self.text.as_str()),
         ));
-        self.csv_debug_message = Some(format!("csv pasted {cell_count} cells"));
+        self.csv.debug_message = Some(format!("csv pasted {cell_count} cells"));
         Ok(cell_count)
     }
 
@@ -118,29 +119,30 @@ impl EditorPane {
         }
 
         let selection = self
-            .csv_selection
+            .csv
+            .selection
             .ok_or_else(|| "No CSV row or column selection.".to_owned())?;
         let mut document = parse_csv(&self.text)?;
         self.push_csv_undo_entry();
-        self.csv_edit_history_cell = None;
+        self.csv.edit_history_cell = None;
         let (next_selection, label) = delete_csv_selection(&mut document, selection);
         self.replace_text(serialize_csv(
             &document,
             CsvTextStyle::of(self.text.as_str()),
         ));
-        self.csv_selection = Some(next_selection);
-        self.selected_csv_cell = None;
-        self.csv_drag = None;
-        self.csv_debug_message = Some(format!("csv deleted {label}"));
+        self.csv.selection = Some(next_selection);
+        self.csv.selected_cell = None;
+        self.csv.drag = None;
+        self.csv.debug_message = Some(format!("csv deleted {label}"));
         Ok(label)
     }
 
     pub(super) fn set_csv_mode(&mut self, mode: CsvMode) {
-        if self.csv_mode == mode {
+        if self.csv.mode == mode {
             return;
         }
-        self.csv_mode = mode;
-        self.csv_edit_history_cell = None;
+        self.csv.mode = mode;
+        self.csv.edit_history_cell = None;
         if mode == CsvMode::Grid {
             self.close_source_search();
         }
@@ -158,7 +160,7 @@ impl EditorPane {
             ui.separator();
             for mode in CsvMode::all() {
                 if ui
-                    .selectable_label(self.csv_mode == mode, mode.label())
+                    .selectable_label(self.csv.mode == mode, mode.label())
                     .on_hover_text(format!("Switch to {} mode", mode.label()))
                     .clicked()
                 {
@@ -168,7 +170,7 @@ impl EditorPane {
         });
         ui.separator();
 
-        match self.csv_mode {
+        match self.csv.mode {
             CsvMode::Grid => self.csv_ui(ui, focused),
             CsvMode::Source => {
                 self.source_editor_ui(ui, focused, language_registry, tab_width, &[])
@@ -202,19 +204,19 @@ impl EditorPane {
         let mut changed = false;
         let mut next_focus = None;
 
-        if self.csv_selection.is_none()
-            && self.selected_csv_cell.is_none()
+        if self.csv.selection.is_none()
+            && self.csv.selected_cell.is_none()
             && !document.rows.is_empty()
         {
-            self.selected_csv_cell = Some(CsvCellPosition { row: 0, column: 0 });
+            self.csv.selected_cell = Some(CsvCellPosition { row: 0, column: 0 });
         }
 
         ui.horizontal(|ui| {
             ui.label(RichText::new("CSV VIEW").small().strong());
-            if let Some(selection) = self.csv_selection {
+            if let Some(selection) = self.csv.selection {
                 ui.label(RichText::new(csv_selection_label(selection)).small().weak());
             }
-            if let Some(message) = &self.csv_debug_message {
+            if let Some(message) = &self.csv.debug_message {
                 ui.label(RichText::new(message).small().weak());
             }
         });
@@ -228,12 +230,12 @@ impl EditorPane {
                     row_number_width,
                     header_height,
                     &column_widths,
-                    self.csv_selection,
-                    self.csv_drag,
+                    self.csv.selection,
+                    self.csv.drag,
                 ) {
-                    self.csv_selection = Some(match action {
+                    self.csv.selection = Some(match action {
                         CsvHeaderAction::Press(column) => {
-                            self.csv_drag = Some(CsvSelectionDrag {
+                            self.csv.drag = Some(CsvSelectionDrag {
                                 kind: CsvSelectionKind::Columns,
                                 anchor: column,
                             });
@@ -244,28 +246,30 @@ impl EditorPane {
                         }
                         CsvHeaderAction::ExtendDrag(column) => {
                             let start = self
-                                .csv_drag
+                                .csv
+                                .drag
                                 .filter(|drag| drag.kind == CsvSelectionKind::Columns)
                                 .map(|drag| drag.anchor)
                                 .unwrap_or(column);
                             CsvSelection::Columns { start, end: column }
                         }
                     });
-                    self.csv_debug_message = Some(format!(
+                    self.csv.debug_message = Some(format!(
                         "csv column action: {:?} -> {:?}",
-                        action, self.csv_selection
+                        action, self.csv.selection
                     ));
-                    self.selected_csv_cell = None;
-                    self.csv_edit_history_cell = None;
+                    self.csv.selected_cell = None;
+                    self.csv.edit_history_cell = None;
                     ui.ctx().request_repaint();
                 }
 
                 for row in 0..document.rows.len() {
                     ui.horizontal(|ui| {
-                        let active_row = self.selected_csv_cell.is_some_and(|cell| cell.row == row)
-                            && self.csv_selection.is_none();
+                        let active_row = self.csv.selected_cell.is_some_and(|cell| cell.row == row)
+                            && self.csv.selection.is_none();
                         let selected_row = self
-                            .csv_selection
+                            .csv
+                            .selection
                             .is_some_and(|selection| selection.contains(row, 0));
                         let row_header_response = paint_csv_row_header(
                             ui,
@@ -279,11 +283,11 @@ impl EditorPane {
                             row_header_response.rect,
                             row,
                             CsvSelectionKind::Rows,
-                            self.csv_drag,
+                            self.csv.drag,
                         ) {
-                            self.csv_selection = Some(match action {
+                            self.csv.selection = Some(match action {
                                 CsvHeaderAction::Press(row) => {
-                                    self.csv_drag = Some(CsvSelectionDrag {
+                                    self.csv.drag = Some(CsvSelectionDrag {
                                         kind: CsvSelectionKind::Rows,
                                         anchor: row,
                                     });
@@ -294,19 +298,20 @@ impl EditorPane {
                                 }
                                 CsvHeaderAction::ExtendDrag(row) => {
                                     let start = self
-                                        .csv_drag
+                                        .csv
+                                        .drag
                                         .filter(|drag| drag.kind == CsvSelectionKind::Rows)
                                         .map(|drag| drag.anchor)
                                         .unwrap_or(row);
                                     CsvSelection::Rows { start, end: row }
                                 }
                             });
-                            self.csv_debug_message = Some(format!(
+                            self.csv.debug_message = Some(format!(
                                 "csv row action: {:?} -> {:?}",
-                                action, self.csv_selection
+                                action, self.csv.selection
                             ));
-                            self.selected_csv_cell = None;
-                            self.csv_edit_history_cell = None;
+                            self.csv.selected_cell = None;
+                            self.csv.edit_history_cell = None;
                             ui.ctx().request_repaint();
                         }
 
@@ -315,10 +320,11 @@ impl EditorPane {
                                 .id()
                                 .with(format!("csv_cell_{:?}_{row}_{column}", self.pane));
                             let row_count = document.rows.len();
-                            let is_selected = self.csv_selection.is_none()
-                                && self.selected_csv_cell == Some(CsvCellPosition { row, column });
+                            let is_selected = self.csv.selection.is_none()
+                                && self.csv.selected_cell == Some(CsvCellPosition { row, column });
                             let is_range_selected = self
-                                .csv_selection
+                                .csv
+                                .selection
                                 .is_some_and(|selection| selection.contains(row, column));
                             let text = document
                                 .rows
@@ -336,11 +342,11 @@ impl EditorPane {
                             );
 
                             if response.clicked() {
-                                self.selected_csv_cell = Some(CsvCellPosition { row, column });
-                                self.csv_selection = None;
-                                self.csv_drag = None;
-                                self.csv_edit_history_cell = None;
-                                self.csv_debug_message =
+                                self.csv.selected_cell = Some(CsvCellPosition { row, column });
+                                self.csv.selection = None;
+                                self.csv.drag = None;
+                                self.csv.edit_history_cell = None;
+                                self.csv.debug_message =
                                     Some(format!("csv cell selected: R{}C{}", row + 1, column + 1));
                                 self.cursor_position =
                                     Some(Position::new(row as u32, column as u32));
@@ -383,9 +389,9 @@ impl EditorPane {
                                     .inner;
 
                                 if output.response.changed() {
-                                    if self.csv_edit_history_cell != Some(cell_position) {
+                                    if self.csv.edit_history_cell != Some(cell_position) {
                                         self.push_csv_undo_entry_value(before_edit);
-                                        self.csv_edit_history_cell = Some(cell_position);
+                                        self.csv.edit_history_cell = Some(cell_position);
                                     }
                                     changed = true;
                                     self.target_position = None;
@@ -404,7 +410,7 @@ impl EditorPane {
             });
 
         if !ui.input(|input| input.pointer.primary_down()) {
-            self.csv_drag = None;
+            self.csv.drag = None;
         }
 
         if changed {
@@ -415,7 +421,7 @@ impl EditorPane {
         }
 
         if let Some(target) = next_focus
-            && self.selected_csv_cell != Some(target)
+            && self.csv.selected_cell != Some(target)
         {
             let needs_new_cell = document
                 .rows
@@ -430,8 +436,8 @@ impl EditorPane {
                     CsvTextStyle::of(self.text.as_str()),
                 ));
             }
-            self.selected_csv_cell = Some(target);
-            self.csv_edit_history_cell = None;
+            self.csv.selected_cell = Some(target);
+            self.csv.edit_history_cell = None;
             self.cursor_position = Some(Position::new(target.row as u32, target.column as u32));
             // The target cell's TextEdit takes focus when it is built in the next frame.
             ui.ctx().request_repaint();
@@ -439,8 +445,9 @@ impl EditorPane {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum CsvMode {
+    #[default]
     Grid,
     Source,
 }
@@ -459,6 +466,19 @@ impl CsvMode {
 }
 
 pub(super) const CSV_EDIT_HISTORY_LIMIT: usize = 256;
+
+/// State only the CSV views use.
+#[derive(Default)]
+pub(super) struct CsvPaneState {
+    pub(super) selected_cell: Option<CsvCellPosition>,
+    pub(super) selection: Option<CsvSelection>,
+    pub(super) drag: Option<CsvSelectionDrag>,
+    pub(super) debug_message: Option<String>,
+    pub(super) mode: CsvMode,
+    pub(super) undo_stack: Vec<CsvEditHistoryEntry>,
+    pub(super) redo_stack: Vec<CsvEditHistoryEntry>,
+    pub(super) edit_history_cell: Option<CsvCellPosition>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct CsvEditHistoryEntry {
@@ -800,8 +820,8 @@ mod tests {
         editor.path = Some(PathBuf::from("data.csv"));
         editor.read_only = false;
         editor.text = EditorTextBuffer::new("a,b\nc,d".to_owned());
-        editor.csv_mode = CsvMode::Grid;
-        editor.csv_selection = Some(CsvSelection::Columns { start: 1, end: 1 });
+        editor.csv.mode = CsvMode::Grid;
+        editor.csv.selection = Some(CsvSelection::Columns { start: 1, end: 1 });
 
         let cell_count = editor.paste_csv_text("x\ny").unwrap();
 
@@ -819,8 +839,8 @@ mod tests {
         editor.path = Some(PathBuf::from("data.csv"));
         editor.read_only = false;
         editor.text = EditorTextBuffer::new("a,b\nc,d\ne,f".to_owned());
-        editor.csv_mode = CsvMode::Grid;
-        editor.csv_selection = Some(CsvSelection::Rows { start: 1, end: 1 });
+        editor.csv.mode = CsvMode::Grid;
+        editor.csv.selection = Some(CsvSelection::Rows { start: 1, end: 1 });
 
         let label = editor.delete_csv_selection().unwrap();
 

@@ -36,15 +36,16 @@ impl EditorPane {
         };
 
         if self
-            .markdown_active_page_id
+            .markdown
+            .active_page_id
             .as_deref()
             .and_then(|page_id| document.page_by_id(page_id))
             .is_none()
         {
-            self.markdown_active_page_id = document.pages.first().map(|page| page.id.clone());
+            self.markdown.active_page_id = document.pages.first().map(|page| page.id.clone());
         }
         if matches!(
-            self.markdown_mode,
+            self.markdown.mode,
             MarkdownMode::Markdown | MarkdownMode::Both
         ) {
             self.update_markdown_active_page_from_cursor(&document);
@@ -52,7 +53,7 @@ impl EditorPane {
 
         if focused
             && matches!(
-                self.markdown_mode,
+                self.markdown.mode,
                 MarkdownMode::Preview | MarkdownMode::Both
             )
         {
@@ -67,40 +68,40 @@ impl EditorPane {
             ui.separator();
             for mode in MarkdownMode::all() {
                 if ui
-                    .selectable_label(self.markdown_mode == mode, mode.label())
+                    .selectable_label(self.markdown.mode == mode, mode.label())
                     .on_hover_text(format!("Switch to {} mode", mode.label()))
                     .clicked()
                 {
                     self.set_markdown_mode(mode, &document);
                 }
             }
-            if self.markdown_mode != MarkdownMode::Markdown {
+            if self.markdown.mode != MarkdownMode::Markdown {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .selectable_label(self.markdown_show_outline, "Outline")
+                        .selectable_label(self.markdown.show_outline, "Outline")
                         .on_hover_text("Show or hide the outline pane")
                         .clicked()
                     {
-                        self.markdown_show_outline = !self.markdown_show_outline;
+                        self.markdown.show_outline = !self.markdown.show_outline;
                         self.normalize_markdown_focus_target();
                     }
                     if ui
-                        .selectable_label(self.markdown_show_pages, "Pages")
+                        .selectable_label(self.markdown.show_pages, "Pages")
                         .on_hover_text("Show or hide the pages pane")
                         .clicked()
                     {
-                        self.markdown_show_pages = !self.markdown_show_pages;
+                        self.markdown.show_pages = !self.markdown.show_pages;
                         self.normalize_markdown_focus_target();
                     }
                 });
             }
         });
 
-        let matches = if self.markdown_search.open {
-            let matches = markdown_search_matches(&document, &self.markdown_search.query);
-            self.markdown_search.match_count = matches.len();
-            if self.markdown_search.current_match >= matches.len() {
-                self.markdown_search.current_match = matches.len().saturating_sub(1);
+        let matches = if self.markdown.search.open {
+            let matches = markdown_search_matches(&document, &self.markdown.search.query);
+            self.markdown.search.match_count = matches.len();
+            if self.markdown.search.current_match >= matches.len() {
+                self.markdown.search.current_match = matches.len().saturating_sub(1);
             }
             if focused {
                 self.handle_markdown_search_global_shortcuts(ui, &document, &matches);
@@ -108,7 +109,7 @@ impl EditorPane {
             self.markdown_search_ui(ui, &document, &matches);
             matches
         } else {
-            self.markdown_search.match_count = 0;
+            self.markdown.search.match_count = 0;
             Vec::new()
         };
 
@@ -116,7 +117,7 @@ impl EditorPane {
 
         let active_page_range = self.markdown_active_source_line_range(&document);
         let active_search_match = self.markdown_active_search_match(&matches);
-        match self.markdown_mode {
+        match self.markdown.mode {
             MarkdownMode::Preview => {
                 self.markdown_preview_ui(ui, &document, language_registry, active_search_match)
             }
@@ -147,7 +148,7 @@ impl EditorPane {
     ) -> Result<Rc<MarkdownDocument>, String> {
         let (source_len, source_hash) = self.text_fingerprint();
 
-        if let Some(cache) = &self.markdown_document_cache
+        if let Some(cache) = &self.markdown.document_cache
             && cache.path == path
             && cache.source_len == source_len
             && cache.source_hash == source_hash
@@ -157,7 +158,7 @@ impl EditorPane {
 
         let document =
             MarkdownDocument::parse(path.to_path_buf(), self.text.as_str().to_owned()).map(Rc::new);
-        self.markdown_document_cache = Some(MarkdownDocumentCache {
+        self.markdown.document_cache = Some(MarkdownDocumentCache {
             path: path.to_path_buf(),
             source_len,
             source_hash,
@@ -167,19 +168,19 @@ impl EditorPane {
     }
 
     pub(super) fn set_markdown_mode(&mut self, mode: MarkdownMode, document: &MarkdownDocument) {
-        if self.markdown_mode == mode {
+        if self.markdown.mode == mode {
             return;
         }
 
         if matches!(mode, MarkdownMode::Markdown | MarkdownMode::Both) {
             self.prepare_markdown_source_entry(document);
-            self.markdown_focus_target = MarkdownFocusTarget::Body;
+            self.markdown.focus_target = MarkdownFocusTarget::Body;
         }
-        if mode == MarkdownMode::Both && self.markdown_focus_target == MarkdownFocusTarget::Outline
+        if mode == MarkdownMode::Both && self.markdown.focus_target == MarkdownFocusTarget::Outline
         {
-            self.markdown_focus_target = MarkdownFocusTarget::Body;
+            self.markdown.focus_target = MarkdownFocusTarget::Body;
         }
-        self.markdown_mode = mode;
+        self.markdown.mode = mode;
     }
 
     pub(super) fn handle_markdown_mode_shortcuts(
@@ -241,18 +242,18 @@ impl EditorPane {
             }
 
             let response = ui.add(
-                TextEdit::singleline(&mut self.markdown_search.query)
+                TextEdit::singleline(&mut self.markdown.search.query)
                     .id(search_id)
                     .hint_text("Search rendered markdown")
                     .desired_width(220.0),
             );
             if response.changed() {
-                self.markdown_search.current_match = 0;
-                self.markdown_search.scrolled_match = None;
+                self.markdown.search.current_match = 0;
+                self.markdown.search.scrolled_match = None;
             }
-            if self.markdown_search.focus_requested {
+            if self.markdown.search.focus_requested {
                 response.request_focus();
-                self.markdown_search.focus_requested = false;
+                self.markdown.search.focus_requested = false;
             }
             let input_has_focus =
                 response.has_focus() || ui.memory(|memory| memory.has_focus(search_id));
@@ -273,14 +274,14 @@ impl EditorPane {
                 }
             }
 
-            let count_label = if self.markdown_search.query.trim().is_empty() {
+            let count_label = if self.markdown.search.query.trim().is_empty() {
                 "0 results".to_owned()
             } else if matches.is_empty() {
                 "No results".to_owned()
             } else {
                 format!(
                     "{}/{}",
-                    self.markdown_search.current_match + 1,
+                    self.markdown.search.current_match + 1,
                     matches.len()
                 )
             };
@@ -310,12 +311,12 @@ impl EditorPane {
         });
 
         if close {
-            self.markdown_search.open = false;
-            self.markdown_search.focus_requested = false;
-            self.markdown_search.query.clear();
-            self.markdown_search.current_match = 0;
-            self.markdown_search.match_count = 0;
-            self.markdown_search.scrolled_match = None;
+            self.markdown.search.open = false;
+            self.markdown.search.focus_requested = false;
+            self.markdown.search.query.clear();
+            self.markdown.search.current_match = 0;
+            self.markdown.search.match_count = 0;
+            self.markdown.search.scrolled_match = None;
             return;
         }
 
@@ -369,9 +370,9 @@ impl EditorPane {
         }
 
         let len = matches.len() as isize;
-        let current = self.markdown_search.current_match as isize;
-        self.markdown_search.current_match = (current + delta).rem_euclid(len) as usize;
-        self.markdown_search.scrolled_match = None;
+        let current = self.markdown.search.current_match as isize;
+        self.markdown.search.current_match = (current + delta).rem_euclid(len) as usize;
+        self.markdown.search.scrolled_match = None;
         self.navigate_to_current_markdown_match(matches);
 
         if let Some(search_match) = self.markdown_active_search_match(matches)
@@ -386,20 +387,20 @@ impl EditorPane {
         let Some(search_match) = self.markdown_active_search_match(matches) else {
             return;
         };
-        if self.markdown_active_page_id.as_deref() != Some(search_match.page_id.as_str()) {
-            self.markdown_active_heading_id = None;
+        if self.markdown.active_page_id.as_deref() != Some(search_match.page_id.as_str()) {
+            self.markdown.active_heading_id = None;
         }
-        self.markdown_active_page_id = Some(search_match.page_id.clone());
+        self.markdown.active_page_id = Some(search_match.page_id.clone());
     }
 
     pub(super) fn markdown_active_search_match(
         &self,
         matches: &[MarkdownSearchMatch],
     ) -> Option<MarkdownSearchMatch> {
-        if self.markdown_search.query.trim().is_empty() {
+        if self.markdown.search.query.trim().is_empty() {
             return None;
         }
-        matches.get(self.markdown_search.current_match).cloned()
+        matches.get(self.markdown.search.current_match).cloned()
     }
 
     pub(super) fn markdown_preview_ui(
@@ -411,14 +412,14 @@ impl EditorPane {
     ) {
         let available_height = ui.available_height();
         let available_width = ui.available_width();
-        let left_width = if self.markdown_show_pages {
-            self.markdown_pages_width =
-                clamp_markdown_side_pane_width(self.markdown_pages_width, available_width);
-            self.markdown_pages_width
+        let left_width = if self.markdown.show_pages {
+            self.markdown.pages_width =
+                clamp_markdown_side_pane_width(self.markdown.pages_width, available_width);
+            self.markdown.pages_width
         } else {
             0.0
         };
-        let right_width = if self.markdown_show_outline {
+        let right_width = if self.markdown.show_outline {
             markdown_side_pane_width(available_width)
         } else {
             0.0
@@ -432,7 +433,7 @@ impl EditorPane {
         let mut left = rect.left();
         let mut right = rect.right();
 
-        if self.markdown_show_pages {
+        if self.markdown.show_pages {
             let page_rect = egui::Rect::from_min_size(
                 egui::pos2(left, rect.top()),
                 egui::vec2(left_width, rect.height()),
@@ -455,7 +456,7 @@ impl EditorPane {
             left += separator_width;
         }
 
-        if self.markdown_show_outline {
+        if self.markdown.show_outline {
             let outline_left = (right - right_width).max(left);
             let outline_rect = egui::Rect::from_min_size(
                 egui::pos2(outline_left, rect.top()),
@@ -510,20 +511,20 @@ impl EditorPane {
         let available_height = ui.available_height();
         let available_width = ui.available_width();
         let separator_width = 8.0;
-        let page_width = if self.markdown_show_pages {
-            self.markdown_pages_width =
-                clamp_markdown_side_pane_width(self.markdown_pages_width, available_width);
-            self.markdown_pages_width
+        let page_width = if self.markdown.show_pages {
+            self.markdown.pages_width =
+                clamp_markdown_side_pane_width(self.markdown.pages_width, available_width);
+            self.markdown.pages_width
         } else {
             0.0
         };
-        let outline_width = if self.markdown_show_outline {
+        let outline_width = if self.markdown.show_outline {
             markdown_side_pane_width(available_width)
         } else {
             0.0
         };
         let separator_count =
-            1 + usize::from(self.markdown_show_pages) + usize::from(self.markdown_show_outline);
+            1 + usize::from(self.markdown.show_pages) + usize::from(self.markdown.show_outline);
         let remaining_width = (available_width
             - page_width
             - outline_width
@@ -533,7 +534,7 @@ impl EditorPane {
         let editor_width = (remaining_width - preview_width - 8.0).max(220.0);
 
         ui.horizontal_top(|ui| {
-            if self.markdown_show_pages {
+            if self.markdown.show_pages {
                 ui.allocate_ui_with_layout(
                     egui::vec2(page_width, available_height),
                     egui::Layout::top_down(egui::Align::Min),
@@ -568,7 +569,7 @@ impl EditorPane {
                     );
                 },
             );
-            if self.markdown_show_outline {
+            if self.markdown.show_outline {
                 ui.separator();
                 ui.allocate_ui_with_layout(
                     egui::vec2(outline_width, available_height),
@@ -597,20 +598,20 @@ impl EditorPane {
         let primary_pressed = ui.input(|input| input.pointer.primary_pressed());
         let primary_down = ui.input(|input| input.pointer.primary_down());
         if primary_pressed && pointer_position.is_some_and(|position| hit_rect.contains(position)) {
-            self.markdown_pages_resize_start_width = Some(self.markdown_pages_width);
+            self.markdown.pages_resize_start_width = Some(self.markdown.pages_width);
         }
-        if self.markdown_pages_resize_start_width.is_some() && primary_down {
+        if self.markdown.pages_resize_start_width.is_some() && primary_down {
             if let Some(pointer_position) = pointer_position {
-                self.markdown_pages_width =
+                self.markdown.pages_width =
                     clamp_markdown_side_pane_width(pointer_position.x - pane_left, available_width);
             }
             ui.ctx().request_repaint();
         }
         if !primary_down {
-            self.markdown_pages_resize_start_width = None;
+            self.markdown.pages_resize_start_width = None;
         }
 
-        let resizing = self.markdown_pages_resize_start_width.is_some();
+        let resizing = self.markdown.pages_resize_start_width.is_some();
         if response.hovered() || resizing {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
@@ -645,7 +646,7 @@ impl EditorPane {
                 for page in &document.pages {
                     let indent = (page.depth.saturating_sub(1) as f32) * 12.0;
                     let selected =
-                        self.markdown_active_page_id.as_deref() == Some(page.id.as_str());
+                        self.markdown.active_page_id.as_deref() == Some(page.id.as_str());
                     let row_height = ui.text_style_height(&TextStyle::Body) + 4.0;
                     let (row_rect, row_response) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), row_height),
@@ -682,7 +683,7 @@ impl EditorPane {
 
                     if row_response.on_hover_text(&page.title).clicked() {
                         self.select_markdown_page(page.id.clone());
-                        if self.markdown_mode == MarkdownMode::Both {
+                        if self.markdown.mode == MarkdownMode::Both {
                             self.move_markdown_source_to_page(page);
                         } else {
                             self.request_markdown_focus(ui, MarkdownFocusTarget::Body);
@@ -699,7 +700,7 @@ impl EditorPane {
         language_registry: &LanguageRegistry,
         active_search_match: Option<MarkdownSearchMatch>,
     ) {
-        let Some(page) = document.active_or_first_page(self.markdown_active_page_id.as_deref())
+        let Some(page) = document.active_or_first_page(self.markdown.active_page_id.as_deref())
         else {
             ui.label(RichText::new("Empty Markdown document").weak());
             return;
@@ -707,7 +708,7 @@ impl EditorPane {
         let search_query = active_search_match
             .as_ref()
             .filter(|search_match| search_match.page_id == page.id)
-            .map(|_| self.markdown_search.query.trim().to_owned());
+            .map(|_| self.markdown.search.query.trim().to_owned());
 
         self.markdown_page_header_ui(ui, document, page, search_query.as_deref());
         ui.add_space(6.0);
@@ -780,7 +781,7 @@ impl EditorPane {
 
         for (index, heading) in outline.iter().enumerate() {
             let selected =
-                self.markdown_active_heading_id.as_deref() == Some(heading.slug.as_str());
+                self.markdown.active_heading_id.as_deref() == Some(heading.slug.as_str());
             ui.add_space(4.0);
             let heading_job = markdown_plain_text_layout_job(
                 ui,
@@ -790,7 +791,7 @@ impl EditorPane {
             );
             let response = ui.selectable_label(selected, heading_job);
             if response.clicked() {
-                self.markdown_active_heading_id = Some(heading.slug.clone());
+                self.markdown.active_heading_id = Some(heading.slug.clone());
             }
             if selected || self.should_scroll_to_markdown_search_match(search_query, &heading.title)
             {
@@ -820,11 +821,11 @@ impl EditorPane {
         let Some(query) = search_query.filter(|query| !query.is_empty()) else {
             return false;
         };
-        if self.markdown_search.scrolled_match == Some(self.markdown_search.current_match) {
+        if self.markdown.search.scrolled_match == Some(self.markdown.search.current_match) {
             return false;
         }
         if text.to_lowercase().contains(&query.to_lowercase()) {
-            self.markdown_search.scrolled_match = Some(self.markdown_search.current_match);
+            self.markdown.search.scrolled_match = Some(self.markdown.search.current_match);
             return true;
         }
         false
@@ -847,7 +848,7 @@ impl EditorPane {
 
         ui.horizontal(|ui| {
             let mut title_format = markdown_heading_text_format(ui, 2);
-            if self.markdown_focus_target == MarkdownFocusTarget::Body {
+            if self.markdown.focus_target == MarkdownFocusTarget::Body {
                 title_format.color = markdown_focus_color(ui);
             }
             let title_job =
@@ -865,7 +866,7 @@ impl EditorPane {
                     && let Some(next) = next
                 {
                     self.select_markdown_page(next.id.clone());
-                    if self.markdown_mode == MarkdownMode::Both {
+                    if self.markdown.mode == MarkdownMode::Both {
                         self.move_markdown_source_to_page(next);
                     } else {
                         self.request_markdown_focus(ui, MarkdownFocusTarget::Body);
@@ -885,7 +886,7 @@ impl EditorPane {
                     && let Some(previous) = previous
                 {
                     self.select_markdown_page(previous.id.clone());
-                    if self.markdown_mode == MarkdownMode::Both {
+                    if self.markdown.mode == MarkdownMode::Both {
                         self.move_markdown_source_to_page(previous);
                     } else {
                         self.request_markdown_focus(ui, MarkdownFocusTarget::Body);
@@ -899,7 +900,7 @@ impl EditorPane {
         self.markdown_side_pane_title_ui(ui, "Outline", MarkdownFocusTarget::Outline);
         ui.add_space(4.0);
 
-        let Some(page) = document.active_or_first_page(self.markdown_active_page_id.as_deref())
+        let Some(page) = document.active_or_first_page(self.markdown.active_page_id.as_deref())
         else {
             ui.label(RichText::new("No outline").weak());
             return;
@@ -918,13 +919,13 @@ impl EditorPane {
                 for heading in outline {
                     ui.horizontal(|ui| {
                         ui.add_space((heading.level.saturating_sub(1) as f32) * 8.0);
-                        let selected = self.markdown_active_heading_id.as_deref()
+                        let selected = self.markdown.active_heading_id.as_deref()
                             == Some(heading.slug.as_str());
                         if ui
                             .selectable_label(selected, RichText::new(&heading.title).small())
                             .clicked()
                         {
-                            self.markdown_active_heading_id = Some(heading.slug.clone());
+                            self.markdown.active_heading_id = Some(heading.slug.clone());
                             self.request_markdown_focus(ui, MarkdownFocusTarget::Body);
                             ui.ctx().request_repaint();
                         }
@@ -960,7 +961,7 @@ impl EditorPane {
         let mut focus_body = false;
 
         ui.input_mut(|input| {
-            if self.markdown_focus_target == MarkdownFocusTarget::Pages {
+            if self.markdown.focus_target == MarkdownFocusTarget::Pages {
                 if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
                     next_index = self.markdown_page_index_with_delta(document, -1);
                     return;
@@ -971,13 +972,13 @@ impl EditorPane {
                 }
                 if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
                     next_index = document
-                        .active_or_first_page_index(self.markdown_active_page_id.as_deref());
+                        .active_or_first_page_index(self.markdown.active_page_id.as_deref());
                     focus_body = true;
                     return;
                 }
             }
 
-            if self.markdown_focus_target == MarkdownFocusTarget::Outline {
+            if self.markdown.focus_target == MarkdownFocusTarget::Outline {
                 if input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
                     next_heading_index = self.markdown_outline_index_with_delta(document, -1);
                     return;
@@ -1007,7 +1008,7 @@ impl EditorPane {
             && let Some(page) = document.pages.get(next_index)
         {
             self.select_markdown_page(page.id.clone());
-            if self.markdown_mode == MarkdownMode::Both && focus_body {
+            if self.markdown.mode == MarkdownMode::Both && focus_body {
                 self.move_markdown_source_to_page(page);
             } else if focus_body {
                 self.request_markdown_focus(ui, MarkdownFocusTarget::Body);
@@ -1016,10 +1017,10 @@ impl EditorPane {
         }
         if let Some(next_heading_index) = next_heading_index
             && let Some(page) =
-                document.active_or_first_page(self.markdown_active_page_id.as_deref())
+                document.active_or_first_page(self.markdown.active_page_id.as_deref())
             && let Some(heading) = document.page_outline(&page.id).get(next_heading_index)
         {
-            self.markdown_active_heading_id = Some(heading.slug.clone());
+            self.markdown.active_heading_id = Some(heading.slug.clone());
             ui.ctx().request_repaint();
         }
         if focus_body && next_index.is_none() {
@@ -1032,7 +1033,7 @@ impl EditorPane {
         document: &MarkdownDocument,
         delta: isize,
     ) -> Option<usize> {
-        let index = document.active_or_first_page_index(self.markdown_active_page_id.as_deref())?;
+        let index = document.active_or_first_page_index(self.markdown.active_page_id.as_deref())?;
         let max_index = document.pages.len().saturating_sub(1) as isize;
         Some((index as isize + delta).clamp(0, max_index) as usize)
     }
@@ -1042,13 +1043,14 @@ impl EditorPane {
         document: &MarkdownDocument,
         delta: isize,
     ) -> Option<usize> {
-        let page = document.active_or_first_page(self.markdown_active_page_id.as_deref())?;
+        let page = document.active_or_first_page(self.markdown.active_page_id.as_deref())?;
         let outline = document.page_outline(&page.id);
         if outline.is_empty() {
             return None;
         }
         let index = self
-            .markdown_active_heading_id
+            .markdown
+            .active_heading_id
             .as_deref()
             .and_then(|heading_id| {
                 outline
@@ -1061,10 +1063,10 @@ impl EditorPane {
     }
 
     pub(super) fn select_markdown_page(&mut self, page_id: String) {
-        if self.markdown_active_page_id.as_deref() != Some(page_id.as_str()) {
-            self.markdown_active_heading_id = None;
+        if self.markdown.active_page_id.as_deref() != Some(page_id.as_str()) {
+            self.markdown.active_heading_id = None;
         }
-        self.markdown_active_page_id = Some(page_id);
+        self.markdown.active_page_id = Some(page_id);
     }
 
     pub(super) fn move_markdown_source_to_page(
@@ -1078,7 +1080,7 @@ impl EditorPane {
             position,
             focus_editor: false,
         });
-        self.markdown_focus_target = MarkdownFocusTarget::Body;
+        self.markdown.focus_target = MarkdownFocusTarget::Body;
     }
 
     /// Independent of the calling `ui`, so a request from the page header or a shortcut
@@ -1092,7 +1094,7 @@ impl EditorPane {
         ui: &mut egui::Ui,
         target: MarkdownFocusTarget,
     ) {
-        self.markdown_focus_target = target;
+        self.markdown.focus_target = target;
         if target != MarkdownFocusTarget::Body {
             // Pages / Outline keys work from `markdown_focus_target` alone. Nothing holds egui
             // focus meanwhile, so egui does not turn their Up/Down into focus moves.
@@ -1126,7 +1128,7 @@ impl EditorPane {
         let targets = self.visible_markdown_focus_targets();
         let index = targets
             .iter()
-            .position(|target| *target == self.markdown_focus_target)
+            .position(|target| *target == self.markdown.focus_target)
             .unwrap_or(0);
         let next = if forward {
             (index + 1) % targets.len()
@@ -1137,16 +1139,16 @@ impl EditorPane {
     }
 
     pub(super) fn visible_markdown_focus_targets(&self) -> Vec<MarkdownFocusTarget> {
-        if self.markdown_mode == MarkdownMode::Markdown {
+        if self.markdown.mode == MarkdownMode::Markdown {
             return vec![MarkdownFocusTarget::Body];
         }
 
         let mut targets = Vec::new();
-        if self.markdown_show_pages {
+        if self.markdown.show_pages {
             targets.push(MarkdownFocusTarget::Pages);
         }
         targets.push(MarkdownFocusTarget::Body);
-        if self.markdown_show_outline {
+        if self.markdown.show_outline {
             targets.push(MarkdownFocusTarget::Outline);
         }
         targets
@@ -1154,8 +1156,8 @@ impl EditorPane {
 
     pub(super) fn normalize_markdown_focus_target(&mut self) {
         let targets = self.visible_markdown_focus_targets();
-        if !targets.contains(&self.markdown_focus_target) {
-            self.markdown_focus_target = MarkdownFocusTarget::Body;
+        if !targets.contains(&self.markdown.focus_target) {
+            self.markdown.focus_target = MarkdownFocusTarget::Body;
         }
     }
 
@@ -1166,7 +1168,7 @@ impl EditorPane {
         target: MarkdownFocusTarget,
     ) -> RichText {
         let text = RichText::new(label).small().strong();
-        if self.markdown_focus_target == target {
+        if self.markdown.focus_target == target {
             text.color(markdown_focus_color(ui))
                 .background_color(markdown_focus_background(ui))
         } else {
@@ -1200,6 +1202,43 @@ impl MarkdownMode {
             Self::Preview => "Preview",
             Self::Markdown => "Markdown",
             Self::Both => "Both",
+        }
+    }
+}
+
+/// State only the Markdown views use.
+pub(super) struct MarkdownPaneState {
+    pub(super) mode: MarkdownMode,
+    pub(super) active_page_id: Option<String>,
+    pub(super) active_heading_id: Option<String>,
+    pub(super) focus_target: MarkdownFocusTarget,
+    pub(super) show_pages: bool,
+    pub(super) pages_width: f32,
+    pub(super) pages_resize_start_width: Option<f32>,
+    pub(super) show_outline: bool,
+    pub(super) search: MarkdownSearchState,
+    pub(super) document_cache: Option<MarkdownDocumentCache>,
+    pub(super) image_cache: HashMap<PathBuf, Result<egui::TextureHandle, String>>,
+    pub(super) mermaid_cache: HashMap<String, Result<String, String>>,
+    pub(super) pending_footnote_scroll: Option<MarkdownFootnoteScrollTarget>,
+}
+
+impl Default for MarkdownPaneState {
+    fn default() -> Self {
+        Self {
+            mode: MarkdownMode::Preview,
+            active_page_id: None,
+            active_heading_id: None,
+            focus_target: MarkdownFocusTarget::Body,
+            show_pages: true,
+            pages_width: MARKDOWN_SIDE_PANE_DEFAULT_WIDTH,
+            pages_resize_start_width: None,
+            show_outline: false,
+            search: MarkdownSearchState::default(),
+            document_cache: None,
+            image_cache: HashMap::new(),
+            mermaid_cache: HashMap::new(),
+            pending_footnote_scroll: None,
         }
     }
 }

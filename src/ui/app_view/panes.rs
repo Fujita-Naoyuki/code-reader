@@ -157,8 +157,8 @@ impl CodeReaderApp {
             match MarkdownDocument::parse(path.clone(), next.text.as_str().to_owned()) {
                 Ok(document) => {
                     if let Some(target) = markdown_fragment_target(&document, fragment) {
-                        next.markdown_active_page_id = Some(target.page_id);
-                        next.markdown_active_heading_id = target.heading_id;
+                        next.markdown.active_page_id = Some(target.page_id);
+                        next.markdown.active_heading_id = target.heading_id;
                         next.target_position = Some(target.position);
                         next.pending_navigation = Some(PendingEditorNavigation {
                             position: target.position,
@@ -204,7 +204,7 @@ impl CodeReaderApp {
             && let Some(path) = &editor.path
         {
             self.markdown_modes
-                .insert(path.clone(), editor.markdown_mode);
+                .insert(path.clone(), editor.markdown.mode);
         }
     }
 
@@ -213,7 +213,7 @@ impl CodeReaderApp {
             && let Some(path) = &editor.path
             && let Some(mode) = self.markdown_modes.get(path)
         {
-            editor.markdown_mode = *mode;
+            editor.markdown.mode = *mode;
         }
     }
 
@@ -249,16 +249,16 @@ impl CodeReaderApp {
 
     pub(super) fn open_markdown_search(&mut self) -> bool {
         let editor = self.focused_editor_mut();
-        if !editor.is_markdown() || editor.markdown_mode == MarkdownMode::Markdown {
+        if !editor.is_markdown() || editor.markdown.mode == MarkdownMode::Markdown {
             return false;
         }
 
         // Ctrl+F on an open search box only refocuses it; the current match stays.
-        if !editor.markdown_search.open {
-            editor.markdown_search.current_match = 0;
+        if !editor.markdown.search.open {
+            editor.markdown.search.current_match = 0;
         }
-        editor.markdown_search.open = true;
-        editor.markdown_search.focus_requested = true;
+        editor.markdown.search.open = true;
+        editor.markdown.search.focus_requested = true;
         true
     }
 

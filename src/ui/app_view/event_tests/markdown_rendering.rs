@@ -77,12 +77,12 @@ fn inline_formatting_tables_and_heading_levels_render() {
     assert!(t.has_label("Level Five"));
     assert!(t.has_label("Level Six"));
     // The page title is longer than the pages pane and gets an ellipsis.
-    assert!(t.app().left.markdown_show_pages);
+    assert!(t.app().left.markdown.show_pages);
 
     // Clicking a heading in the body selects it; clicking the body focuses it.
     t.click_nth("Level Four", 0);
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h4-level-four")
     );
     let body = t.label_rect("Level Six");
@@ -121,7 +121,9 @@ fn light_theme_renders_with_light_colors() {
     t.click("src");
     t.click_first("main.rs");
     t.click_text(2, 13);
-    t.wait_until("highlight", |app| app.left.syntax_highlight_cache.is_some());
+    t.wait_until("highlight", |app| {
+        app.left.caches.syntax_highlight.is_some()
+    });
     t.steps(2);
     t.ctrl(egui::Key::F);
     t.type_text("Point");
@@ -133,13 +135,13 @@ fn search_scrolls_to_headings_and_link_paragraphs() {
     let mut t = inline_app(false);
     t.ctrl(egui::Key::F);
     t.type_text("needle");
-    assert!(t.app().left.markdown_search.match_count >= 2);
+    assert!(t.app().left.markdown.search.match_count >= 2);
     t.steps(3);
     t.key(egui::Key::Enter);
     t.steps(3);
     t.fill_markdown_search("Level Five");
     t.steps(3);
-    assert!(t.app().left.markdown_search.match_count >= 1);
+    assert!(t.app().left.markdown.search.match_count >= 1);
 }
 
 #[test]
@@ -150,7 +152,7 @@ fn fragment_links_resolve_exact_slugs_and_trailing_dashes() {
     assert!(t.has_label("Fragments"));
     t.click_text_label("exact slug");
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-level-three")
     );
     t.alt(egui::Key::ArrowLeft);
@@ -158,7 +160,7 @@ fn fragment_links_resolve_exact_slugs_and_trailing_dashes() {
     t.ctrl(egui::Key::PageDown);
     t.click_text_label("trailing dash");
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-level-three")
     );
     t.alt(egui::Key::ArrowLeft);
@@ -233,7 +235,7 @@ fn markdown_source_scrolling_bookmarks_and_live_search() {
     t.assert_status_containing("bookmark: long.md:");
 
     t.key(egui::Key::PageDown);
-    assert!(t.app().left.scroll_y > 0.0);
+    assert!(t.app().left.scroll.y > 0.0);
     t.key(egui::Key::PageDown);
     t.key(egui::Key::PageUp);
 
@@ -250,7 +252,7 @@ fn empty_markdown_files_switch_modes_without_pages() {
     let mut t = TestApp::builder().file("empty.md", "").build();
     t.click_first("empty.md");
     t.alt(egui::Key::Num2);
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Markdown);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Markdown);
     t.alt(egui::Key::Num3);
     t.steps(2);
 }
@@ -264,7 +266,7 @@ fn page_rows_in_both_mode_move_the_source_cursor() {
         pages.left() + 30.0,
         pages.bottom() + 6.0 + 18.0 * 1.5,
     ));
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Both);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Both);
     assert!(t.app().left.cursor_position.unwrap().line > 0);
 }
 
@@ -314,7 +316,7 @@ fn rendered_search_box_handles_enter_in_the_frame_it_gets_focus() {
         (egui::Key::F, super::support::CTRL),
         (egui::Key::Enter, egui::Modifiers::NONE),
     ]);
-    assert_eq!(t.app().left.markdown_search.current_match, 1);
+    assert_eq!(t.app().left.markdown.search.current_match, 1);
     t.click_at(egui::pos2(1000.0, 700.0));
     t.steps(40);
     t.keys_in_one_frame(&[
@@ -322,7 +324,7 @@ fn rendered_search_box_handles_enter_in_the_frame_it_gets_focus() {
         (egui::Key::Enter, egui::Modifiers::SHIFT),
     ]);
     // Ctrl+F keeps the current match, so Shift+Enter steps back from it.
-    assert_eq!(t.app().left.markdown_search.current_match, 0);
+    assert_eq!(t.app().left.markdown.search.current_match, 0);
 }
 
 #[test]
@@ -336,7 +338,7 @@ fn markdown_source_mode_tolerates_unfinished_links() {
     t.click_first("draft.md");
     t.alt(egui::Key::Num2);
     t.steps(2);
-    assert_eq!(t.app().left.markdown_mode, MarkdownMode::Markdown);
+    assert_eq!(t.app().left.markdown.mode, MarkdownMode::Markdown);
 }
 
 #[test]
@@ -352,13 +354,13 @@ fn shortcut_reference_links_and_odd_heading_slugs() {
     t.assert_status("Opened external URL: https://example.com/c");
     t.click_text_label("to punctuation");
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-ends-with-punctuation")
     );
     t.alt(egui::Key::ArrowLeft);
     t.click_text_label("to section");
     assert_eq!(
-        t.app().left.markdown_active_heading_id.as_deref(),
+        t.app().left.markdown.active_heading_id.as_deref(),
         Some("h3-section")
     );
 }

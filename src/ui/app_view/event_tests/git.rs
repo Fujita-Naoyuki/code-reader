@@ -452,10 +452,10 @@ fn file_diff_views_switch_layout_and_context() {
     t.assert_status("Diff context: Changes | tracked.txt");
 
     t.click("Side by Side");
-    assert_eq!(t.app().left.diff_display_mode, DiffDisplayMode::SideBySide);
+    assert_eq!(t.app().left.diff.display_mode, DiffDisplayMode::SideBySide);
     t.steps(2);
     t.click("Unified");
-    assert_eq!(t.app().left.diff_display_mode, DiffDisplayMode::Unified);
+    assert_eq!(t.app().left.diff.display_mode, DiffDisplayMode::Unified);
 
     // Staged diffs open from the staged section.
     t.click("+ Stage All");

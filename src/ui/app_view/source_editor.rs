@@ -10,7 +10,7 @@ impl EditorPane {
         let scroll_delta_y = ui.input(|input| input.smooth_scroll_delta().y);
 
         if is_pointer_over_editor && scroll_delta_y.abs() > f32::EPSILON {
-            self.scroll_y = (self.scroll_y - scroll_delta_y).clamp(0.0, max_scroll_y.max(0.0));
+            self.scroll.y = (self.scroll.y - scroll_delta_y).clamp(0.0, max_scroll_y.max(0.0));
             ui.input_mut(|input| {
                 input.smooth_scroll_delta.y = 0.0;
             });
@@ -20,11 +20,11 @@ impl EditorPane {
     pub(super) fn can_source_search(&self) -> bool {
         self.path.is_some()
             && !self.is_markdown()
-            && (!self.is_csv() || self.csv_mode == CsvMode::Source)
+            && (!self.is_csv() || self.csv.mode == CsvMode::Source)
     }
 
     pub(super) fn can_markdown_source_search(&self) -> bool {
-        self.is_markdown() && self.markdown_mode == MarkdownMode::Markdown
+        self.is_markdown() && self.markdown.mode == MarkdownMode::Markdown
     }
 
     pub(super) fn handle_input_assistance(
@@ -129,7 +129,7 @@ impl EditorPane {
         source_hash: u64,
     ) -> Option<(usize, usize)> {
         let cursor_position = self.cursor_position;
-        if let Some(cache) = self.bracket_pair_cache
+        if let Some(cache) = self.caches.bracket_pair
             && cache.source_len == source_len
             && cache.source_hash == source_hash
             && cache.cursor_position == cursor_position
@@ -139,7 +139,7 @@ impl EditorPane {
 
         let pair =
             cursor_position.and_then(|position| find_matching_bracket_pair(&self.text, position));
-        self.bracket_pair_cache = Some(BracketPairCache {
+        self.caches.bracket_pair = Some(BracketPairCache {
             source_len,
             source_hash,
             cursor_position,
@@ -154,7 +154,7 @@ impl EditorPane {
         source_hash: u64,
     ) -> Rc<Vec<SourceSearchMatch>> {
         let query = self.source_search.query.clone();
-        if let Some(cache) = &self.source_search_cache
+        if let Some(cache) = &self.caches.source_search
             && cache.source_len == source_len
             && cache.source_hash == source_hash
             && cache.query == query
@@ -163,7 +163,7 @@ impl EditorPane {
         }
 
         let matches = Rc::new(source_search_matches(&self.text, &query));
-        self.source_search_cache = Some(SourceSearchCache {
+        self.caches.source_search = Some(SourceSearchCache {
             source_len,
             source_hash,
             query,
@@ -365,7 +365,7 @@ impl EditorPane {
         bookmark_lines: &[u32],
     ) {
         let total_start = Instant::now();
-        let scroll_before_y = self.scroll_y;
+        let scroll_before_y = self.scroll.y;
         let (source_len, source_hash) = self.text_fingerprint();
         let source_search_matches = if self.source_search.open {
             let matches = self.cached_source_search_matches(source_len, source_hash);
@@ -403,7 +403,7 @@ impl EditorPane {
         let text_edit_id = ui.id().with(format!("editor_text_{:?}", self.pane));
         let viewport_height = ui.available_height();
         if let Some(offset) = pending_scroll_y {
-            self.scroll_y = offset;
+            self.scroll.y = offset;
         }
         let line_index = self.cached_line_index(source_len, source_hash);
         if should_use_virtual_source_view(source_len, line_index.line_count()) {
@@ -427,21 +427,21 @@ impl EditorPane {
         let editor_width = metrics.editor_width(ui, ui.available_width());
         let estimated_max_scroll_y =
             estimated_textedit_source_max_scroll_y(ui, line_count, viewport_height);
-        let max_scroll_y = if self.scroll_max_y > 0.0 {
-            self.scroll_max_y
+        let max_scroll_y = if self.scroll.max_y > 0.0 {
+            self.scroll.max_y
         } else {
             estimated_max_scroll_y
         };
-        self.scroll_y = self.scroll_y.clamp(0.0, max_scroll_y);
+        self.scroll.y = self.scroll.y.clamp(0.0, max_scroll_y);
         if let Some(delta) = editor_page_scroll_delta(ui, focused, text_edit_id, viewport_height) {
-            self.scroll_y = (self.scroll_y + delta).clamp(0.0, max_scroll_y);
+            self.scroll.y = (self.scroll.y + delta).clamp(0.0, max_scroll_y);
         }
         self.apply_immediate_wheel_scroll(ui, max_scroll_y);
 
         let scroll_area = ScrollArea::both()
             .id_salt(format!("editor_pane_{:?}", self.pane))
             .auto_shrink([false, false])
-            .vertical_scroll_offset(self.scroll_y);
+            .vertical_scroll_offset(self.scroll.y);
 
         let body_start = Instant::now();
         let scroll_output = scroll_area.show(ui, |ui| {
@@ -504,12 +504,12 @@ impl EditorPane {
                 let current_line = self.cursor_position.map(|position| position.line);
                 let row_height = editor_row_height(ui);
                 let viewport_rect = ui.clip_rect();
-                self.editor_render_debug = Some(capture_editor_render_debug(
+                self.debug.render = Some(capture_editor_render_debug(
                     &output,
                     line_count,
                     line_count,
                     row_height,
-                    self.scroll_y,
+                    self.scroll.y,
                     viewport_rect,
                     current_line,
                 ));
@@ -554,17 +554,18 @@ impl EditorPane {
                 });
             });
         });
-        self.scroll_max_y =
+        self.scroll.max_y =
             scroll_area_vertical_max_scroll_y(scroll_output.content_size, scroll_output.inner_rect);
-        self.scroll_y = scroll_output.state.offset.y.clamp(0.0, self.scroll_max_y);
+        self.scroll.y = scroll_output.state.offset.y.clamp(0.0, self.scroll.max_y);
         let body_ms = elapsed_ms(body_start);
         let visible_rows = self
-            .editor_render_debug
+            .debug
+            .render
             .as_ref()
             .and_then(|debug| debug.anchored_range.clone())
             .map(|range| range.end.saturating_sub(range.start))
             .unwrap_or(0);
-        self.editor_perf_debug = Some(EditorPerfDebug {
+        self.debug.perf = Some(EditorPerfDebug {
             view: "source-textedit",
             total_ms: elapsed_ms(total_start),
             header_ms: 0.0,
@@ -572,23 +573,26 @@ impl EditorPane {
             visible_rows,
             total_rows: line_index.line_count(),
             text_len: source_len,
-            scroll_y: self.scroll_y,
-            scroll_x: self.scroll_x,
-            scroll_delta_y: self.scroll_y - scroll_before_y,
+            scroll_y: self.scroll.y,
+            scroll_x: self.scroll.x,
+            scroll_delta_y: self.scroll.y - scroll_before_y,
             source_search_open: self.source_search.open,
             source_search_matches: source_search_match_count,
             syntax_spans: self
-                .syntax_highlight_cache
+                .caches
+                .syntax_highlight
                 .as_ref()
                 .map(|cache| cache.spans.len())
                 .unwrap_or(0),
             virtual_cache_entries: self
-                .virtual_line_layout_cache
+                .virtual_editor
+                .line_layout_cache
                 .as_ref()
                 .map(|cache| cache.entries.len())
                 .unwrap_or(0),
             line_number_cache_entries: self
-                .virtual_line_number_layout_cache
+                .virtual_editor
+                .line_number_layout_cache
                 .as_ref()
                 .map(|cache| cache.entries.len())
                 .unwrap_or(0),

@@ -725,7 +725,8 @@ impl TestApp {
         if self
             .app()
             .focused_editor()
-            .virtual_click_debug
+            .debug
+            .virtual_click
             .events
             .is_empty()
         {
@@ -736,7 +737,8 @@ impl TestApp {
         }
         let editor = self.app().focused_editor();
         let event = editor
-            .virtual_click_debug
+            .debug
+            .virtual_click
             .events
             .last()
             .expect("virtual editor click diagnostics");
@@ -748,8 +750,8 @@ impl TestApp {
             viewport: event.viewport_rect,
             full_rect: event.response_rect,
             // text_left = gutter edge + 8; the clip rect starts at gutter edge + 1.
-            text_left: event.text_clip_rect.left() + 7.0 - editor.scroll_x,
-            scroll_y: editor.scroll_y,
+            text_left: event.text_clip_rect.left() + 7.0 - editor.scroll.x,
+            scroll_y: editor.scroll.y,
             row_height: event.row_height,
             char_width: space_width,
         }

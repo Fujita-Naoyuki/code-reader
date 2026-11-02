@@ -136,19 +136,19 @@ fn help_and_status_bar_follow_the_current_context() {
     // "Markdown Pages" / "Markdown Outline" need a focus target users cannot reach (D11);
     // their entries are checked by driving the focus target directly.
     for mode in [MarkdownMode::Preview, MarkdownMode::Both] {
-        t.app_mut().left.markdown_mode = mode;
+        t.app_mut().left.markdown.mode = mode;
         for (target, title) in [
             (MarkdownFocusTarget::Pages, "Markdown Pages"),
             (MarkdownFocusTarget::Outline, "Markdown Outline"),
         ] {
-            t.app_mut().left.markdown_focus_target = target;
+            t.app_mut().left.markdown.focus_target = target;
             assert_eq!(t.app().shortcut_context_title(), title);
             let _ = t.app().status_bar_shortcuts();
             let _ = t.app().context_shortcuts();
         }
     }
-    t.app_mut().left.markdown_focus_target = MarkdownFocusTarget::Body;
-    t.app_mut().left.markdown_mode = MarkdownMode::Preview;
+    t.app_mut().left.markdown.focus_target = MarkdownFocusTarget::Body;
+    t.app_mut().left.markdown.mode = MarkdownMode::Preview;
 
     t.click_first("table.csv");
     t.click_at(egui::pos2(1200.0, 600.0));
@@ -160,7 +160,7 @@ fn help_and_status_bar_follow_the_current_context() {
     t.click_at(egui::pos2(field.left() - 40.0, field.center().y));
     assert_eq!(status_keys(&t)[0], "Ctrl+C");
     assert!(matches!(
-        t.app().left.csv_selection,
+        t.app().left.csv.selection,
         Some(CsvSelection::Rows { .. })
     ));
     assert_eq!(t.app().focused_pane, Pane::Left);

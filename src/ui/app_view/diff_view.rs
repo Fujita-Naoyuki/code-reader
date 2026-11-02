@@ -5,13 +5,15 @@ use super::*;
 
 impl EditorPane {
     pub(super) fn has_diff_text_selection(&self) -> bool {
-        match self.diff_display_mode {
+        match self.diff.display_mode {
             DiffDisplayMode::Unified => self
-                .diff_unified_selection
+                .diff
+                .unified_selection
                 .and_then(|selection| selection.normalized())
                 .is_some(),
             DiffDisplayMode::SideBySide => self
-                .diff_side_selection
+                .diff
+                .side_selection
                 .and_then(|selection| selection.normalized())
                 .is_some(),
         }
@@ -19,15 +21,15 @@ impl EditorPane {
 
     pub(super) fn diff_selection_text(&self) -> Option<String> {
         let rows = parse_diff_display_rows(&self.text);
-        match self.diff_display_mode {
+        match self.diff.display_mode {
             DiffDisplayMode::Unified => {
-                let selection = self.diff_unified_selection?;
-                let render_rows = unified_diff_render_rows(&rows, &self.diff_collapsed_files);
+                let selection = self.diff.unified_selection?;
+                let render_rows = unified_diff_render_rows(&rows, &self.diff.collapsed_files);
                 diff_unified_selection_text_from_render_rows(&render_rows, selection)
             }
             DiffDisplayMode::SideBySide => {
-                let selection = self.diff_side_selection?;
-                let render_rows = side_by_side_diff_render_rows(&rows, &self.diff_collapsed_files);
+                let selection = self.diff.side_selection?;
+                let render_rows = side_by_side_diff_render_rows(&rows, &self.diff.collapsed_files);
                 diff_side_selection_text_from_render_rows(&render_rows, selection)
             }
         }
@@ -58,11 +60,11 @@ impl EditorPane {
         ) {
             Ok(text) => {
                 self.replace_text(text);
-                self.scroll_y = 0.0;
-                self.scroll_x = 0.0;
-                self.diff_display_cache = None;
-                self.diff_side_selection = None;
-                self.diff_unified_selection = None;
+                self.scroll.y = 0.0;
+                self.scroll.x = 0.0;
+                self.diff.display_cache = None;
+                self.diff.side_selection = None;
+                self.diff.unified_selection = None;
                 if let Some(diff_view) = &mut self.diff_view {
                     diff_view.context_mode = context_mode;
                 }
@@ -114,12 +116,12 @@ impl EditorPane {
             });
             ui.horizontal(|ui| {
                 ui.selectable_value(
-                    &mut self.diff_display_mode,
+                    &mut self.diff.display_mode,
                     DiffDisplayMode::Unified,
                     "Unified",
                 );
                 ui.selectable_value(
-                    &mut self.diff_display_mode,
+                    &mut self.diff.display_mode,
                     DiffDisplayMode::SideBySide,
                     "Side by Side",
                 );
@@ -153,27 +155,27 @@ impl EditorPane {
         if back_to_history && let Some(return_history) = return_history {
             let pane = self.pane;
             let mut next = EditorPane::from_git_history(pane, return_history.view);
-            next.scroll_y = return_history.scroll_y;
-            next.scroll_x = return_history.scroll_x;
+            next.scroll.y = return_history.scroll_y;
+            next.scroll.x = return_history.scroll_x;
             *self = next;
             return;
         }
 
         let (source_len, source_hash) = self.text_fingerprint();
         let rows = self.cached_diff_display_rows(source_len, source_hash);
-        let display_mode = self.diff_display_mode;
+        let display_mode = self.diff.display_mode;
         let side_by_side = display_mode == DiffDisplayMode::SideBySide;
         if side_by_side {
-            self.diff_unified_selection = None;
+            self.diff.unified_selection = None;
         } else {
-            self.diff_side_selection = None;
+            self.diff.side_selection = None;
         }
         let side_scrollbar_height = if side_by_side { 20.0 } else { 0.0 };
         let viewport_height = (ui.available_height() - side_scrollbar_height).max(0.0);
         if let Some(delta) = diff_page_scroll_delta(ui, focused, viewport_height) {
-            self.scroll_y = (self.scroll_y + delta).max(0.0);
+            self.scroll.y = (self.scroll.y + delta).max(0.0);
         }
-        self.apply_immediate_wheel_scroll(ui, self.scroll_max_y);
+        self.apply_immediate_wheel_scroll(ui, self.scroll.max_y);
 
         let scroll_area = if side_by_side {
             ScrollArea::vertical()
@@ -187,11 +189,11 @@ impl EditorPane {
             ..ScrollSource::ALL
         })
         .max_height(viewport_height)
-        .vertical_scroll_offset(self.scroll_y);
+        .vertical_scroll_offset(self.scroll.y);
 
         let side_scroll = DiffSideBySideScroll {
-            left_x: self.diff_side_left_scroll_x,
-            right_x: self.diff_side_right_scroll_x,
+            left_x: self.diff.side_left_scroll_x,
+            right_x: self.diff.side_right_scroll_x,
         };
         let scroll_output = scroll_area.show(ui, |ui| {
             if side_by_side {
@@ -203,26 +205,26 @@ impl EditorPane {
                 ui,
                 rows.as_slice(),
                 display_mode,
-                &mut self.diff_collapsed_files,
-                &mut self.diff_side_selection,
-                &mut self.diff_unified_selection,
-                self.scroll_y,
+                &mut self.diff.collapsed_files,
+                &mut self.diff.side_selection,
+                &mut self.diff.unified_selection,
+                self.scroll.y,
                 side_scroll,
             )
         });
-        if let Some(selection) = &mut self.diff_side_selection
+        if let Some(selection) = &mut self.diff.side_selection
             && !ui.input(|input| input.pointer.primary_down())
         {
             selection.dragging = false;
         }
-        if let Some(selection) = &mut self.diff_unified_selection
+        if let Some(selection) = &mut self.diff.unified_selection
             && !ui.input(|input| input.pointer.primary_down())
         {
             selection.dragging = false;
         }
-        self.scroll_max_y =
+        self.scroll.max_y =
             scroll_area_vertical_max_scroll_y(scroll_output.content_size, scroll_output.inner_rect);
-        self.scroll_y = scroll_output.state.offset.y.clamp(0.0, self.scroll_max_y);
+        self.scroll.y = scroll_output.state.offset.y.clamp(0.0, self.scroll.max_y);
         if side_by_side {
             let viewport_width = scroll_output
                 .inner_rect
@@ -231,8 +233,8 @@ impl EditorPane {
                 .max(ui.available_width());
             diff_side_by_side_scrollbars_ui(
                 ui,
-                &mut self.diff_side_left_scroll_x,
-                &mut self.diff_side_right_scroll_x,
+                &mut self.diff.side_left_scroll_x,
+                &mut self.diff.side_right_scroll_x,
                 &scroll_output.inner,
                 viewport_width,
             );
@@ -254,7 +256,7 @@ impl EditorPane {
         source_len: usize,
         source_hash: u64,
     ) -> Rc<Vec<DiffDisplayRow>> {
-        if let Some(cache) = &self.diff_display_cache
+        if let Some(cache) = &self.diff.display_cache
             && cache.source_len == source_len
             && cache.source_hash == source_hash
         {
@@ -262,7 +264,7 @@ impl EditorPane {
         }
 
         let rows = Rc::new(parse_diff_display_rows(&self.text));
-        self.diff_display_cache = Some(DiffDisplayCache {
+        self.diff.display_cache = Some(DiffDisplayCache {
             source_len,
             source_hash,
             rows: rows.clone(),
@@ -276,6 +278,31 @@ pub(super) struct DiffDisplayCache {
     pub(super) source_len: usize,
     pub(super) source_hash: u64,
     pub(super) rows: Rc<Vec<DiffDisplayRow>>,
+}
+
+/// State only the diff view uses.
+pub(super) struct DiffPaneState {
+    pub(super) side_left_scroll_x: f32,
+    pub(super) side_right_scroll_x: f32,
+    pub(super) display_mode: DiffDisplayMode,
+    pub(super) collapsed_files: HashMap<String, bool>,
+    pub(super) side_selection: Option<DiffSideSelection>,
+    pub(super) unified_selection: Option<DiffUnifiedSelection>,
+    pub(super) display_cache: Option<DiffDisplayCache>,
+}
+
+impl Default for DiffPaneState {
+    fn default() -> Self {
+        Self {
+            side_left_scroll_x: 0.0,
+            side_right_scroll_x: 0.0,
+            display_mode: DiffDisplayMode::Unified,
+            collapsed_files: HashMap::new(),
+            side_selection: None,
+            unified_selection: None,
+            display_cache: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

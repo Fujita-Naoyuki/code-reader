@@ -25,14 +25,15 @@ impl EditorPane {
         let frame = ui.ctx().cumulative_frame_nr();
 
         if can_cache {
-            let cache =
-                self.virtual_line_layout_cache
-                    .get_or_insert_with(|| VirtualLineLayoutCache {
-                        source_len,
-                        source_hash,
-                        dark_mode,
-                        entries: HashMap::new(),
-                    });
+            let cache = self
+                .virtual_editor
+                .line_layout_cache
+                .get_or_insert_with(|| VirtualLineLayoutCache {
+                    source_len,
+                    source_hash,
+                    dark_mode,
+                    entries: HashMap::new(),
+                });
             if cache.source_len != source_len
                 || cache.source_hash != source_hash
                 || cache.dark_mode != dark_mode
@@ -73,7 +74,7 @@ impl EditorPane {
         job.wrap.max_width = f32::INFINITY;
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
 
-        if can_cache && let Some(cache) = &mut self.virtual_line_layout_cache {
+        if can_cache && let Some(cache) = &mut self.virtual_editor.line_layout_cache {
             cache.entries.insert(
                 line_number,
                 CachedVirtualLineLayout {
@@ -103,7 +104,8 @@ impl EditorPane {
         let dark_mode = ui.visuals().dark_mode;
         let frame = ui.ctx().cumulative_frame_nr();
         let cache = self
-            .virtual_line_number_layout_cache
+            .virtual_editor
+            .line_number_layout_cache
             .get_or_insert_with(|| VirtualLineNumberLayoutCache {
                 line_count,
                 dark_mode,
@@ -168,14 +170,14 @@ impl EditorPane {
         bookmark_lines: &[u32],
     ) {
         let total_start = Instant::now();
-        let scroll_before_y = self.scroll_y;
+        let scroll_before_y = self.scroll.y;
         if !focused {
-            self.virtual_ime_preedit = None;
+            self.virtual_editor.ime_preedit = None;
         }
         if let Some(position) = pending_position {
             self.cursor_position = Some(position);
-            self.virtual_selection = None;
-            self.virtual_ime_preedit = None;
+            self.virtual_editor.selection = None;
+            self.virtual_editor.ime_preedit = None;
         }
         if self.handle_virtual_text_input(ui, focused, text_edit_id, tab_width) {
             (source_len, source_hash) = self.text_fingerprint();
@@ -229,8 +231,8 @@ impl EditorPane {
         let content_rect = scrollbar_layout.content_rect;
         let max_scroll_y = (total_height - content_rect.height()).max(0.0);
         let max_scroll_x = (total_width - content_rect.width()).max(0.0);
-        self.scroll_y = self.scroll_y.clamp(0.0, max_scroll_y);
-        self.scroll_x = self.scroll_x.clamp(0.0, max_scroll_x);
+        self.scroll.y = self.scroll.y.clamp(0.0, max_scroll_y);
+        self.scroll.x = self.scroll.x.clamp(0.0, max_scroll_x);
 
         if response.hovered() {
             let (immediate_scroll, smooth_scroll, shift) = ui.input(|input| {
@@ -249,14 +251,14 @@ impl EditorPane {
                     } else {
                         raw
                     };
-                    self.virtual_wheel_lead += raw - smooth_scroll;
+                    self.virtual_editor.wheel_lead += raw - smooth_scroll;
                     raw
                 }
-                None => consume_wheel_lead(&mut self.virtual_wheel_lead, smooth_scroll),
+                None => consume_wheel_lead(&mut self.virtual_editor.wheel_lead, smooth_scroll),
             };
             if scroll_delta != egui::Vec2::ZERO {
-                self.scroll_y = (self.scroll_y - scroll_delta.y).clamp(0.0, max_scroll_y);
-                self.scroll_x = (self.scroll_x - scroll_delta.x).clamp(0.0, max_scroll_x);
+                self.scroll.y = (self.scroll.y - scroll_delta.y).clamp(0.0, max_scroll_y);
+                self.scroll.x = (self.scroll.x - scroll_delta.x).clamp(0.0, max_scroll_x);
             }
             if smooth_scroll != egui::Vec2::ZERO {
                 ui.input_mut(|input| {
@@ -265,11 +267,11 @@ impl EditorPane {
                 ui.ctx().request_repaint();
             }
         } else {
-            self.virtual_wheel_lead = egui::Vec2::ZERO;
+            self.virtual_editor.wheel_lead = egui::Vec2::ZERO;
         }
 
-        let visible_start = (self.scroll_y / row_height).floor().max(0.0) as usize;
-        let visible_end = (((self.scroll_y + content_rect.height()) / row_height).ceil() as usize
+        let visible_start = (self.scroll.y / row_height).floor().max(0.0) as usize;
+        let visible_end = (((self.scroll.y + content_rect.height()) / row_height).ceil() as usize
             + 1)
         .min(line_count);
         let visible_range = visible_start.min(line_count)..visible_end;
@@ -285,7 +287,7 @@ impl EditorPane {
             content_rect.right_bottom(),
         );
         let text_painter = ui.painter_at(text_clip_rect);
-        let text_left = content_left + gutter_width + 8.0 - self.scroll_x;
+        let text_left = content_left + gutter_width + 8.0 - self.scroll.x;
 
         if self.handle_virtual_navigation_input(
             ui,
@@ -314,12 +316,12 @@ impl EditorPane {
             text_clip_rect,
             text_left,
             row_height,
-            self.scroll_y,
+            self.scroll.y,
             char_width,
         ) {
-            self.virtual_selection = Some(VirtualTextSelection { anchor, head });
+            self.virtual_editor.selection = Some(VirtualTextSelection { anchor, head });
             self.cursor_position = Some(head);
-            self.virtual_ime_preedit = None;
+            self.virtual_editor.ime_preedit = None;
             current_line = Some(head.line);
             self.target_position = None;
             response.request_focus();
@@ -334,17 +336,17 @@ impl EditorPane {
             focused,
             content_rect,
             text_clip_rect,
-            self.scroll_x,
-            self.scroll_y,
+            self.scroll.x,
+            self.scroll.y,
             row_height,
             line_count,
             visible_range.clone(),
         );
         let click_event_index = click_input
             .event
-            .map(|event| self.virtual_click_debug.push_event(event));
+            .map(|event| self.debug.virtual_click.push_event(event));
         if let Some(pointer_pos) = click_input.position {
-            let line = ((pointer_pos.y - content_rect.top() + self.scroll_y) / row_height)
+            let line = ((pointer_pos.y - content_rect.top() + self.scroll.y) / row_height)
                 .floor()
                 .max(0.0) as usize;
             let line = line.min(line_count.saturating_sub(1));
@@ -365,21 +367,21 @@ impl EditorPane {
                     {
                         self.cursor_position = Some(selection.head);
                         current_line = Some(selection.head.line);
-                        self.virtual_selection = Some(selection);
+                        self.virtual_editor.selection = Some(selection);
                     } else {
                         self.cursor_position = Some(position);
                         current_line = Some(position.line);
-                        self.virtual_selection = None;
+                        self.virtual_editor.selection = None;
                     }
                 } else {
                     self.cursor_position = Some(position);
                     current_line = Some(position.line);
-                    self.virtual_selection = None;
+                    self.virtual_editor.selection = None;
                 }
-                self.virtual_ime_preedit = None;
+                self.virtual_editor.ime_preedit = None;
                 self.target_position = None;
                 if let Some(event_index) = click_event_index {
-                    self.virtual_click_debug.last_accept = Some(VirtualClickAcceptDebug {
+                    self.debug.virtual_click.last_accept = Some(VirtualClickAcceptDebug {
                         event_index,
                         pointer_pos,
                         line,
@@ -400,10 +402,10 @@ impl EditorPane {
             }
         }
 
-        self.editor_render_debug = Some(capture_virtual_editor_render_debug(
+        self.debug.render = Some(capture_virtual_editor_render_debug(
             line_count,
             row_height,
-            self.scroll_y,
+            self.scroll.y,
             content_rect,
             visible_range.clone(),
             current_line,
@@ -424,7 +426,7 @@ impl EditorPane {
         if let Some(current_line) = current_line
             && visible_range.contains(&(current_line as usize))
         {
-            let top = content_rect.top() + current_line as f32 * row_height - self.scroll_y;
+            let top = content_rect.top() + current_line as f32 * row_height - self.scroll.y;
             let row_rect = egui::Rect::from_min_size(
                 egui::pos2(content_rect.left(), top),
                 egui::vec2(content_rect.width(), row_height),
@@ -446,7 +448,7 @@ impl EditorPane {
                 current_line,
                 text_left,
                 row_height,
-                self.scroll_y,
+                self.scroll.y,
                 text_clip_rect,
             );
         }
@@ -455,13 +457,14 @@ impl EditorPane {
             ui,
             line_index.as_ref(),
             &self.text,
-            self.virtual_selection
+            self.virtual_editor
+                .selection
                 .and_then(|selection| selection.normalized()),
             visible_range.clone(),
             text_left,
             text_clip_rect,
             row_height,
-            self.scroll_y,
+            self.scroll.y,
             char_width,
             content_rect,
         );
@@ -470,7 +473,7 @@ impl EditorPane {
             let Some(line_info) = line_index.line(line_number) else {
                 continue;
             };
-            let top = content_rect.top() + line_number as f32 * row_height - self.scroll_y;
+            let top = content_rect.top() + line_number as f32 * row_height - self.scroll.y;
             let is_current_line = current_line == Some(line_number as u32);
             let bookmark_rect = egui::Rect::from_min_max(
                 egui::pos2(content_left, top),
@@ -560,7 +563,7 @@ impl EditorPane {
             text_left,
             text_clip_rect,
             row_height,
-            self.scroll_y,
+            self.scroll.y,
             char_width,
             content_rect,
         );
@@ -588,7 +591,7 @@ impl EditorPane {
 
         paint_virtual_ime_preedit(
             ui,
-            self.virtual_ime_preedit.as_deref(),
+            self.virtual_editor.ime_preedit.as_deref(),
             cursor_rect,
             text_clip_rect,
             content_rect,
@@ -603,7 +606,7 @@ impl EditorPane {
             text_left,
             text_clip_rect,
             row_height,
-            self.scroll_y,
+            self.scroll.y,
             char_width,
             content_rect,
         );
@@ -621,11 +624,11 @@ impl EditorPane {
             viewport_rect,
             total_width,
             total_height,
-            &mut self.scroll_x,
-            &mut self.scroll_y,
+            &mut self.scroll.x,
+            &mut self.scroll.y,
         );
         let body_ms = elapsed_ms(body_start);
-        self.editor_perf_debug = Some(EditorPerfDebug {
+        self.debug.perf = Some(EditorPerfDebug {
             view: "source-virtual",
             total_ms: elapsed_ms(total_start),
             header_ms: 0.0,
@@ -637,19 +640,21 @@ impl EditorPane {
             line_number_hits: frame_counters.line_number_hits,
             line_number_misses: frame_counters.line_number_misses,
             text_len: source_len,
-            scroll_y: self.scroll_y,
-            scroll_x: self.scroll_x,
-            scroll_delta_y: self.scroll_y - scroll_before_y,
+            scroll_y: self.scroll.y,
+            scroll_x: self.scroll.x,
+            scroll_delta_y: self.scroll.y - scroll_before_y,
             source_search_open: self.source_search.open,
             source_search_matches: source_search_matches.len(),
             syntax_spans: highlight_spans.len(),
             virtual_cache_entries: self
-                .virtual_line_layout_cache
+                .virtual_editor
+                .line_layout_cache
                 .as_ref()
                 .map(|cache| cache.entries.len())
                 .unwrap_or(0),
             line_number_cache_entries: self
-                .virtual_line_number_layout_cache
+                .virtual_editor
+                .line_number_layout_cache
                 .as_ref()
                 .map(|cache| cache.entries.len())
                 .unwrap_or(0),

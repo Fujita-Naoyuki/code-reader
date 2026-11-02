@@ -38,10 +38,10 @@ impl EditorPane {
             lines.push(format!(
                 "{} csv_mode={}",
                 self.pane.label(),
-                self.csv_mode.label()
+                self.csv.mode.label()
             ));
-            if self.csv_mode == CsvMode::Grid
-                && let Some(cell) = self.selected_csv_cell
+            if self.csv.mode == CsvMode::Grid
+                && let Some(cell) = self.csv.selected_cell
             {
                 lines.push(format!(
                     "{} csv_cell=R{}C{}",
@@ -55,15 +55,15 @@ impl EditorPane {
             lines.push(format!(
                 "{} markdown_mode={}",
                 self.pane.label(),
-                self.markdown_mode.label()
+                self.markdown.mode.label()
             ));
-            if !self.markdown_search.query.is_empty() {
+            if !self.markdown.search.query.is_empty() {
                 lines.push(format!(
                     "{} markdown_search={}/{} query={}",
                     self.pane.label(),
-                    self.markdown_search.current_match + 1,
-                    self.markdown_search.match_count,
-                    self.markdown_search.query
+                    self.markdown.search.current_match + 1,
+                    self.markdown.search.match_count,
+                    self.markdown.search.query
                 ));
             }
         } else if self.source_search.open && !self.source_search.query.is_empty() {
@@ -75,7 +75,7 @@ impl EditorPane {
                 self.source_search.query
             ));
         }
-        if let Some(debug) = &self.editor_render_debug {
+        if let Some(debug) = &self.debug.render {
             lines.push(format!(
                 "{} render: lines={} text_lines={} galley_rows={} delta={}",
                 self.pane.label(),
@@ -107,7 +107,7 @@ impl EditorPane {
                 debug.current_line
             ));
         }
-        if let Some(perf) = &self.editor_perf_debug {
+        if let Some(perf) = &self.debug.perf {
             lines.push(format!(
                 "{} perf: view={} total={:.2}ms body={:.2}ms rows={}/{} scroll_delta_y={:.1}",
                 self.pane.label(),
@@ -130,16 +130,24 @@ impl EditorPane {
                 perf.source_search_matches
             ));
         }
-        if let Some(accept) = &self.virtual_click_debug.last_accept {
+        if let Some(accept) = &self.debug.virtual_click.last_accept {
             lines.push(accept.report_line(self.pane.label()));
         } else {
             lines.push(format!("{} virtual_click_accept: none", self.pane.label()));
         }
-        for event in self.virtual_click_debug.events.iter().rev().take(4) {
+        for event in self.debug.virtual_click.events.iter().rev().take(4) {
             lines.push(event.report_line(self.pane.label()));
         }
         lines
     }
+}
+
+/// A pane's diagnostics, read only by the Report.
+#[derive(Default)]
+pub(super) struct EditorDebugState {
+    pub(super) render: Option<EditorRenderDebug>,
+    pub(super) perf: Option<EditorPerfDebug>,
+    pub(super) virtual_click: VirtualClickDebug,
 }
 
 #[derive(Debug, Clone, Default)]
