@@ -942,16 +942,6 @@ enum UnsavedChangesAction {
     CreateSession,
 }
 
-impl WorkspaceGitStatus {
-    fn color(self) -> Color32 {
-        match self {
-            Self::Modified => Color32::from_rgb(196, 160, 72),
-            Self::Added => Color32::from_rgb(72, 160, 92),
-            Self::Untracked => Color32::from_rgb(86, 156, 214),
-        }
-    }
-}
-
 impl EditorPane {}
 
 fn ellipsize_text_to_width(

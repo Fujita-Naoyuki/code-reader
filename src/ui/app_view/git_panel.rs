@@ -417,3 +417,13 @@ impl CodeReaderApp {
         }
     }
 }
+
+impl WorkspaceGitStatus {
+    pub(super) fn color(self) -> Color32 {
+        match self {
+            Self::Modified => Color32::from_rgb(196, 160, 72),
+            Self::Added => Color32::from_rgb(72, 160, 92),
+            Self::Untracked => Color32::from_rgb(86, 156, 214),
+        }
+    }
+}
