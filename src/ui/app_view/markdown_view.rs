@@ -16,6 +16,62 @@ impl EditorPane {
         self.path().is_some_and(is_markdown_path)
     }
 
+    /// Keeps the active page valid and, while the source is visible, on the cursor's page.
+    fn sync_markdown_active_page(&mut self, document: &MarkdownDocument) {
+        if self
+            .markdown
+            .active_page_id
+            .as_deref()
+            .and_then(|page_id| document.page_by_id(page_id))
+            .is_none()
+        {
+            self.markdown.active_page_id = document.pages.first().map(|page| page.id.clone());
+        }
+        if matches!(
+            self.markdown.mode,
+            MarkdownMode::Markdown | MarkdownMode::Both
+        ) {
+            self.update_markdown_active_page_from_cursor(document);
+        }
+    }
+
+    /// The mode buttons and the Pages / Outline toggles.
+    fn markdown_toolbar_ui(&mut self, ui: &mut egui::Ui, document: &MarkdownDocument) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("MARKDOWN").small().strong());
+            ui.separator();
+            for mode in MarkdownMode::all() {
+                if ui
+                    .selectable_label(self.markdown.mode == mode, mode.label())
+                    .on_hover_text(format!("Switch to {} mode", mode.label()))
+                    .clicked()
+                {
+                    self.set_markdown_mode(mode, document);
+                }
+            }
+            if self.markdown.mode != MarkdownMode::Markdown {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .selectable_label(self.markdown.show_outline, "Outline")
+                        .on_hover_text("Show or hide the outline pane")
+                        .clicked()
+                    {
+                        self.markdown.show_outline = !self.markdown.show_outline;
+                        self.normalize_markdown_focus_target();
+                    }
+                    if ui
+                        .selectable_label(self.markdown.show_pages, "Pages")
+                        .on_hover_text("Show or hide the pages pane")
+                        .clicked()
+                    {
+                        self.markdown.show_pages = !self.markdown.show_pages;
+                        self.normalize_markdown_focus_target();
+                    }
+                });
+            }
+        });
+    }
+
     pub(super) fn markdown_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -43,21 +99,7 @@ impl EditorPane {
             }
         };
 
-        if self
-            .markdown
-            .active_page_id
-            .as_deref()
-            .and_then(|page_id| document.page_by_id(page_id))
-            .is_none()
-        {
-            self.markdown.active_page_id = document.pages.first().map(|page| page.id.clone());
-        }
-        if matches!(
-            self.markdown.mode,
-            MarkdownMode::Markdown | MarkdownMode::Both
-        ) {
-            self.update_markdown_active_page_from_cursor(&document);
-        }
+        self.sync_markdown_active_page(&document);
 
         if focused
             && matches!(
@@ -71,39 +113,7 @@ impl EditorPane {
             self.handle_markdown_mode_shortcuts(ui, &document);
         }
 
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("MARKDOWN").small().strong());
-            ui.separator();
-            for mode in MarkdownMode::all() {
-                if ui
-                    .selectable_label(self.markdown.mode == mode, mode.label())
-                    .on_hover_text(format!("Switch to {} mode", mode.label()))
-                    .clicked()
-                {
-                    self.set_markdown_mode(mode, &document);
-                }
-            }
-            if self.markdown.mode != MarkdownMode::Markdown {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .selectable_label(self.markdown.show_outline, "Outline")
-                        .on_hover_text("Show or hide the outline pane")
-                        .clicked()
-                    {
-                        self.markdown.show_outline = !self.markdown.show_outline;
-                        self.normalize_markdown_focus_target();
-                    }
-                    if ui
-                        .selectable_label(self.markdown.show_pages, "Pages")
-                        .on_hover_text("Show or hide the pages pane")
-                        .clicked()
-                    {
-                        self.markdown.show_pages = !self.markdown.show_pages;
-                        self.normalize_markdown_focus_target();
-                    }
-                });
-            }
-        });
+        self.markdown_toolbar_ui(ui, &document);
 
         let matches = if self.markdown.search.open {
             let matches = markdown_search_matches(&document, &self.markdown.search.query);

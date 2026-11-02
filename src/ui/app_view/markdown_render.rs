@@ -92,33 +92,7 @@ impl EditorPane {
         match node {
             Node::Root(root) => self.markdown_render_nodes_ui(ui, frame, &root.children, depth, 0),
             Node::Paragraph(paragraph) => {
-                let plain_text = markdown_inline_plain_text(&paragraph.children);
-                if markdown_nodes_need_widgets(&paragraph.children) {
-                    let response = ui
-                        .horizontal_wrapped(|ui| {
-                            self.markdown_inline_widgets_ui(
-                                ui,
-                                document,
-                                &paragraph.children,
-                                MarkdownInlineStyle::default(),
-                                search_query,
-                            );
-                        })
-                        .response;
-                    if self.should_scroll_to_markdown_search_match(search_query, &plain_text) {
-                        response.scroll_to_me(Some(egui::Align::Center));
-                    }
-                    ui.add_space(4.0);
-                } else {
-                    let job = markdown_inline_layout_job(ui, &paragraph.children, search_query);
-                    if !job.text.trim().is_empty() {
-                        let response = ui.add(egui::Label::new(job).wrap());
-                        if self.should_scroll_to_markdown_search_match(search_query, &plain_text) {
-                            response.scroll_to_me(Some(egui::Align::Center));
-                        }
-                        ui.add_space(4.0);
-                    }
-                }
+                self.markdown_paragraph_ui(ui, document, &paragraph.children, search_query);
             }
             Node::Heading(heading) => {
                 let title = markdown_inline_plain_text(&heading.children);
@@ -163,34 +137,10 @@ impl EditorPane {
                 ui.add_space(4.0);
             }
             Node::ListItem(item) => {
-                ui.horizontal_top(|ui| {
-                    ui.add_space(depth as f32 * 14.0);
-                    if let Some(checked) = item.checked {
-                        let mut checked = checked;
-                        ui.add_enabled(false, egui::Checkbox::new(&mut checked, ""));
-                    } else if list_index > 0 {
-                        ui.label(RichText::new(format!("{list_index}.")).monospace());
-                    } else {
-                        ui.label(RichText::new("-").monospace());
-                    }
-                    ui.vertical(|ui| {
-                        self.markdown_render_nodes_ui(ui, frame, &item.children, depth + 1, 0);
-                    });
-                });
+                self.markdown_list_item_ui(ui, frame, item, depth, list_index);
             }
             Node::ThematicBreak(_) => {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), 10.0),
-                    egui::Sense::hover(),
-                );
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(rect.left(), rect.center().y),
-                        egui::pos2(rect.right(), rect.center().y),
-                    ],
-                    egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
-                );
-                ui.add_space(6.0);
+                markdown_thematic_break_ui(ui);
             }
             Node::Code(code) => {
                 let code_id = markdown_node_ui_id(fragment_start_offset, node, "code");
@@ -231,6 +181,98 @@ impl EditorPane {
         }
     }
 
+    fn markdown_paragraph_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &MarkdownDocument,
+        children: &[Node],
+        search_query: Option<&str>,
+    ) {
+        let plain_text = markdown_inline_plain_text(children);
+        if markdown_nodes_need_widgets(children) {
+            let response = ui
+                .horizontal_wrapped(|ui| {
+                    self.markdown_inline_widgets_ui(
+                        ui,
+                        document,
+                        children,
+                        MarkdownInlineStyle::default(),
+                        search_query,
+                    );
+                })
+                .response;
+            if self.should_scroll_to_markdown_search_match(search_query, &plain_text) {
+                response.scroll_to_me(Some(egui::Align::Center));
+            }
+            ui.add_space(4.0);
+        } else {
+            let job = markdown_inline_layout_job(ui, children, search_query);
+            if !job.text.trim().is_empty() {
+                let response = ui.add(egui::Label::new(job).wrap());
+                if self.should_scroll_to_markdown_search_match(search_query, &plain_text) {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                }
+                ui.add_space(4.0);
+            }
+        }
+    }
+
+    fn markdown_list_item_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        frame: &MarkdownRenderFrame<'_>,
+        item: &markdown::mdast::ListItem,
+        depth: usize,
+        list_index: u32,
+    ) {
+        ui.horizontal_top(|ui| {
+            ui.add_space(depth as f32 * 14.0);
+            if let Some(checked) = item.checked {
+                let mut checked = checked;
+                ui.add_enabled(false, egui::Checkbox::new(&mut checked, ""));
+            } else if list_index > 0 {
+                ui.label(RichText::new(format!("{list_index}.")).monospace());
+            } else {
+                ui.label(RichText::new("-").monospace());
+            }
+            ui.vertical(|ui| {
+                self.markdown_render_nodes_ui(ui, frame, &item.children, depth + 1, 0);
+            });
+        });
+    }
+
+    fn markdown_footnote_reference_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        document: &MarkdownDocument,
+        footnote: &markdown::mdast::FootnoteReference,
+    ) {
+        let number = markdown_footnote_number(document, &footnote.identifier)
+            .map(|number| number.to_string())
+            .unwrap_or_else(|| {
+                footnote
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| footnote.identifier.clone())
+            });
+        let response = ui
+            .link(RichText::new(format!("[{number}]")).small().raised())
+            .on_hover_text(format!("Jump to footnote {}", footnote.identifier));
+        if response.clicked() {
+            self.markdown.pending_footnote_scroll = Some(MarkdownFootnoteScrollTarget::Definition(
+                footnote.identifier.clone(),
+            ));
+        }
+        if self
+                        .markdown.pending_footnote_scroll
+                        .as_ref()
+                        .is_some_and(|target| matches!(target, MarkdownFootnoteScrollTarget::Reference(identifier) if identifier == &footnote.identifier))
+                    {
+                        response.scroll_to_me(Some(egui::Align::Center));
+                        self.markdown.pending_footnote_scroll = None;
+                    }
+    }
+
     pub(super) fn markdown_inline_widgets_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -264,8 +306,10 @@ impl EditorPane {
                     ui.end_row();
                 }
                 Node::Emphasis(emphasis) => {
-                    let mut style = style;
-                    style.emphasis = true;
+                    let style = MarkdownInlineStyle {
+                        emphasis: true,
+                        ..style
+                    };
                     self.markdown_inline_widgets_ui(
                         ui,
                         document,
@@ -275,8 +319,10 @@ impl EditorPane {
                     );
                 }
                 Node::Strong(strong) => {
-                    let mut style = style;
-                    style.strong = true;
+                    let style = MarkdownInlineStyle {
+                        strong: true,
+                        ..style
+                    };
                     self.markdown_inline_widgets_ui(
                         ui,
                         document,
@@ -286,8 +332,10 @@ impl EditorPane {
                     );
                 }
                 Node::Delete(delete) => {
-                    let mut style = style;
-                    style.delete = true;
+                    let style = MarkdownInlineStyle {
+                        delete: true,
+                        ..style
+                    };
                     self.markdown_inline_widgets_ui(
                         ui,
                         document,
@@ -303,44 +351,16 @@ impl EditorPane {
                     } else {
                         label.as_str()
                     };
-                    let mut job = LayoutJob::default();
-                    let mut link_style = style;
-                    link_style.link = true;
-                    append_markdown_text_with_search(
-                        ui,
-                        &mut job,
-                        label,
-                        markdown_inline_format(ui, link_style),
-                        search_query,
-                    );
-                    let response = ui
-                        .add(egui::Label::new(job).sense(egui::Sense::click()).wrap())
-                        .on_hover_text(&link.url);
-                    if response.hovered() {
-                        ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
-                    }
+                    let response =
+                        markdown_link_label_ui(ui, label, style, search_query, &link.url);
                     if response.clicked() {
                         self.activate_markdown_link(document, &link.url);
                     }
                 }
                 Node::LinkReference(link) => {
                     let label = markdown_inline_plain_text(&link.children);
-                    let mut job = LayoutJob::default();
-                    let mut link_style = style;
-                    link_style.link = true;
-                    append_markdown_text_with_search(
-                        ui,
-                        &mut job,
-                        &label,
-                        markdown_inline_format(ui, link_style),
-                        search_query,
-                    );
-                    let response = ui
-                        .add(egui::Label::new(job).sense(egui::Sense::click()).wrap())
-                        .on_hover_text(&link.identifier);
-                    if response.hovered() {
-                        ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
-                    }
+                    let response =
+                        markdown_link_label_ui(ui, &label, style, search_query, &link.identifier);
                     if response.clicked() {
                         match markdown_definition_url(document, &link.identifier) {
                             Some(url) => self.activate_markdown_link(document, &url),
@@ -360,30 +380,7 @@ impl EditorPane {
                     self.markdown_image_ui(ui, document, &image.identifier, &image.alt);
                 }
                 Node::FootnoteReference(footnote) => {
-                    let number = markdown_footnote_number(document, &footnote.identifier)
-                        .map(|number| number.to_string())
-                        .unwrap_or_else(|| {
-                            footnote
-                                .label
-                                .clone()
-                                .unwrap_or_else(|| footnote.identifier.clone())
-                        });
-                    let response = ui
-                        .link(RichText::new(format!("[{number}]")).small().raised())
-                        .on_hover_text(format!("Jump to footnote {}", footnote.identifier));
-                    if response.clicked() {
-                        self.markdown.pending_footnote_scroll = Some(
-                            MarkdownFootnoteScrollTarget::Definition(footnote.identifier.clone()),
-                        );
-                    }
-                    if self
-                        .markdown.pending_footnote_scroll
-                        .as_ref()
-                        .is_some_and(|target| matches!(target, MarkdownFootnoteScrollTarget::Reference(identifier) if identifier == &footnote.identifier))
-                    {
-                        response.scroll_to_me(Some(egui::Align::Center));
-                        self.markdown.pending_footnote_scroll = None;
-                    }
+                    self.markdown_footnote_reference_ui(ui, document, footnote);
                 }
                 Node::InlineMath(math) => {
                     let mut format = markdown_inline_format(ui, style);
@@ -987,6 +984,46 @@ pub(super) fn markdown_blockquote_background(ui: &egui::Ui) -> Color32 {
     } else {
         Color32::from_rgb(248, 249, 250)
     }
+}
+
+fn markdown_thematic_break_ui(ui: &mut egui::Ui) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 10.0), egui::Sense::hover());
+    ui.painter().line_segment(
+        [
+            egui::pos2(rect.left(), rect.center().y),
+            egui::pos2(rect.right(), rect.center().y),
+        ],
+        egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+    );
+    ui.add_space(6.0);
+}
+
+/// A link's clickable label; `hover` is what its tooltip shows.
+fn markdown_link_label_ui(
+    ui: &mut egui::Ui,
+    label: &str,
+    style: MarkdownInlineStyle,
+    search_query: Option<&str>,
+    hover: &str,
+) -> egui::Response {
+    let mut job = LayoutJob::default();
+    let mut link_style = style;
+    link_style.link = true;
+    append_markdown_text_with_search(
+        ui,
+        &mut job,
+        label,
+        markdown_inline_format(ui, link_style),
+        search_query,
+    );
+    let response = ui
+        .add(egui::Label::new(job).sense(egui::Sense::click()).wrap())
+        .on_hover_text(hover);
+    if response.hovered() {
+        ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
+    }
+    response
 }
 
 #[cfg(test)]

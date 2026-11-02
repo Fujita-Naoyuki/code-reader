@@ -124,66 +124,8 @@ impl EditorPane {
         let return_history = self
             .diff_view()
             .and_then(|diff_view| diff_view.return_history.clone());
-        let mut back_to_history = false;
-        let mut next_context_mode = None;
-        if let EditorContent::Diff(diff_view) = &self.content {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&diff_view.repository_name).small().weak());
-                ui.separator();
-                let scope = match diff_view.scope {
-                    GitDiffScope::All => "All Diffs",
-                    GitDiffScope::Worktree => "Worktree",
-                    GitDiffScope::Staged => "Staged",
-                    GitDiffScope::Commit => "Commit",
-                };
-                ui.label(RichText::new(scope).small().weak());
-                if let Some(path) = &diff_view.file_path {
-                    ui.separator();
-                    ui.label(RichText::new(path).small().monospace().weak());
-                }
-                if return_history.is_some() {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Back to History").clicked() {
-                            back_to_history = true;
-                        }
-                    });
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.selectable_value(
-                    &mut self.diff.display_mode,
-                    DiffDisplayMode::Unified,
-                    "Unified",
-                );
-                ui.selectable_value(
-                    &mut self.diff.display_mode,
-                    DiffDisplayMode::SideBySide,
-                    "Side by Side",
-                );
-                if diff_view_can_switch_context(diff_view) {
-                    ui.separator();
-                    if ui
-                        .selectable_label(
-                            diff_view.context_mode == GitDiffContextMode::Changes,
-                            "Changes",
-                        )
-                        .clicked()
-                    {
-                        next_context_mode = Some(GitDiffContextMode::Changes);
-                    }
-                    if ui
-                        .selectable_label(
-                            diff_view.context_mode == GitDiffContextMode::FullFile,
-                            "Full File",
-                        )
-                        .clicked()
-                    {
-                        next_context_mode = Some(GitDiffContextMode::FullFile);
-                    }
-                }
-            });
-            ui.separator();
-        }
+        let (back_to_history, next_context_mode) =
+            self.diff_view_header_ui(ui, return_history.is_some());
         if let Some(context_mode) = next_context_mode {
             self.reload_current_file_diff_context(context_mode);
         }
@@ -249,6 +191,85 @@ impl EditorPane {
                 side_scroll,
             )
         });
+        self.finish_diff_frame(ui, &scroll_output, side_by_side);
+    }
+
+    /// Where the diff comes from, the display mode, and the Back / context buttons.
+    /// Returns (back to history clicked, context mode picked).
+    fn diff_view_header_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        has_return_history: bool,
+    ) -> (bool, Option<GitDiffContextMode>) {
+        let mut back_to_history = false;
+        let mut next_context_mode = None;
+        if let EditorContent::Diff(diff_view) = &self.content {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&diff_view.repository_name).small().weak());
+                ui.separator();
+                let scope = match diff_view.scope {
+                    GitDiffScope::All => "All Diffs",
+                    GitDiffScope::Worktree => "Worktree",
+                    GitDiffScope::Staged => "Staged",
+                    GitDiffScope::Commit => "Commit",
+                };
+                ui.label(RichText::new(scope).small().weak());
+                if let Some(path) = &diff_view.file_path {
+                    ui.separator();
+                    ui.label(RichText::new(path).small().monospace().weak());
+                }
+                if has_return_history {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Back to History").clicked() {
+                            back_to_history = true;
+                        }
+                    });
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut self.diff.display_mode,
+                    DiffDisplayMode::Unified,
+                    "Unified",
+                );
+                ui.selectable_value(
+                    &mut self.diff.display_mode,
+                    DiffDisplayMode::SideBySide,
+                    "Side by Side",
+                );
+                if diff_view_can_switch_context(diff_view) {
+                    ui.separator();
+                    if ui
+                        .selectable_label(
+                            diff_view.context_mode == GitDiffContextMode::Changes,
+                            "Changes",
+                        )
+                        .clicked()
+                    {
+                        next_context_mode = Some(GitDiffContextMode::Changes);
+                    }
+                    if ui
+                        .selectable_label(
+                            diff_view.context_mode == GitDiffContextMode::FullFile,
+                            "Full File",
+                        )
+                        .clicked()
+                    {
+                        next_context_mode = Some(GitDiffContextMode::FullFile);
+                    }
+                }
+            });
+            ui.separator();
+        }
+        (back_to_history, next_context_mode)
+    }
+
+    fn finish_diff_frame(
+        &mut self,
+        ui: &mut egui::Ui,
+        scroll_output: &egui::scroll_area::ScrollAreaOutput<DiffRenderSummary>,
+        side_by_side: bool,
+    ) {
         if let Some(selection) = &mut self.diff.side_selection
             && !ui.input(|input| input.pointer.primary_down())
         {

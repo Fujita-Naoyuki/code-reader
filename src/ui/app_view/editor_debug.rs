@@ -34,6 +34,21 @@ impl EditorPane {
                 position.character + 1
             ));
         }
+        self.push_view_report_lines(&mut lines);
+        self.push_render_report_lines(&mut lines);
+        if let Some(accept) = &self.debug.virtual_click.last_accept {
+            lines.push(accept.report_line(self.pane.label()));
+        } else {
+            lines.push(format!("{} virtual_click_accept: none", self.pane.label()));
+        }
+        for event in self.debug.virtual_click.events.iter().rev().take(4) {
+            lines.push(event.report_line(self.pane.label()));
+        }
+        lines
+    }
+
+    /// The CSV, Markdown or find bar state of this pane.
+    fn push_view_report_lines(&self, lines: &mut Vec<String>) {
         if self.is_csv() {
             lines.push(format!(
                 "{} csv_mode={}",
@@ -75,6 +90,9 @@ impl EditorPane {
                 self.source_search.query
             ));
         }
+    }
+
+    fn push_render_report_lines(&self, lines: &mut Vec<String>) {
         if let Some(debug) = &self.debug.render {
             lines.push(format!(
                 "{} render: lines={} text_lines={} galley_rows={} delta={}",
@@ -130,15 +148,6 @@ impl EditorPane {
                 perf.source_search_matches
             ));
         }
-        if let Some(accept) = &self.debug.virtual_click.last_accept {
-            lines.push(accept.report_line(self.pane.label()));
-        } else {
-            lines.push(format!("{} virtual_click_accept: none", self.pane.label()));
-        }
-        for event in self.debug.virtual_click.events.iter().rev().take(4) {
-            lines.push(event.report_line(self.pane.label()));
-        }
-        lines
     }
 }
 

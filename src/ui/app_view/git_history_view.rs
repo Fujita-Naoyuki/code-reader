@@ -186,68 +186,13 @@ pub(super) fn git_history_row_ui(
     let date_left = rect.left() + 760.0;
     let author_left = rect.left() + 910.0;
     let commit_left = rect.left() + 1040.0;
-    let description_right = date_left - 12.0;
-    let description_clip_rect = egui::Rect::from_min_max(
-        egui::pos2(description_left, rect.top()),
-        egui::pos2(description_right, rect.bottom()),
-    );
-    let description_painter = painter.with_clip_rect(description_clip_rect);
-    let mut description_x = description_left;
-    for reference in commit.refs.iter().take(4) {
-        let width = (reference.chars().count() as f32 * 7.0 + 14.0).clamp(28.0, 128.0);
-        if description_x + width > description_right {
-            let ellipsis_font = FontId::monospace(11.0);
-            let ellipsis = elide_text_to_width(
-                ui,
-                "...",
-                ellipsis_font.clone(),
-                weak_text_color,
-                description_right - description_x,
-            );
-            if !ellipsis.is_empty() {
-                description_painter.text(
-                    egui::pos2(description_x, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    ellipsis,
-                    ellipsis_font,
-                    weak_text_color,
-                );
-            }
-            description_x = description_right;
-            break;
-        }
-        let badge_rect = egui::Rect::from_min_size(
-            egui::pos2(description_x, rect.center().y - 8.0),
-            egui::vec2(width, 16.0),
-        );
-        description_painter.rect_filled(badge_rect, 3.0, git_ref_badge_color(reference));
-        let ref_font = FontId::monospace(11.0);
-        let reference_label =
-            elide_text_to_width(ui, reference, ref_font.clone(), Color32::WHITE, width - 8.0);
-        description_painter.text(
-            badge_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            reference_label,
-            ref_font,
-            Color32::WHITE,
-        );
-        description_x += width + 4.0;
-    }
-
-    let subject_font = editor_font_id();
-    let subject = elide_text_to_width(
+    paint_git_commit_description(
         ui,
-        &commit.subject,
-        subject_font.clone(),
-        text_color,
-        description_right - description_x,
-    );
-    description_painter.text(
-        egui::pos2(description_x, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        subject,
-        subject_font,
-        text_color,
+        &painter,
+        rect,
+        description_left..date_left - 12.0,
+        commit,
+        (text_color, weak_text_color),
     );
     paint_git_history_text_cell(
         ui,
@@ -426,4 +371,78 @@ pub(super) fn elide_text_to_width(
     let mut result = characters[..low].iter().collect::<String>();
     result.push_str(ELLIPSIS);
     result
+}
+
+/// The commit's ref badges (at most four), then its subject in what is left of the span.
+fn paint_git_commit_description(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    span: std::ops::Range<f32>,
+    commit: &GitCommitNode,
+    (text_color, weak_text_color): (Color32, Color32),
+) {
+    let (description_left, description_right) = (span.start, span.end);
+    let description_clip_rect = egui::Rect::from_min_max(
+        egui::pos2(description_left, rect.top()),
+        egui::pos2(description_right, rect.bottom()),
+    );
+    let description_painter = painter.with_clip_rect(description_clip_rect);
+    let mut description_x = description_left;
+    for reference in commit.refs.iter().take(4) {
+        let width = (reference.chars().count() as f32 * 7.0 + 14.0).clamp(28.0, 128.0);
+        if description_x + width > description_right {
+            let ellipsis_font = FontId::monospace(11.0);
+            let ellipsis = elide_text_to_width(
+                ui,
+                "...",
+                ellipsis_font.clone(),
+                weak_text_color,
+                description_right - description_x,
+            );
+            if !ellipsis.is_empty() {
+                description_painter.text(
+                    egui::pos2(description_x, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    ellipsis,
+                    ellipsis_font,
+                    weak_text_color,
+                );
+            }
+            description_x = description_right;
+            break;
+        }
+        let badge_rect = egui::Rect::from_min_size(
+            egui::pos2(description_x, rect.center().y - 8.0),
+            egui::vec2(width, 16.0),
+        );
+        description_painter.rect_filled(badge_rect, 3.0, git_ref_badge_color(reference));
+        let ref_font = FontId::monospace(11.0);
+        let reference_label =
+            elide_text_to_width(ui, reference, ref_font.clone(), Color32::WHITE, width - 8.0);
+        description_painter.text(
+            badge_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            reference_label,
+            ref_font,
+            Color32::WHITE,
+        );
+        description_x += width + 4.0;
+    }
+
+    let subject_font = editor_font_id();
+    let subject = elide_text_to_width(
+        ui,
+        &commit.subject,
+        subject_font.clone(),
+        text_color,
+        description_right - description_x,
+    );
+    description_painter.text(
+        egui::pos2(description_x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        subject,
+        subject_font,
+        text_color,
+    );
 }
