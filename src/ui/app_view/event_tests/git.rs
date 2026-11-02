@@ -507,8 +507,12 @@ fn all_diffs_and_history_report_a_vanished_repository() {
     open_git(&mut t);
     // Let the periodic workspace scan pick up the edit now, then keep it from reloading
     // Git while the test runs, so the stale repository entry stays on screen.
+    let before = t.app().workspace_snapshot.clone();
     t.app_mut().next_workspace_change_poll = std::time::Instant::now();
-    t.wait_for_status("Detected 1 external file changes");
+    // Wait on the snapshot: a status message can lose to "Indexed ..." in the same frame.
+    t.wait_until("the scan to pick up the edit", |app| {
+        app.workspace_snapshot != before
+    });
     t.app_mut().next_workspace_change_poll =
         std::time::Instant::now() + std::time::Duration::from_secs(3600);
     // The sidebar still shows the repository when it disappears.
