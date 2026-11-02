@@ -16,13 +16,46 @@ real `git` binary against temporary repositories.
 
 ## Where things are
 
-- `src/core/` — logic without egui (sessions, file tree, LSP client, Markdown parsing,
-  symbols). Prefer adding testable logic here.
-- `src/ui/app_view.rs` — the app (`CodeReaderApp`) and editor panes (`EditorPane`). Being
-  split up; see `docs/refactoring-plan.md` for the target layout.
-- `src/platform.rs` — OS side effects (clipboard, folder picker, URLs, state path, LSP
-  process). Tests swap it for `FakePlatform`.
-- `src/ui/app_view/event_tests/` — tests that drive the real app with user events.
+Logic without egui is in `src/core/` and can be unit tested without a window:
+
+| File | What it holds |
+|---|---|
+| `core/text.rs` | `EditorTextBuffer`, line index, position math, bracket matching |
+| `core/csv.rs` | CSV parsing, serialization, row / column edits |
+| `core/git.rs` | Running `git`, status / history parsing, diff text, push-or-publish |
+| `core/diff.rs` | Unified diff text into display rows, selection text |
+| `core/markdown/` | Document model, source-mode spans, definitions, links, Mermaid |
+| `core/lsp.rs` | Language server client (worker thread, JSON-RPC) |
+| `core/navigation.rs` | Back / Forward history |
+| `core/workspace_files.rs` | File kinds by path, change snapshots, new-file names |
+| `core/session.rs` | Workspace sessions and the state file |
+| `core/process.rs`, `core/file_tree.rs`, `core/symbol*.rs` | Child processes, file discovery, symbols |
+
+`src/platform.rs` holds OS side effects (clipboard, folder picker, URLs, state path, LSP
+process); tests swap it for `FakePlatform`. `src/languages/` has tree-sitter symbols and
+highlighting; definitions always come from the language servers.
+
+The UI is `src/ui/app_view.rs` (`CodeReaderApp`, the frame layout) plus child modules in
+`src/ui/app_view/`. They are flat and read the parent's items with `use super::*`; what
+other modules need is `pub(super)`.
+
+| To change | Look in |
+|---|---|
+| A pane's content, saving, unsaved edits | `editor_pane.rs` (`EditorContent`), `panes.rs` |
+| Shortcuts in Help / the status bar, key checks | `keymap.rs` (handlers live with their feature) |
+| Which dialog is in front, who gets Escape | `modal.rs` |
+| Status bar messages | `status.rs` (`status_message` for action results, `set_background_status` for notices) |
+| Regular editor, find bar | `source_editor.rs`, shared parts in `editor_style.rs` |
+| Large-file editor | `virtual_editor.rs` (frame), `virtual_input.rs` (keys), `virtual_pointer.rs` (mouse), `virtual_paint.rs` |
+| Markdown | `markdown_view.rs` (modes, panes), `markdown_render.rs`, `markdown_source.rs`, `markdown_search.rs` |
+| CSV grid | `csv_grid.rs` |
+| Diffs, Git history | `diff_view.rs`, `diff_selection.rs`, `git_history_view.rs` |
+| Git sidebar and commands | `git_panel.rs`, `git_actions.rs`, `git_windows.rs` |
+| Definitions, references | `lsp.rs` (`LspSession`, `LspLanguage`) |
+| Search Everywhere, references list, workspace search | `search.rs` |
+| File tree, sessions, bookmarks | `workspace.rs`, `sessions.rs`, `navigation.rs` |
+| Report button, performance records | `diagnostics.rs`, `editor_debug.rs` |
+| Tests driving the app with user events | `event_tests/` (`support.rs` has `TestApp`) |
 
 ## Tests
 
