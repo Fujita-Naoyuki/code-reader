@@ -100,6 +100,7 @@ use crate::languages::LanguageRegistry;
 use crate::platform;
 use clipboard::*;
 use csv_grid::*;
+use diagnostics::*;
 use diff_selection::*;
 use diff_view::*;
 use editor_debug::*;
@@ -353,35 +354,7 @@ impl eframe::App for CodeReaderApp {
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
         let focused_pane_at_start = self.focused_pane;
         let scroll_before_y = self.focused_editor().scroll.y;
-        let (stable_dt_ms, unstable_dt_ms, raw_wheel_delta, smooth_scroll_delta, page_key) = ui
-            .input(|input| {
-                let raw_wheel_delta = input
-                    .raw
-                    .events
-                    .iter()
-                    .filter_map(|event| {
-                        if let egui::Event::MouseWheel { delta, .. } = event {
-                            Some(*delta)
-                        } else {
-                            None
-                        }
-                    })
-                    .fold(egui::Vec2::ZERO, |sum, delta| sum + delta);
-                let page_key = if input.key_pressed(egui::Key::PageDown) {
-                    Some("PageDown")
-                } else if input.key_pressed(egui::Key::PageUp) {
-                    Some("PageUp")
-                } else {
-                    None
-                };
-                (
-                    input.stable_dt * 1000.0,
-                    input.unstable_dt * 1000.0,
-                    raw_wheel_delta,
-                    input.smooth_scroll_delta(),
-                    page_key,
-                )
-            });
+        let input_sample = FrameInputSample::capture(ui);
         self.dispatch_modal_escape(ui);
         self.poll_workspace_changes(ui.ctx());
         self.poll_symbol_index();
@@ -389,6 +362,32 @@ impl eframe::App for CodeReaderApp {
         self.poll_lsp(LspLanguage::Go, ui.ctx());
         self.poll_lsp(LspLanguage::Rust, ui.ctx());
 
+        self.handle_global_shortcuts(ui);
+        self.top_bar_ui(ui);
+
+        self.track_operation_status();
+        let status_message = self.status_bar_message();
+        let status_shortcuts = self.status_bar_shortcuts();
+        status_bar_ui(ui, &status_message, &status_shortcuts);
+
+        self.sidebar_ui(ui);
+        self.editor_area_ui(ui);
+        self.dialogs_ui(ui);
+
+        let scroll_after_y = self.editor(focused_pane_at_start).scroll.y;
+        self.record_app_perf_sample(
+            elapsed_ms(app_frame_start),
+            input_sample,
+            focused_pane_at_start,
+            scroll_before_y,
+            scroll_after_y,
+        );
+    }
+}
+
+impl CodeReaderApp {
+    /// Keys that work from anywhere. Runs before the panes so they see what is left.
+    fn handle_global_shortcuts(&mut self, ui: &mut egui::Ui) {
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
             self.shortcuts_help_open = true;
         }
@@ -474,7 +473,9 @@ impl eframe::App for CodeReaderApp {
         if !self.show_right_pane && self.focused_pane == Pane::Right {
             self.focused_pane = Pane::Left;
         }
+    }
 
+    fn top_bar_ui(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("top_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui
@@ -534,105 +535,9 @@ impl eframe::App for CodeReaderApp {
                 });
             });
         });
+    }
 
-        self.track_operation_status();
-        let status_message = self.status_bar_message();
-        let status_shortcuts = self.status_bar_shortcuts();
-        egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
-            const STATUS_BAR_HEIGHT: f32 = 26.0;
-            const STATUS_BAR_PADDING_X: f32 = 6.0;
-            const STATUS_BAR_GAP: f32 = 12.0;
-            const STATUS_BAR_FONT_SIZE: f32 = 13.0;
-
-            let shortcut_text = status_shortcuts
-                .iter()
-                .map(|shortcut| format!("{} {}", shortcut.keys, shortcut.label))
-                .collect::<Vec<_>>()
-                .join(" | ");
-            let shortcut_color = ui.visuals().weak_text_color();
-            let shortcut_width = if shortcut_text.is_empty() {
-                0.0
-            } else {
-                ui.painter()
-                    .layout_no_wrap(
-                        shortcut_text.clone(),
-                        FontId::monospace(STATUS_BAR_FONT_SIZE),
-                        shortcut_color,
-                    )
-                    .size()
-                    .x
-                    + STATUS_BAR_PADDING_X
-            };
-
-            let (row_rect, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), STATUS_BAR_HEIGHT),
-                egui::Sense::hover(),
-            );
-            let inner_rect = row_rect.shrink2(egui::vec2(STATUS_BAR_PADDING_X, 0.0));
-            let shortcut_width = shortcut_width.min(inner_rect.width() * 0.55);
-            let shortcut_rect = egui::Rect::from_min_max(
-                egui::pos2(inner_rect.right() - shortcut_width, inner_rect.top()),
-                inner_rect.right_bottom(),
-            );
-            let status_right = if shortcut_width > 0.0 {
-                shortcut_rect.left() - STATUS_BAR_GAP
-            } else {
-                inner_rect.right()
-            };
-            let status_rect = egui::Rect::from_min_max(
-                inner_rect.left_top(),
-                egui::pos2(status_right.max(inner_rect.left()), inner_rect.bottom()),
-            );
-
-            let status_color = ui.visuals().text_color();
-            let status_font = FontId::proportional(STATUS_BAR_FONT_SIZE);
-            let status_text = elide_text_to_width(
-                ui,
-                &status_message,
-                status_font.clone(),
-                status_color,
-                status_rect.width(),
-            );
-            let status_galley = ui
-                .painter()
-                .layout_no_wrap(status_text, status_font, status_color);
-            let status_pos = egui::pos2(
-                status_rect.left(),
-                status_rect.center().y - status_galley.size().y * 0.5,
-            );
-            ui.painter().with_clip_rect(status_rect).galley(
-                status_pos,
-                status_galley,
-                status_color,
-            );
-            ui.interact(
-                status_rect,
-                ui.id().with("status_bar_message"),
-                egui::Sense::hover(),
-            )
-            .on_hover_text(status_message.as_str());
-
-            if !shortcut_text.is_empty() && shortcut_rect.width() > 0.0 {
-                ui.scope_builder(
-                    egui::UiBuilder::new()
-                        .max_rect(shortcut_rect)
-                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
-                    |ui| {
-                        ui.add_sized(
-                            shortcut_rect.size(),
-                            egui::Label::new(
-                                RichText::new(shortcut_text)
-                                    .size(STATUS_BAR_FONT_SIZE)
-                                    .monospace()
-                                    .color(shortcut_color),
-                            )
-                            .truncate(),
-                        );
-                    },
-                );
-            }
-        });
-
+    fn sidebar_ui(&mut self, ui: &mut egui::Ui) {
         if self.show_workspace_sidebar {
             let session_name = self
                 .current_session()
@@ -664,130 +569,7 @@ impl eframe::App for CodeReaderApp {
 
                     match self.sidebar_view {
                         SidebarView::Workspace => {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(&session_name).strong());
-                                if ui.button("Rename").clicked() {
-                                    self.start_session_rename();
-                                }
-                                if ui.button("Add").clicked() {
-                                    self.add_root_to_current_session();
-                                }
-                            });
-
-                            ui.add_space(4.0);
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Files").strong());
-                                if ui.button("New File").clicked() {
-                                    self.workspace_sidebar_active = true;
-                                    self.start_workspace_new_file();
-                                }
-                                let has_selected_file = self.selected_workspace_file().is_some();
-                                if ui
-                                    .add_enabled(has_selected_file, egui::Button::new("Rename"))
-                                    .on_hover_text("Rename selected file")
-                                    .clicked()
-                                {
-                                    self.workspace_sidebar_active = true;
-                                    self.start_workspace_rename_file();
-                                }
-                                if ui
-                                    .add_enabled(has_selected_file, egui::Button::new("Delete"))
-                                    .on_hover_text("Delete selected file")
-                                    .clicked()
-                                {
-                                    self.workspace_sidebar_active = true;
-                                    self.start_workspace_delete_file();
-                                }
-                            });
-
-                            let footer_header_count = 1;
-                            let file_tree_height = workspace_file_tree_height(
-                                ui.available_height(),
-                                footer_header_count,
-                            );
-                            self.ensure_git_repositories_loaded();
-                            let git_file_statuses =
-                                workspace_git_file_statuses(&self.git_repositories);
-                            ScrollArea::vertical()
-                                .id_salt("workspace_file_tree")
-                                .max_height(file_tree_height)
-                                .auto_shrink([false, true])
-                                .show(ui, |ui| {
-                                    let root_count = self
-                                        .current_session()
-                                        .map(|session| session.root_folders.len())
-                                        .unwrap_or_default();
-                                    let file_tree = self.file_tree.clone();
-                                    draw_workspace_roots(
-                                        ui,
-                                        &file_tree.roots,
-                                        root_count,
-                                        &git_file_statuses,
-                                        self,
-                                    );
-                                });
-
-                            let bookmark_id = ui.make_persistent_id("bookmarks");
-                            let bookmark_state =
-                                egui::collapsing_header::CollapsingState::load_with_default_open(
-                                    ui.ctx(),
-                                    bookmark_id,
-                                    true,
-                                );
-                            bookmark_state
-                                .show_header(ui, |ui| {
-                                    ui.label("Bookmarks");
-                                })
-                                .body(|ui| {
-                                    let bookmarks = self
-                                        .current_session()
-                                        .map(|session| session.bookmarks.clone())
-                                        .unwrap_or_default();
-
-                                    if bookmarks.is_empty() {
-                                        ui.label(RichText::new("No bookmarks").small().weak());
-                                    }
-
-                                    let mut action = None;
-                                    for (index, bookmark) in bookmarks.into_iter().enumerate() {
-                                        ui.horizontal(|ui| {
-                                            if ui
-                                                .button(RichText::new(&bookmark.label).monospace())
-                                                .on_hover_text("Open bookmark")
-                                                .clicked()
-                                            {
-                                                action =
-                                                    Some(BookmarkAction::Open(bookmark.clone()));
-                                            }
-
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    if ui
-                                                        .button("×")
-                                                        .on_hover_text("Remove bookmark")
-                                                        .clicked()
-                                                    {
-                                                        action =
-                                                            Some(BookmarkAction::Remove(index));
-                                                    }
-                                                },
-                                            );
-                                        });
-                                    }
-
-                                    if let Some(action) = action {
-                                        match action {
-                                            BookmarkAction::Open(bookmark) => {
-                                                self.open_bookmark(bookmark)
-                                            }
-                                            BookmarkAction::Remove(index) => {
-                                                self.remove_bookmark(index)
-                                            }
-                                        }
-                                    }
-                                });
+                            self.workspace_sidebar_ui(ui, &session_name);
                         }
                         SidebarView::Search => {
                             self.workspace_search_ui(ui);
@@ -798,7 +580,149 @@ impl eframe::App for CodeReaderApp {
                     }
                 });
         }
+    }
 
+    fn workspace_sidebar_ui(&mut self, ui: &mut egui::Ui, session_name: &str) {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(session_name).strong());
+            if ui.button("Rename").clicked() {
+                self.start_session_rename();
+            }
+            if ui.button("Add").clicked() {
+                self.add_root_to_current_session();
+            }
+        });
+
+        ui.add_space(4.0);
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Files").strong());
+            if ui.button("New File").clicked() {
+                self.workspace_sidebar_active = true;
+                self.start_workspace_new_file();
+            }
+            let has_selected_file = self.selected_workspace_file().is_some();
+            if ui
+                .add_enabled(has_selected_file, egui::Button::new("Rename"))
+                .on_hover_text("Rename selected file")
+                .clicked()
+            {
+                self.workspace_sidebar_active = true;
+                self.start_workspace_rename_file();
+            }
+            if ui
+                .add_enabled(has_selected_file, egui::Button::new("Delete"))
+                .on_hover_text("Delete selected file")
+                .clicked()
+            {
+                self.workspace_sidebar_active = true;
+                self.start_workspace_delete_file();
+            }
+        });
+
+        let footer_header_count = 1;
+        let file_tree_height =
+            workspace_file_tree_height(ui.available_height(), footer_header_count);
+        self.ensure_git_repositories_loaded();
+        let git_file_statuses = workspace_git_file_statuses(&self.git_repositories);
+        ScrollArea::vertical()
+            .id_salt("workspace_file_tree")
+            .max_height(file_tree_height)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let root_count = self
+                    .current_session()
+                    .map(|session| session.root_folders.len())
+                    .unwrap_or_default();
+                let file_tree = self.file_tree.clone();
+                draw_workspace_roots(ui, &file_tree.roots, root_count, &git_file_statuses, self);
+            });
+
+        self.bookmarks_ui(ui);
+    }
+
+    fn bookmarks_ui(&mut self, ui: &mut egui::Ui) {
+        let bookmark_id = ui.make_persistent_id("bookmarks");
+        let bookmark_state = egui::collapsing_header::CollapsingState::load_with_default_open(
+            ui.ctx(),
+            bookmark_id,
+            true,
+        );
+        bookmark_state
+            .show_header(ui, |ui| {
+                ui.label("Bookmarks");
+            })
+            .body(|ui| {
+                let bookmarks = self
+                    .current_session()
+                    .map(|session| session.bookmarks.clone())
+                    .unwrap_or_default();
+
+                if bookmarks.is_empty() {
+                    ui.label(RichText::new("No bookmarks").small().weak());
+                }
+
+                let mut action = None;
+                for (index, bookmark) in bookmarks.into_iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(RichText::new(&bookmark.label).monospace())
+                            .on_hover_text("Open bookmark")
+                            .clicked()
+                        {
+                            action = Some(BookmarkAction::Open(bookmark.clone()));
+                        }
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("×").on_hover_text("Remove bookmark").clicked() {
+                                action = Some(BookmarkAction::Remove(index));
+                            }
+                        });
+                    });
+                }
+
+                if let Some(action) = action {
+                    match action {
+                        BookmarkAction::Open(bookmark) => self.open_bookmark(bookmark),
+                        BookmarkAction::Remove(index) => self.remove_bookmark(index),
+                    }
+                }
+            });
+    }
+
+    /// One editor pane plus what its frame asked for: focus on click, a pending action.
+    fn pane_ui(
+        &mut self,
+        pane: Pane,
+        ui: &mut egui::Ui,
+        can_take_focus: bool,
+        navigation_history: &[NavigationPoint],
+        bookmark_lines: &[u32],
+    ) {
+        let focused = can_take_focus && self.focused_pane == pane;
+        let editor = match pane {
+            Pane::Left => &mut self.left,
+            Pane::Right => &mut self.right,
+        };
+        editor.ui(
+            ui,
+            focused,
+            &self.language_registry,
+            self.tab_width,
+            navigation_history,
+            bookmark_lines,
+        );
+        if can_take_focus && ui_was_primary_clicked(ui) {
+            self.workspace_sidebar_active = false;
+            self.focused_pane = pane;
+        }
+        if let Some(action) = self.editor_mut(pane).take_pending_action() {
+            self.focused_pane = pane;
+            self.handle_editor_action(action);
+        }
+    }
+
+    fn editor_area_ui(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(ui.style()).fill(ui.visuals().panel_fill))
             .show_inside(ui, |ui| {
@@ -812,40 +736,22 @@ impl eframe::App for CodeReaderApp {
                 if self.show_right_pane || dragging_workspace_file.is_some() {
                     ui.columns(2, |columns| {
                         let right_navigation_history = self.right_navigation_history.back.clone();
-                        self.left.ui(
+                        self.pane_ui(
+                            Pane::Left,
                             &mut columns[0],
-                            editor_can_take_focus && self.focused_pane == Pane::Left,
-                            &self.language_registry,
-                            self.tab_width,
+                            editor_can_take_focus,
                             &left_navigation_history,
                             &left_bookmark_lines,
                         );
-                        if editor_can_take_focus && ui_was_primary_clicked(&columns[0]) {
-                            self.workspace_sidebar_active = false;
-                            self.focused_pane = Pane::Left;
-                        }
-                        if let Some(action) = self.left.take_pending_action() {
-                            self.focused_pane = Pane::Left;
-                            self.handle_editor_action(action);
-                        }
 
                         if self.show_right_pane {
-                            self.right.ui(
+                            self.pane_ui(
+                                Pane::Right,
                                 &mut columns[1],
-                                editor_can_take_focus && self.focused_pane == Pane::Right,
-                                &self.language_registry,
-                                self.tab_width,
+                                editor_can_take_focus,
                                 &right_navigation_history,
                                 &right_bookmark_lines,
                             );
-                            if editor_can_take_focus && ui_was_primary_clicked(&columns[1]) {
-                                self.workspace_sidebar_active = false;
-                                self.focused_pane = Pane::Right;
-                            }
-                            if let Some(action) = self.right.take_pending_action() {
-                                self.focused_pane = Pane::Right;
-                                self.handle_editor_action(action);
-                            }
                             if let Some(path) = dragging_workspace_file.clone()
                                 && ui_rect_contains_pointer(&columns[1])
                                 && columns[1].input(|input| input.pointer.any_released())
@@ -859,22 +765,13 @@ impl eframe::App for CodeReaderApp {
                         }
                     });
                 } else {
-                    self.left.ui(
+                    self.pane_ui(
+                        Pane::Left,
                         ui,
-                        editor_can_take_focus && self.focused_pane == Pane::Left,
-                        &self.language_registry,
-                        self.tab_width,
+                        editor_can_take_focus,
                         &left_navigation_history,
                         &left_bookmark_lines,
                     );
-                    if editor_can_take_focus && ui_was_primary_clicked(ui) {
-                        self.workspace_sidebar_active = false;
-                        self.focused_pane = Pane::Left;
-                    }
-                    if let Some(action) = self.left.take_pending_action() {
-                        self.focused_pane = Pane::Left;
-                        self.handle_editor_action(action);
-                    }
                 }
 
                 if let Some(path) = right_drop {
@@ -888,7 +785,9 @@ impl eframe::App for CodeReaderApp {
                     self.dragging_workspace_file = None;
                 }
             });
+    }
 
+    fn dialogs_ui(&mut self, ui: &mut egui::Ui) {
         if let Some(result) = self.show_search_overlay(ui) {
             self.open_search_result(result);
         }
@@ -905,20 +804,103 @@ impl eframe::App for CodeReaderApp {
         self.show_unsaved_changes_window(ui);
         self.show_git_commit_details_window(ui);
         self.show_shortcuts_help_window(ui);
-
-        let scroll_after_y = self.editor(focused_pane_at_start).scroll.y;
-        self.record_app_perf_sample(
-            elapsed_ms(app_frame_start),
-            stable_dt_ms,
-            unstable_dt_ms,
-            focused_pane_at_start,
-            scroll_before_y,
-            scroll_after_y,
-            raw_wheel_delta,
-            smooth_scroll_delta,
-            page_key,
-        );
     }
+}
+
+/// Paints the status bar: the message on the left, the shortcut hints on the right.
+fn status_bar_ui(ui: &mut egui::Ui, status_message: &str, status_shortcuts: &[ShortcutHint]) {
+    egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
+        const STATUS_BAR_HEIGHT: f32 = 26.0;
+        const STATUS_BAR_PADDING_X: f32 = 6.0;
+        const STATUS_BAR_GAP: f32 = 12.0;
+        const STATUS_BAR_FONT_SIZE: f32 = 13.0;
+
+        let shortcut_text = status_shortcuts
+            .iter()
+            .map(|shortcut| format!("{} {}", shortcut.keys, shortcut.label))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let shortcut_color = ui.visuals().weak_text_color();
+        let shortcut_width = if shortcut_text.is_empty() {
+            0.0
+        } else {
+            ui.painter()
+                .layout_no_wrap(
+                    shortcut_text.clone(),
+                    FontId::monospace(STATUS_BAR_FONT_SIZE),
+                    shortcut_color,
+                )
+                .size()
+                .x
+                + STATUS_BAR_PADDING_X
+        };
+
+        let (row_rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), STATUS_BAR_HEIGHT),
+            egui::Sense::hover(),
+        );
+        let inner_rect = row_rect.shrink2(egui::vec2(STATUS_BAR_PADDING_X, 0.0));
+        let shortcut_width = shortcut_width.min(inner_rect.width() * 0.55);
+        let shortcut_rect = egui::Rect::from_min_max(
+            egui::pos2(inner_rect.right() - shortcut_width, inner_rect.top()),
+            inner_rect.right_bottom(),
+        );
+        let status_right = if shortcut_width > 0.0 {
+            shortcut_rect.left() - STATUS_BAR_GAP
+        } else {
+            inner_rect.right()
+        };
+        let status_rect = egui::Rect::from_min_max(
+            inner_rect.left_top(),
+            egui::pos2(status_right.max(inner_rect.left()), inner_rect.bottom()),
+        );
+
+        let status_color = ui.visuals().text_color();
+        let status_font = FontId::proportional(STATUS_BAR_FONT_SIZE);
+        let status_text = elide_text_to_width(
+            ui,
+            status_message,
+            status_font.clone(),
+            status_color,
+            status_rect.width(),
+        );
+        let status_galley = ui
+            .painter()
+            .layout_no_wrap(status_text, status_font, status_color);
+        let status_pos = egui::pos2(
+            status_rect.left(),
+            status_rect.center().y - status_galley.size().y * 0.5,
+        );
+        ui.painter()
+            .with_clip_rect(status_rect)
+            .galley(status_pos, status_galley, status_color);
+        ui.interact(
+            status_rect,
+            ui.id().with("status_bar_message"),
+            egui::Sense::hover(),
+        )
+        .on_hover_text(status_message);
+
+        if !shortcut_text.is_empty() && shortcut_rect.width() > 0.0 {
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(shortcut_rect)
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                |ui| {
+                    ui.add_sized(
+                        shortcut_rect.size(),
+                        egui::Label::new(
+                            RichText::new(shortcut_text)
+                                .size(STATUS_BAR_FONT_SIZE)
+                                .monospace()
+                                .color(shortcut_color),
+                        )
+                        .truncate(),
+                    );
+                },
+            );
+        }
+    });
 }
 
 fn ui_was_primary_clicked(ui: &egui::Ui) -> bool {

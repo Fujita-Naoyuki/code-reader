@@ -2,6 +2,48 @@
 
 use super::*;
 
+/// What the frame's input looked like when it started, for the performance report.
+pub(super) struct FrameInputSample {
+    stable_dt_ms: f32,
+    unstable_dt_ms: f32,
+    raw_wheel_delta: egui::Vec2,
+    smooth_scroll_delta: egui::Vec2,
+    page_key: Option<&'static str>,
+}
+
+impl FrameInputSample {
+    pub(super) fn capture(ui: &egui::Ui) -> Self {
+        ui.input(|input| {
+            let raw_wheel_delta = input
+                .raw
+                .events
+                .iter()
+                .filter_map(|event| {
+                    if let egui::Event::MouseWheel { delta, .. } = event {
+                        Some(*delta)
+                    } else {
+                        None
+                    }
+                })
+                .fold(egui::Vec2::ZERO, |sum, delta| sum + delta);
+            let page_key = if input.key_pressed(egui::Key::PageDown) {
+                Some("PageDown")
+            } else if input.key_pressed(egui::Key::PageUp) {
+                Some("PageUp")
+            } else {
+                None
+            };
+            Self {
+                stable_dt_ms: input.stable_dt * 1000.0,
+                unstable_dt_ms: input.unstable_dt * 1000.0,
+                raw_wheel_delta,
+                smooth_scroll_delta: input.smooth_scroll_delta(),
+                page_key,
+            }
+        })
+    }
+}
+
 impl CodeReaderApp {
     pub(super) fn copy_diagnostics_report(&mut self) {
         let report = self.diagnostics_report_text();
@@ -227,15 +269,18 @@ impl CodeReaderApp {
     pub(super) fn record_app_perf_sample(
         &mut self,
         total_ms: f32,
-        stable_dt_ms: f32,
-        unstable_dt_ms: f32,
+        input: FrameInputSample,
         focused_pane: Pane,
         scroll_before_y: f32,
         scroll_after_y: f32,
-        raw_wheel_delta: egui::Vec2,
-        smooth_scroll_delta: egui::Vec2,
-        page_key: Option<&'static str>,
     ) {
+        let FrameInputSample {
+            stable_dt_ms,
+            unstable_dt_ms,
+            raw_wheel_delta,
+            smooth_scroll_delta,
+            page_key,
+        } = input;
         const APP_PERF_SAMPLE_LIMIT: usize = 120;
 
         self.app_perf_debug.frame_index = self.app_perf_debug.frame_index.wrapping_add(1);
