@@ -661,6 +661,23 @@ pub(super) fn start_syntax_highlighting(
     receiver
 }
 
+/// Left-aligned text clipped to one cell of a list row.
+pub(super) fn paint_row_text(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    text: &str,
+    font: &FontId,
+    color: Color32,
+) {
+    ui.painter().with_clip_rect(rect).text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        font.clone(),
+        color,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

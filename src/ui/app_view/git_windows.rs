@@ -136,19 +136,7 @@ impl CodeReaderApp {
                 if escape {
                     close = true;
                 }
-                let cursor_index = repository
-                    .branches
-                    .iter()
-                    .position(|branch| branch == &cursor);
-                let moved_index = match cursor_index {
-                    Some(index) if up => Some(index.saturating_sub(1)),
-                    Some(index) if down => {
-                        Some((index + 1).min(repository.branches.len().saturating_sub(1)))
-                    }
-                    None if up || down => Some(0),
-                    _ => None,
-                };
-                if let Some(branch) = moved_index.and_then(|index| repository.branches.get(index)) {
+                if let Some(branch) = moved_branch_cursor(&repository.branches, &cursor, up, down) {
                     cursor = branch.clone();
                 }
                 if enter {
@@ -183,103 +171,17 @@ impl CodeReaderApp {
                 if repository.branches.is_empty() {
                     ui.label(RichText::new("No local branches").weak());
                 } else {
-                    let row_height = 24.0;
-                    let current_width = 72.0;
-                    let body_font = TextStyle::Body.resolve(ui.style());
-                    let mono_font = TextStyle::Monospace.resolve(ui.style());
-                    let draw_left_text =
-                        |ui: &egui::Ui,
-                         rect: egui::Rect,
-                         text: &str,
-                         font: egui::FontId,
-                         color: egui::Color32| {
-                            ui.painter().with_clip_rect(rect).text(
-                                rect.left_center(),
-                                egui::Align2::LEFT_CENTER,
-                                text,
-                                font,
-                                color,
-                            );
-                        };
                     ScrollArea::vertical()
                         .id_salt("git_switch_branch_list")
                         .max_height(220.0)
                         .show(ui, |ui| {
                             for branch in &repository.branches {
-                                let selected = branch == &repository.branch;
-                                let row_width = ui.available_width();
-                                let (row_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(row_width, row_height),
-                                    egui::Sense::hover(),
-                                );
-                                let current_rect = egui::Rect::from_min_size(
-                                    egui::pos2(row_rect.right() - current_width, row_rect.top()),
-                                    egui::vec2(current_width, row_height),
-                                );
-                                let branch_rect = egui::Rect::from_min_max(
-                                    row_rect.min,
-                                    egui::pos2(current_rect.left() - 8.0, row_rect.bottom()),
-                                );
-                                let response = ui.interact(
-                                    row_rect,
-                                    ui.make_persistent_id(("git_switch_branch", branch)),
-                                    if selected {
-                                        egui::Sense::hover()
-                                    } else {
-                                        egui::Sense::click()
-                                    },
-                                );
-                                let highlighted = branch == &cursor;
-                                if response.hovered() || highlighted {
-                                    ui.painter().rect_filled(
-                                        row_rect.shrink2(egui::vec2(0.0, 2.0)),
-                                        2.0,
-                                        ui.visuals().widgets.hovered.bg_fill,
-                                    );
-                                }
-                                if highlighted && (up || down) {
-                                    ui.scroll_to_rect(row_rect, None);
-                                }
-                                if selected {
-                                    ui.painter().rect_filled(
-                                        row_rect.shrink2(egui::vec2(0.0, 2.0)),
-                                        2.0,
-                                        ui.visuals().selection.bg_fill,
-                                    );
-                                    if highlighted {
-                                        ui.painter().rect_stroke(
-                                            row_rect.shrink2(egui::vec2(0.0, 2.0)),
-                                            2.0,
-                                            ui.visuals().widgets.hovered.fg_stroke,
-                                            egui::StrokeKind::Inside,
-                                        );
-                                    }
-                                }
-
-                                let text_color = if selected {
-                                    ui.visuals().selection.stroke.color
-                                } else {
-                                    ui.visuals().text_color()
+                                let row = BranchRow {
+                                    current: branch == &repository.branch,
+                                    highlighted: branch == &cursor,
+                                    scroll_to: branch == &cursor && (up || down),
                                 };
-                                draw_left_text(
-                                    ui,
-                                    branch_rect.shrink2(egui::vec2(4.0, 0.0)),
-                                    branch,
-                                    mono_font.clone(),
-                                    text_color,
-                                );
-                                if selected {
-                                    draw_left_text(
-                                        ui,
-                                        current_rect,
-                                        "current",
-                                        body_font.clone(),
-                                        ui.visuals().selection.stroke.color,
-                                    );
-                                }
-                                if !selected
-                                    && response.on_hover_text("Switch to this branch").clicked()
-                                {
+                                if branch_row_ui(ui, branch, row) {
                                     switch_to_branch = Some(branch.clone());
                                 }
                             }
@@ -390,75 +292,8 @@ impl CodeReaderApp {
                 });
                 ui.separator();
 
-                ui.label(RichText::new(&details.commit.subject).strong());
-                ui.add_space(4.0);
-                egui::Grid::new("git_commit_details_metadata")
-                    .num_columns(2)
-                    .spacing([16.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("Author").weak());
-                        ui.label(&details.commit.author);
-                        ui.end_row();
-                        ui.label(RichText::new("Date").weak());
-                        ui.label(&details.commit.date);
-                        ui.end_row();
-                        ui.label(RichText::new("Hash").weak());
-                        ui.label(RichText::new(&details.commit.hash).monospace());
-                        ui.end_row();
-                        ui.label(RichText::new("Parents").weak());
-                        ui.label(if details.commit.parents.is_empty() {
-                            "none".to_owned()
-                        } else {
-                            details.commit.parents.join(", ")
-                        });
-                        ui.end_row();
-                    });
-
-                if !details.commit.refs.is_empty() {
-                    ui.add_space(6.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("Refs").weak());
-                        for reference in &details.commit.refs {
-                            let text = RichText::new(reference)
-                                .monospace()
-                                .small()
-                                .color(Color32::WHITE);
-                            egui::Frame::new()
-                                .fill(git_ref_badge_color(reference))
-                                .corner_radius(3.0)
-                                .inner_margin(egui::Margin::symmetric(5, 2))
-                                .show(ui, |ui| {
-                                    ui.label(text);
-                                });
-                        }
-                    });
-                }
-
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Changed Files").strong());
-                    ui.label(RichText::new(format!("{}", details.files.len())).weak());
-                });
-                ui.separator();
-
-                if let Some(error) = &details.error {
-                    ui.label(RichText::new(error).color(ui.visuals().warn_fg_color));
-                } else if details.files.is_empty() {
-                    ui.label(RichText::new("No changed files").weak());
-                } else {
-                    ScrollArea::vertical()
-                        .id_salt("git_commit_details_files")
-                        .max_height(220.0)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for file in &details.files {
-                                let display_path = file.display_path();
-                                let label =
-                                    format!("{:<3} {}", file.display_status(), display_path);
-                                ui.label(RichText::new(label).monospace());
-                            }
-                        });
-                }
+                commit_metadata_ui(ui, &details.commit);
+                commit_changed_files_ui(ui, &details);
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
@@ -493,4 +328,171 @@ pub(super) struct GitDiscardRequest {
     pub(super) repository_name: String,
     pub(super) path: String,
     pub(super) untracked: bool,
+}
+
+fn commit_metadata_ui(ui: &mut egui::Ui, commit: &GitCommitNode) {
+    ui.label(RichText::new(&commit.subject).strong());
+    ui.add_space(4.0);
+    egui::Grid::new("git_commit_details_metadata")
+        .num_columns(2)
+        .spacing([16.0, 4.0])
+        .show(ui, |ui| {
+            ui.label(RichText::new("Author").weak());
+            ui.label(&commit.author);
+            ui.end_row();
+            ui.label(RichText::new("Date").weak());
+            ui.label(&commit.date);
+            ui.end_row();
+            ui.label(RichText::new("Hash").weak());
+            ui.label(RichText::new(&commit.hash).monospace());
+            ui.end_row();
+            ui.label(RichText::new("Parents").weak());
+            ui.label(if commit.parents.is_empty() {
+                "none".to_owned()
+            } else {
+                commit.parents.join(", ")
+            });
+            ui.end_row();
+        });
+
+    if !commit.refs.is_empty() {
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Refs").weak());
+            for reference in &commit.refs {
+                let text = RichText::new(reference)
+                    .monospace()
+                    .small()
+                    .color(Color32::WHITE);
+                egui::Frame::new()
+                    .fill(git_ref_badge_color(reference))
+                    .corner_radius(3.0)
+                    .inner_margin(egui::Margin::symmetric(5, 2))
+                    .show(ui, |ui| {
+                        ui.label(text);
+                    });
+            }
+        });
+    }
+}
+
+fn commit_changed_files_ui(ui: &mut egui::Ui, details: &GitCommitDetailsWindow) {
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Changed Files").strong());
+        ui.label(RichText::new(format!("{}", details.files.len())).weak());
+    });
+    ui.separator();
+
+    if let Some(error) = &details.error {
+        ui.label(RichText::new(error).color(ui.visuals().warn_fg_color));
+    } else if details.files.is_empty() {
+        ui.label(RichText::new("No changed files").weak());
+    } else {
+        ScrollArea::vertical()
+            .id_salt("git_commit_details_files")
+            .max_height(220.0)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for file in &details.files {
+                    let display_path = file.display_path();
+                    let label = format!("{:<3} {}", file.display_status(), display_path);
+                    ui.label(RichText::new(label).monospace());
+                }
+            });
+    }
+}
+
+/// Where Up / Down moves the Switch Branch highlight.
+fn moved_branch_cursor<'a>(
+    branches: &'a [String],
+    cursor: &str,
+    up: bool,
+    down: bool,
+) -> Option<&'a String> {
+    let cursor_index = branches.iter().position(|branch| branch == cursor);
+    let moved_index = match cursor_index {
+        Some(index) if up => Some(index.saturating_sub(1)),
+        Some(index) if down => Some((index + 1).min(branches.len().saturating_sub(1))),
+        None if up || down => Some(0),
+        _ => None,
+    };
+    moved_index.and_then(|index| branches.get(index))
+}
+
+#[derive(Clone, Copy)]
+struct BranchRow {
+    current: bool,
+    highlighted: bool,
+    scroll_to: bool,
+}
+
+/// One branch in the Switch Branch list. Returns true when it was clicked.
+fn branch_row_ui(ui: &mut egui::Ui, branch: &str, row: BranchRow) -> bool {
+    const ROW_HEIGHT: f32 = 24.0;
+    const CURRENT_WIDTH: f32 = 72.0;
+    let (row_rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), ROW_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let current_rect = egui::Rect::from_min_size(
+        egui::pos2(row_rect.right() - CURRENT_WIDTH, row_rect.top()),
+        egui::vec2(CURRENT_WIDTH, ROW_HEIGHT),
+    );
+    let branch_rect = egui::Rect::from_min_max(
+        row_rect.min,
+        egui::pos2(current_rect.left() - 8.0, row_rect.bottom()),
+    );
+    let response = ui.interact(
+        row_rect,
+        ui.make_persistent_id(("git_switch_branch", branch)),
+        if row.current {
+            egui::Sense::hover()
+        } else {
+            egui::Sense::click()
+        },
+    );
+    let fill_rect = row_rect.shrink2(egui::vec2(0.0, 2.0));
+    if response.hovered() || row.highlighted {
+        ui.painter()
+            .rect_filled(fill_rect, 2.0, ui.visuals().widgets.hovered.bg_fill);
+    }
+    if row.scroll_to {
+        ui.scroll_to_rect(row_rect, None);
+    }
+    if row.current {
+        ui.painter()
+            .rect_filled(fill_rect, 2.0, ui.visuals().selection.bg_fill);
+        if row.highlighted {
+            ui.painter().rect_stroke(
+                fill_rect,
+                2.0,
+                ui.visuals().widgets.hovered.fg_stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+
+    let text_color = if row.current {
+        ui.visuals().selection.stroke.color
+    } else {
+        ui.visuals().text_color()
+    };
+    paint_row_text(
+        ui,
+        branch_rect.shrink2(egui::vec2(4.0, 0.0)),
+        branch,
+        &TextStyle::Monospace.resolve(ui.style()),
+        text_color,
+    );
+    if row.current {
+        paint_row_text(
+            ui,
+            current_rect,
+            "current",
+            &TextStyle::Body.resolve(ui.style()),
+            ui.visuals().selection.stroke.color,
+        );
+    }
+    !row.current && response.on_hover_text("Switch to this branch").clicked()
 }

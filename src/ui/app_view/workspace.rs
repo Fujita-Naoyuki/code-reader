@@ -371,180 +371,26 @@ impl CodeReaderApp {
             .current_session()
             .map(|session| session.root_folders.clone())
             .unwrap_or_default();
-        let mut keep_open = true;
-        let mut action = None;
-
-        match &mut dialog {
+        let answer = match &mut dialog {
             WorkspaceFileDialog::NewFile {
                 folder,
                 file_name,
                 error,
-            } => {
-                let folder_label = workspace_search_display_path(folder, &roots);
-                egui::Window::new("New File")
-                    .id(egui::Id::new("workspace_new_file_window"))
-                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 72.0))
-                    .fixed_size(egui::vec2(420.0, 180.0))
-                    .collapsible(false)
-                    .resizable(false)
-                    .show(ui.ctx(), |ui| {
-                        if self.layout.modal_escape == Some(Modal::WorkspaceFile) {
-                            keep_open = false;
-                        }
-
-                        ui.label(RichText::new("Esc: close").weak());
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Folder").weak());
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(RichText::new(folder_label.clone()).monospace());
-                                },
-                            );
-                        });
-                        ui.add_space(8.0);
-                        ui.label("File name");
-                        let edit_id = ui.id().with("workspace_new_file_name");
-                        ui.add_sized(
-                            [ui.available_width(), 22.0],
-                            TextEdit::singleline(file_name)
-                                .id(edit_id)
-                                .font(TextStyle::Monospace),
-                        );
-                        if let Some(error) = error {
-                            ui.label(
-                                RichText::new(error.as_str()).color(ui.visuals().warn_fg_color),
-                            );
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Create").clicked()
-                                || ui.input(|input| input.key_pressed(egui::Key::Enter))
-                            {
-                                action = Some(WorkspaceFileDialogAction::CreateFile {
-                                    folder: folder.clone(),
-                                    file_name: file_name.clone(),
-                                });
-                            }
-                            if ui.button("Cancel").clicked() {
-                                keep_open = false;
-                            }
-                        });
-                        ui.memory_mut(|memory| memory.request_focus(edit_id));
-                    });
-            }
+            } => new_file_dialog_ui(ui, folder, file_name, error.as_deref(), &roots),
             WorkspaceFileDialog::Rename {
                 path,
                 new_name,
                 select_stem,
                 error,
-            } => {
-                let path_label = workspace_search_display_path(path, &roots);
-                egui::Window::new("Rename File")
-                    .id(egui::Id::new("workspace_rename_file_window"))
-                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 72.0))
-                    .fixed_size(egui::vec2(420.0, 180.0))
-                    .collapsible(false)
-                    .resizable(false)
-                    .show(ui.ctx(), |ui| {
-                        if self.layout.modal_escape == Some(Modal::WorkspaceFile) {
-                            keep_open = false;
-                        }
-
-                        ui.label(RichText::new("Esc: close").weak());
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("Current").weak());
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(RichText::new(path_label.clone()).monospace());
-                                },
-                            );
-                        });
-                        ui.add_space(8.0);
-                        ui.label("New name");
-                        let edit_id = ui.id().with("workspace_rename_file_name");
-                        if *select_stem {
-                            let selection_end = file_name_stem_selection_char_len(new_name);
-                            let mut state =
-                                TextEditState::load(ui.ctx(), edit_id).unwrap_or_default();
-                            state.cursor.set_char_range(Some(CCursorRange::two(
-                                CCursor::new(0),
-                                CCursor::new(selection_end),
-                            )));
-                            state.store(ui.ctx(), edit_id);
-                            *select_stem = false;
-                        }
-                        ui.add_sized(
-                            [ui.available_width(), 22.0],
-                            TextEdit::singleline(new_name)
-                                .id(edit_id)
-                                .font(TextStyle::Monospace),
-                        );
-                        if let Some(error) = error {
-                            ui.label(
-                                RichText::new(error.as_str()).color(ui.visuals().warn_fg_color),
-                            );
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Rename").clicked()
-                                || ui.input(|input| input.key_pressed(egui::Key::Enter))
-                            {
-                                action = Some(WorkspaceFileDialogAction::RenameFile {
-                                    path: path.clone(),
-                                    new_name: new_name.clone(),
-                                });
-                            }
-                            if ui.button("Cancel").clicked() {
-                                keep_open = false;
-                            }
-                        });
-                        ui.memory_mut(|memory| memory.request_focus(edit_id));
-                    });
-            }
+            } => rename_file_dialog_ui(ui, path, new_name, select_stem, error.as_deref(), &roots),
             WorkspaceFileDialog::Delete { path, error } => {
-                let path_label = workspace_search_display_path(path, &roots);
-                egui::Window::new("Delete File")
-                    .id(egui::Id::new("workspace_delete_file_window"))
-                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 72.0))
-                    .fixed_size(egui::vec2(420.0, 160.0))
-                    .collapsible(false)
-                    .resizable(false)
-                    .show(ui.ctx(), |ui| {
-                        if self.layout.modal_escape == Some(Modal::WorkspaceFile) {
-                            keep_open = false;
-                        }
-
-                        ui.label(RichText::new("Esc: close").weak());
-                        ui.separator();
-                        ui.label(RichText::new(path_label.clone()).monospace());
-                        ui.label(
-                            RichText::new("This cannot be undone.")
-                                .color(ui.visuals().warn_fg_color),
-                        );
-                        if let Some(error) = error {
-                            ui.label(
-                                RichText::new(error.as_str()).color(ui.visuals().warn_fg_color),
-                            );
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Delete").clicked()
-                                || ui.input(|input| input.key_pressed(egui::Key::Enter))
-                            {
-                                action = Some(WorkspaceFileDialogAction::DeleteFile {
-                                    path: path.clone(),
-                                });
-                            }
-                            if ui.button("Cancel").clicked() {
-                                keep_open = false;
-                            }
-                        });
-                    });
+                delete_file_dialog_ui(ui, path, error.as_deref(), &roots)
             }
-        }
+        };
+        let mut keep_open =
+            !answer.cancelled && self.layout.modal_escape != Some(Modal::WorkspaceFile);
 
-        if let Some(action) = action {
+        if let Some(action) = answer.action {
             let result = match action {
                 WorkspaceFileDialogAction::CreateFile { folder, file_name } => {
                     self.create_workspace_file(&folder, &file_name)
@@ -864,4 +710,170 @@ pub(super) fn workspace_right_pane_drop_target(ui: &mut egui::Ui, path: &Path) -
 
 pub(super) fn pick_workspace_folder(title: &str) -> Option<PathBuf> {
     platform::current().pick_folder(title)
+}
+
+/// What a file dialog's frame asked for.
+#[derive(Default)]
+struct FileDialogAnswer {
+    cancelled: bool,
+    action: Option<WorkspaceFileDialogAction>,
+}
+
+/// The window all three file dialogs share.
+fn file_dialog_window(
+    ui: &egui::Ui,
+    (title, id): (&str, &str),
+    height: f32,
+    contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Window::new(title)
+        .id(egui::Id::new(id))
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 72.0))
+        .fixed_size(egui::vec2(420.0, height))
+        .collapsible(false)
+        .resizable(false)
+        .show(ui.ctx(), |ui| {
+            ui.label(RichText::new("Esc: close").weak());
+            ui.separator();
+            contents(ui);
+        });
+}
+
+fn file_dialog_label_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).weak());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(RichText::new(value).monospace());
+        });
+    });
+}
+
+fn file_dialog_error(ui: &mut egui::Ui, error: Option<&str>) {
+    if let Some(error) = error {
+        ui.label(RichText::new(error).color(ui.visuals().warn_fg_color));
+    }
+}
+
+/// The confirm button (Enter also confirms) and Cancel. Returns (confirmed, cancelled).
+fn file_dialog_buttons(ui: &mut egui::Ui, confirm: &str) -> (bool, bool) {
+    let mut confirmed = false;
+    let mut cancelled = false;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        confirmed =
+            ui.button(confirm).clicked() || ui.input(|input| input.key_pressed(egui::Key::Enter));
+        cancelled = ui.button("Cancel").clicked();
+    });
+    (confirmed, cancelled)
+}
+
+fn new_file_dialog_ui(
+    ui: &egui::Ui,
+    folder: &Path,
+    file_name: &mut String,
+    error: Option<&str>,
+    roots: &[PathBuf],
+) -> FileDialogAnswer {
+    let folder_label = workspace_search_display_path(folder, roots);
+    let mut answer = FileDialogAnswer::default();
+    file_dialog_window(ui, ("New File", "workspace_new_file_window"), 180.0, |ui| {
+        file_dialog_label_row(ui, "Folder", &folder_label);
+        ui.add_space(8.0);
+        ui.label("File name");
+        let edit_id = ui.id().with("workspace_new_file_name");
+        ui.add_sized(
+            [ui.available_width(), 22.0],
+            TextEdit::singleline(file_name)
+                .id(edit_id)
+                .font(TextStyle::Monospace),
+        );
+        file_dialog_error(ui, error);
+        let (confirmed, cancelled) = file_dialog_buttons(ui, "Create");
+        answer.cancelled = cancelled;
+        if confirmed {
+            answer.action = Some(WorkspaceFileDialogAction::CreateFile {
+                folder: folder.to_path_buf(),
+                file_name: file_name.clone(),
+            });
+        }
+        ui.memory_mut(|memory| memory.request_focus(edit_id));
+    });
+    answer
+}
+
+fn rename_file_dialog_ui(
+    ui: &egui::Ui,
+    path: &Path,
+    new_name: &mut String,
+    select_stem: &mut bool,
+    error: Option<&str>,
+    roots: &[PathBuf],
+) -> FileDialogAnswer {
+    let path_label = workspace_search_display_path(path, roots);
+    let mut answer = FileDialogAnswer::default();
+    file_dialog_window(
+        ui,
+        ("Rename File", "workspace_rename_file_window"),
+        180.0,
+        |ui| {
+            file_dialog_label_row(ui, "Current", &path_label);
+            ui.add_space(8.0);
+            ui.label("New name");
+            let edit_id = ui.id().with("workspace_rename_file_name");
+            if *select_stem {
+                let selection_end = file_name_stem_selection_char_len(new_name);
+                let mut state = TextEditState::load(ui.ctx(), edit_id).unwrap_or_default();
+                state.cursor.set_char_range(Some(CCursorRange::two(
+                    CCursor::new(0),
+                    CCursor::new(selection_end),
+                )));
+                state.store(ui.ctx(), edit_id);
+                *select_stem = false;
+            }
+            ui.add_sized(
+                [ui.available_width(), 22.0],
+                TextEdit::singleline(new_name)
+                    .id(edit_id)
+                    .font(TextStyle::Monospace),
+            );
+            file_dialog_error(ui, error);
+            let (confirmed, cancelled) = file_dialog_buttons(ui, "Rename");
+            answer.cancelled = cancelled;
+            if confirmed {
+                answer.action = Some(WorkspaceFileDialogAction::RenameFile {
+                    path: path.to_path_buf(),
+                    new_name: new_name.clone(),
+                });
+            }
+            ui.memory_mut(|memory| memory.request_focus(edit_id));
+        },
+    );
+    answer
+}
+
+fn delete_file_dialog_ui(
+    ui: &egui::Ui,
+    path: &Path,
+    error: Option<&str>,
+    roots: &[PathBuf],
+) -> FileDialogAnswer {
+    let path_label = workspace_search_display_path(path, roots);
+    let mut answer = FileDialogAnswer::default();
+    file_dialog_window(
+        ui,
+        ("Delete File", "workspace_delete_file_window"),
+        160.0,
+        |ui| {
+            ui.label(RichText::new(path_label).monospace());
+            ui.label(RichText::new("This cannot be undone.").color(ui.visuals().warn_fg_color));
+            file_dialog_error(ui, error);
+            let (confirmed, cancelled) = file_dialog_buttons(ui, "Delete");
+            answer.cancelled = cancelled;
+            if confirmed {
+                answer.action = Some(WorkspaceFileDialogAction::DeleteFile {
+                    path: path.to_path_buf(),
+                });
+            }
+        },
+    );
+    answer
 }

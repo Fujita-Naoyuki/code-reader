@@ -437,26 +437,6 @@ impl CodeReaderApp {
                 ui.separator();
 
                 let results_width = ui.available_width();
-                let kind_width = 88.0;
-                let name_width = 260.0;
-                let row_height = 24.0;
-                let column_gap = 16.0;
-                let body_font = TextStyle::Body.resolve(ui.style());
-                let name_font = TextStyle::Monospace.resolve(ui.style());
-                let weak_text_color = ui.visuals().weak_text_color();
-                let draw_left_text = |ui: &egui::Ui,
-                                      rect: egui::Rect,
-                                      text: &str,
-                                      font: egui::FontId,
-                                      color: egui::Color32| {
-                    ui.painter().with_clip_rect(rect).text(
-                        rect.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        text,
-                        font,
-                        color,
-                    );
-                };
                 ScrollArea::vertical()
                     .id_salt("search_everywhere_results")
                     .auto_shrink([false, false])
@@ -471,81 +451,14 @@ impl CodeReaderApp {
 
                         for (index, result) in results.iter().enumerate() {
                             let selected = index == self.search.overlay.selected_index;
-                            let (row_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(results_width, row_height),
-                                egui::Sense::hover(),
-                            );
-                            let kind_rect = egui::Rect::from_min_size(
-                                row_rect.min,
-                                egui::vec2(kind_width, row_height),
-                            );
-                            let name_rect = egui::Rect::from_min_size(
-                                egui::pos2(kind_rect.right() + column_gap, row_rect.top()),
-                                egui::vec2(name_width, row_height),
-                            );
-                            let detail_rect = egui::Rect::from_min_max(
-                                egui::pos2(name_rect.right() + column_gap, row_rect.top()),
-                                row_rect.right_bottom(),
-                            );
-                            let response = ui.interact(
-                                row_rect,
-                                ui.make_persistent_id(("search_everywhere_result", index)),
-                                egui::Sense::click(),
-                            );
-
+                            let response =
+                                search_result_row_ui(ui, index, result, selected, results_width);
                             if response.hovered() {
                                 self.search.overlay.selected_index = index;
                             }
                             if response.clicked() {
                                 selected_result = Some(result.clone());
                             }
-
-                            if response.hovered() {
-                                ui.painter().rect_filled(
-                                    row_rect.shrink2(egui::vec2(0.0, 2.0)),
-                                    2.0,
-                                    ui.visuals().widgets.hovered.bg_fill,
-                                );
-                            }
-                            if selected {
-                                ui.painter().rect_filled(
-                                    row_rect.shrink2(egui::vec2(0.0, 2.0)),
-                                    2.0,
-                                    ui.visuals().selection.bg_fill,
-                                );
-                            }
-
-                            let text_color = if selected {
-                                ui.visuals().selection.stroke.color
-                            } else {
-                                ui.visuals().text_color()
-                            };
-                            let detail_color = if selected {
-                                ui.visuals().selection.stroke.color
-                            } else {
-                                weak_text_color
-                            };
-                            draw_left_text(
-                                ui,
-                                kind_rect.shrink2(egui::vec2(4.0, 0.0)),
-                                result.kind.label(),
-                                body_font.clone(),
-                                text_color,
-                            );
-                            draw_left_text(
-                                ui,
-                                name_rect,
-                                &result.label,
-                                name_font.clone(),
-                                text_color,
-                            );
-                            draw_left_text(
-                                ui,
-                                detail_rect,
-                                &result.detail,
-                                body_font.clone(),
-                                detail_color,
-                            );
                         }
                     });
             });
@@ -560,6 +473,53 @@ impl CodeReaderApp {
         }
 
         selected_result
+    }
+
+    /// The references, grouped by file. Returns the one clicked.
+    fn reference_groups_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        entries: &[ReferenceOverlayEntry],
+        results_width: f32,
+    ) -> Option<Location> {
+        let mut clicked = None;
+        let mut index = 0;
+        while index < entries.len() {
+            let group_path = entries[index].path.clone();
+            let group_display_path = entries[index].display_path.clone();
+            let group_start = index;
+            while index < entries.len() && entries[index].path == group_path {
+                index += 1;
+            }
+            let group_end = index;
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(group_display_path).monospace().strong());
+                ui.label(RichText::new(format!("{} references", group_end - group_start)).weak());
+            });
+
+            for (entry_index, entry) in entries[group_start..group_end].iter().enumerate() {
+                let selected_index = group_start + entry_index;
+                let selected = selected_index == self.search.references_overlay.selected_index;
+                let text = if entry.preview.is_empty() {
+                    format!("{:>5}", entry.line_number)
+                } else {
+                    format!("{:>5}  {}", entry.line_number, entry.preview)
+                };
+                let response = ui.add_sized(
+                    egui::vec2(results_width, 24.0),
+                    egui::Button::new(RichText::new(text).monospace()).selected(selected),
+                );
+                if response.hovered() {
+                    self.search.references_overlay.selected_index = selected_index;
+                }
+                if response.clicked() {
+                    clicked = Some(entry.location.clone());
+                }
+            }
+            ui.add_space(6.0);
+        }
+        clicked
     }
 
     pub(super) fn show_references_overlay(&mut self, ui: &mut egui::Ui) -> Option<Location> {
@@ -673,51 +633,10 @@ impl CodeReaderApp {
                             return;
                         }
 
-                        let mut index = 0;
-                        while index < entries.len() {
-                            let group_path = entries[index].path.clone();
-                            let group_display_path = entries[index].display_path.clone();
-                            let group_start = index;
-                            while index < entries.len() && entries[index].path == group_path {
-                                index += 1;
-                            }
-                            let group_end = index;
-
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(group_display_path).monospace().strong());
-                                ui.label(
-                                    RichText::new(format!(
-                                        "{} references",
-                                        group_end - group_start
-                                    ))
-                                    .weak(),
-                                );
-                            });
-
-                            for (entry_index, entry) in
-                                entries[group_start..group_end].iter().enumerate()
-                            {
-                                let selected_index = group_start + entry_index;
-                                let selected =
-                                    selected_index == self.search.references_overlay.selected_index;
-                                let text = if entry.preview.is_empty() {
-                                    format!("{:>5}", entry.line_number)
-                                } else {
-                                    format!("{:>5}  {}", entry.line_number, entry.preview)
-                                };
-                                let response = ui.add_sized(
-                                    egui::vec2(results_width, 24.0),
-                                    egui::Button::new(RichText::new(text).monospace())
-                                        .selected(selected),
-                                );
-                                if response.hovered() {
-                                    self.search.references_overlay.selected_index = selected_index;
-                                }
-                                if response.clicked() {
-                                    selected_location = Some(entry.location.clone());
-                                }
-                            }
-                            ui.add_space(6.0);
+                        if let Some(location) =
+                            self.reference_groups_ui(ui, &entries, results_width)
+                        {
+                            selected_location = Some(location);
                         }
                     });
             });
@@ -976,6 +895,74 @@ pub(super) fn truncate_location_preview(value: &str) -> String {
         .collect::<String>();
     preview.push_str("...");
     preview
+}
+
+/// One result in Search Everywhere: kind, name and detail columns.
+fn search_result_row_ui(
+    ui: &mut egui::Ui,
+    index: usize,
+    result: &SearchResult,
+    selected: bool,
+    width: f32,
+) -> egui::Response {
+    const KIND_WIDTH: f32 = 88.0;
+    const NAME_WIDTH: f32 = 260.0;
+    const ROW_HEIGHT: f32 = 24.0;
+    const COLUMN_GAP: f32 = 16.0;
+    let (row_rect, _) = ui.allocate_exact_size(egui::vec2(width, ROW_HEIGHT), egui::Sense::hover());
+    let kind_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(KIND_WIDTH, ROW_HEIGHT));
+    let name_rect = egui::Rect::from_min_size(
+        egui::pos2(kind_rect.right() + COLUMN_GAP, row_rect.top()),
+        egui::vec2(NAME_WIDTH, ROW_HEIGHT),
+    );
+    let detail_rect = egui::Rect::from_min_max(
+        egui::pos2(name_rect.right() + COLUMN_GAP, row_rect.top()),
+        row_rect.right_bottom(),
+    );
+    let response = ui.interact(
+        row_rect,
+        ui.make_persistent_id(("search_everywhere_result", index)),
+        egui::Sense::click(),
+    );
+
+    if response.hovered() {
+        ui.painter().rect_filled(
+            row_rect.shrink2(egui::vec2(0.0, 2.0)),
+            2.0,
+            ui.visuals().widgets.hovered.bg_fill,
+        );
+    }
+    if selected {
+        ui.painter().rect_filled(
+            row_rect.shrink2(egui::vec2(0.0, 2.0)),
+            2.0,
+            ui.visuals().selection.bg_fill,
+        );
+    }
+
+    let (text_color, detail_color) = if selected {
+        let color = ui.visuals().selection.stroke.color;
+        (color, color)
+    } else {
+        (ui.visuals().text_color(), ui.visuals().weak_text_color())
+    };
+    let body_font = TextStyle::Body.resolve(ui.style());
+    paint_row_text(
+        ui,
+        kind_rect.shrink2(egui::vec2(4.0, 0.0)),
+        result.kind.label(),
+        &body_font,
+        text_color,
+    );
+    paint_row_text(
+        ui,
+        name_rect,
+        &result.label,
+        &TextStyle::Monospace.resolve(ui.style()),
+        text_color,
+    );
+    paint_row_text(ui, detail_rect, &result.detail, &body_font, detail_color);
+    response
 }
 
 #[cfg(test)]
