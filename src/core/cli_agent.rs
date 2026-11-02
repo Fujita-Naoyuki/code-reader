@@ -1,3 +1,5 @@
+//! The command line for starting a CLI agent in the current workspace.
+
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};

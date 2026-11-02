@@ -1,3 +1,45 @@
+//! The app: `CodeReaderApp`'s state, construction and frame layout. Everything else lives
+//! in the child modules (see the map in CLAUDE.md); they read this module's items through
+//! `use super::*`.
+
+mod ai_command;
+mod clipboard;
+mod csv_grid;
+mod diagnostics;
+mod diff_selection;
+mod diff_view;
+mod editor_debug;
+mod editor_pane;
+mod editor_style;
+#[cfg(test)]
+mod event_tests;
+mod fonts;
+mod git_actions;
+mod git_history_view;
+mod git_panel;
+mod git_windows;
+mod keymap;
+mod lsp;
+mod markdown_render;
+mod markdown_search;
+mod markdown_source;
+mod markdown_view;
+mod modal;
+mod navigation;
+mod panes;
+mod search;
+mod sessions;
+mod shortcuts;
+mod source_editor;
+mod status;
+mod virtual_editor;
+mod virtual_input;
+#[cfg(test)]
+mod virtual_input_tests;
+mod virtual_paint;
+mod virtual_pointer;
+mod workspace;
+
 use std::{
     collections::HashMap,
     fs,
@@ -123,6 +165,7 @@ use status::*;
 use virtual_editor::*;
 use virtual_input::*;
 use virtual_paint::*;
+use virtual_pointer::*;
 use workspace::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -921,38 +964,3 @@ fn ui_rect_contains_pointer(ui: &egui::Ui) -> bool {
             .is_some_and(|position| ui.max_rect().contains(position))
     })
 }
-
-mod ai_command;
-mod clipboard;
-mod csv_grid;
-mod diagnostics;
-mod diff_selection;
-mod diff_view;
-mod editor_debug;
-mod editor_pane;
-mod editor_style;
-#[cfg(test)]
-mod event_tests;
-mod fonts;
-mod git_actions;
-mod git_history_view;
-mod git_panel;
-mod git_windows;
-mod keymap;
-mod lsp;
-mod markdown_render;
-mod markdown_search;
-mod markdown_source;
-mod markdown_view;
-mod modal;
-mod navigation;
-mod panes;
-mod search;
-mod sessions;
-mod shortcuts;
-mod source_editor;
-mod status;
-mod virtual_editor;
-mod virtual_input;
-mod virtual_paint;
-mod workspace;

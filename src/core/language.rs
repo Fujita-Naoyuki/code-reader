@@ -1,3 +1,5 @@
+//! What a supported language provides: symbols, highlighting, identifiers.
+
 use std::path::Path;
 
 use crate::core::{document::Document, location::Position, symbol::Symbol, syntax::HighlightSpan};

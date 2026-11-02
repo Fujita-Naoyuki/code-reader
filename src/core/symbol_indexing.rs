@@ -1,3 +1,5 @@
+//! Building the symbol index on a background thread.
+
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver},

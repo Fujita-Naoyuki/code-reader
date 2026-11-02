@@ -1,3 +1,5 @@
+//! Positions, ranges and locations, LSP style (line, byte column).
+
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

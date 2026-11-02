@@ -1,3 +1,5 @@
+//! Code Reader: a local app for reading code. See CLAUDE.md for the layout.
+
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;

@@ -1,3 +1,5 @@
+//! Rust: tree-sitter symbols and highlighting. Definitions come from rust-analyzer.
+
 use std::path::Path;
 
 use crate::core::{

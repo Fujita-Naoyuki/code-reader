@@ -1,3 +1,5 @@
+//! Workspace sessions and the state file they are saved in.
+
 use std::{
     fs,
     path::{Path, PathBuf},

@@ -1,3 +1,6 @@
+//! A language server client: a worker thread speaking JSON-RPC to the server
+//! process, with requests and answers passed over channels.
+
 use std::{
     collections::HashMap,
     env, fs,

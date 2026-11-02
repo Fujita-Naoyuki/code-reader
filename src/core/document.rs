@@ -1,3 +1,5 @@
+//! A file's text with the identifier lookup the language support needs.
+
 use std::path::PathBuf;
 
 use crate::core::location::Position;

@@ -1,3 +1,5 @@
+//! The app starts and shows its basic layout.
+
 use super::support::TestApp;
 
 #[test]

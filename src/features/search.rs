@@ -1,3 +1,5 @@
+//! Search Everywhere's fuzzy matching over files, symbols, bookmarks and history.
+
 use std::path::PathBuf;
 
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};

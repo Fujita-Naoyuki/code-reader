@@ -1,3 +1,5 @@
+//! Finding workspace files (respecting ignore rules) and building the tree.
+
 use std::{
     collections::BTreeMap,
     fs,

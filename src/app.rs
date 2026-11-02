@@ -1,3 +1,5 @@
+//! Starts the native window (eframe) with the app view.
+
 use eframe::egui;
 
 use crate::{

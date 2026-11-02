@@ -1,3 +1,5 @@
+//! Logic without egui: everything here can be unit tested without a window.
+
 pub mod cli_agent;
 pub mod csv;
 pub mod diff;

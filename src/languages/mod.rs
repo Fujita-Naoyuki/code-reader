@@ -1,3 +1,5 @@
+//! The supported languages.
+
 mod go;
 mod registry;
 mod rust;

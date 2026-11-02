@@ -1,3 +1,5 @@
+//! All symbols of the workspace, for Search Everywhere.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

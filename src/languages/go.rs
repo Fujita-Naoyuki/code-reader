@@ -1,3 +1,5 @@
+//! Go: tree-sitter symbols and highlighting. Definitions come from gopls.
+
 use crate::core::{
     document::Document,
     language::{Identifier, LanguageId, LanguageSupport},

@@ -1,3 +1,5 @@
+//! Symbols found in source files.
+
 use crate::core::{language::LanguageId, location::Location};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,3 +1,5 @@
+//! Highlight spans shared by the language support and the editors.
+
 use std::ops::Range;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

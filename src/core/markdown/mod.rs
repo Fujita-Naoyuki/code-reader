@@ -1,3 +1,5 @@
+//! A parsed Markdown document: its AST, pages (H1 / H2 sections) and headings.
+
 pub mod definitions;
 pub mod links;
 pub mod mermaid;

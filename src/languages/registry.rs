@@ -1,3 +1,5 @@
+//! Finding the language support for a path.
+
 use std::{path::Path, sync::Arc};
 
 use crate::core::language::LanguageSupport;
