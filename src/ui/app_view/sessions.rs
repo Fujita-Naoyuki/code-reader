@@ -531,3 +531,9 @@ impl CodeReaderApp {
         }
     }
 }
+
+pub(super) fn text_position_from_position(position: Option<Position>) -> TextPosition {
+    position
+        .map(|position| TextPosition::new(position.line, position.character))
+        .unwrap_or_default()
+}

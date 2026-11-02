@@ -849,3 +849,21 @@ pub(super) fn scroll_area_vertical_max_scroll_y(
 ) -> f32 {
     (content_size.y - inner_rect.height()).max(0.0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_search_matches_returns_byte_ranges() {
+        let matches = source_search_matches("alpha beta alpha", "alpha");
+
+        assert_eq!(
+            matches,
+            vec![
+                SourceSearchMatch { start: 0, end: 5 },
+                SourceSearchMatch { start: 11, end: 16 },
+            ]
+        );
+    }
+}

@@ -971,3 +971,38 @@ pub(super) fn truncate_location_preview(value: &str) -> String {
     preview.push_str("...");
     preview
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_search_file_returns_line_positions_and_previews() {
+        let path = PathBuf::from("src/app.rs");
+        let result = workspace_search_file(
+            path.clone(),
+            "alpha\nlet beta = alpha;\nalpha beta",
+            "alpha",
+        )
+        .unwrap();
+
+        assert_eq!(result.path, path);
+        assert_eq!(
+            result.matches,
+            vec![
+                WorkspaceSearchMatch {
+                    position: Position::new(0, 0),
+                    preview: "alpha".to_owned(),
+                },
+                WorkspaceSearchMatch {
+                    position: Position::new(1, 11),
+                    preview: "let beta = alpha;".to_owned(),
+                },
+                WorkspaceSearchMatch {
+                    position: Position::new(2, 0),
+                    preview: "alpha beta".to_owned(),
+                },
+            ]
+        );
+    }
+}

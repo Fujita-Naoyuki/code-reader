@@ -1690,3 +1690,163 @@ pub(super) fn prune_virtual_line_number_layout_cache(
         cache.entries.remove(&key);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn virtual_click_byte_column_treats_gutter_click_as_line_start() {
+        assert_eq!(
+            virtual_click_byte_column(None, "abcdef", 42.0, -120.0, 80.0, 10.0),
+            0
+        );
+    }
+
+    #[test]
+    fn virtual_click_byte_column_uses_visible_text_offset() {
+        assert_eq!(
+            virtual_click_byte_column(None, "abcdef", 110.0, 80.0, 80.0, 10.0),
+            3
+        );
+    }
+
+    #[test]
+    fn visual_column_for_byte_column_counts_characters_before_byte_column() {
+        assert_eq!(visual_column_for_byte_column("abcdef", 3), 3);
+        assert_eq!(visual_column_for_byte_column("aあb", 4), 2);
+        assert_eq!(visual_column_for_byte_column("aあb", 2), 1);
+    }
+
+    #[test]
+    fn virtual_scrollbar_layout_reserves_space_below_content() {
+        let viewport = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(210.0, 320.0));
+        let layout = virtual_scrollbar_layout(viewport, 400.0, 800.0);
+        let horizontal = layout.horizontal_rect.expect("horizontal scrollbar");
+        let vertical = layout.vertical_rect.expect("vertical scrollbar");
+
+        assert!(layout.content_rect.bottom() <= horizontal.top());
+        assert!(layout.content_rect.right() <= vertical.left());
+        assert_eq!(horizontal.bottom(), viewport.bottom());
+        assert_eq!(vertical.right(), viewport.right());
+    }
+
+    #[test]
+    fn virtual_pointer_to_text_position_uses_scroll_and_text_offset() {
+        let buffer = EditorTextBuffer::new("zero\none two\nthree".to_owned());
+        let line_index = buffer.line_index();
+        let viewport = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(210.0, 120.0));
+        let text_clip = egui::Rect::from_min_max(egui::pos2(50.0, 20.0), egui::pos2(210.0, 120.0));
+
+        assert_eq!(
+            virtual_pointer_to_text_position(
+                None,
+                egui::pos2(80.0, 37.0),
+                &line_index,
+                &buffer,
+                viewport,
+                text_clip,
+                50.0,
+                17.0,
+                17.0,
+                10.0,
+            ),
+            Some(Position::new(2, 3))
+        );
+    }
+
+    #[test]
+    fn virtual_indent_guide_lines_skip_blank_lines_and_track_active_line() {
+        let buffer = EditorTextBuffer::new(
+            "root\n    child\n        grandchild\n    \n\tchild\n".to_owned(),
+        );
+        let line_index = buffer.line_index();
+
+        assert_eq!(
+            virtual_indent_guide_lines(&line_index, &buffer, 0..5, 4, Some(2)),
+            vec![
+                VirtualIndentGuideLine {
+                    line_number: 1,
+                    guide_count: 1,
+                    active: false,
+                },
+                VirtualIndentGuideLine {
+                    line_number: 2,
+                    guide_count: 2,
+                    active: true,
+                },
+                VirtualIndentGuideLine {
+                    line_number: 4,
+                    guide_count: 1,
+                    active: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn immediate_wheel_scroll_delta_converts_line_and_page_units() {
+        let events = vec![
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, 2.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::default(),
+            },
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Page,
+                delta: egui::vec2(1.0, 0.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::default(),
+            },
+        ];
+
+        assert_eq!(
+            immediate_wheel_scroll_delta(&events, 300.0),
+            Some(egui::vec2(300.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn immediate_wheel_scroll_delta_ignores_zoom_wheel_events() {
+        let events = vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 120.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+        }];
+
+        assert_eq!(immediate_wheel_scroll_delta(&events, 300.0), None);
+    }
+
+    #[test]
+    fn consume_wheel_lead_skips_only_what_was_applied_ahead() {
+        let mut lead = egui::vec2(0.0, -60.0);
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::vec2(0.0, -40.0)),
+            egui::Vec2::ZERO
+        );
+        assert_eq!(lead, egui::vec2(0.0, -20.0));
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::Vec2::ZERO),
+            egui::Vec2::ZERO
+        );
+        assert_eq!(lead, egui::vec2(0.0, -20.0), "an idle frame keeps the lead");
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::vec2(0.0, -30.0)),
+            egui::vec2(0.0, -10.0)
+        );
+        assert_eq!(lead, egui::Vec2::ZERO);
+
+        // Scrolling the other way drops the lead.
+        let mut lead = egui::vec2(0.0, -60.0);
+        assert_eq!(
+            consume_wheel_lead(&mut lead, egui::vec2(0.0, 10.0)),
+            egui::vec2(0.0, 10.0)
+        );
+        assert_eq!(lead, egui::Vec2::ZERO);
+    }
+}

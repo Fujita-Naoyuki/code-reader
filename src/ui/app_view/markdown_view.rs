@@ -1309,3 +1309,86 @@ pub(super) fn markdown_focus_background(ui: &egui::Ui) -> Color32 {
         Color32::from_rgb(214, 236, 252)
     }
 }
+
+pub(super) fn ellipsize_text_to_width(
+    ui: &egui::Ui,
+    text: &str,
+    font_id: egui::FontId,
+    max_width: f32,
+) -> String {
+    if max_width <= 0.0 {
+        return String::new();
+    }
+
+    let fits = |value: &str| {
+        ui.painter()
+            .layout_no_wrap(value.to_owned(), font_id.clone(), Color32::WHITE)
+            .size()
+            .x
+            <= max_width
+    };
+
+    if fits(text) {
+        return text.to_owned();
+    }
+    if !fits("...") {
+        return String::new();
+    }
+
+    let char_count = text.chars().count();
+    let mut low = 0;
+    let mut high = char_count;
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        let candidate = format!("{}...", text.chars().take(mid).collect::<String>());
+        if fits(&candidate) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    format!("{}...", text.chars().take(low).collect::<String>())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_markdown_document_reuses_until_source_changes() {
+        let mut editor = EditorPane::empty(Pane::Left);
+        let path = PathBuf::from("guide.md");
+        editor.replace_text("# First\n\nText\n".to_owned());
+
+        let first = editor.cached_markdown_document(&path).unwrap();
+        let second = editor.cached_markdown_document(&path).unwrap();
+
+        assert!(Rc::ptr_eq(&first, &second));
+
+        editor
+            .text
+            .insert_str(editor.text.len(), "\n## Second\n\nMore\n");
+        editor.mark_text_changed();
+        let third = editor.cached_markdown_document(&path).unwrap();
+
+        assert!(!Rc::ptr_eq(&first, &third));
+        assert_eq!(third.pages.len(), 2);
+    }
+
+    #[test]
+    fn markdown_search_matches_rendered_text_across_pages() {
+        let document = MarkdownDocument::parse(
+            "guide.md".into(),
+            "# First\n\nFind **needle** here.\n\n## Second\n\n`needle` again.\n".to_owned(),
+        )
+        .unwrap();
+
+        let matches = markdown_search_matches(&document, "needle");
+
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0].page_id, "first");
+        assert_eq!(matches[1].page_id, "second");
+        assert!(markdown_search_matches(&document, "**needle**").is_empty());
+    }
+}

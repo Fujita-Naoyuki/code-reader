@@ -375,3 +375,57 @@ pub(super) fn git_ref_badge_color(reference: &str) -> Color32 {
         Color32::from_rgb(20, 128, 180)
     }
 }
+
+pub(super) fn elide_text_to_width(
+    ui: &egui::Ui,
+    text: &str,
+    font_id: FontId,
+    color: Color32,
+    max_width: f32,
+) -> String {
+    if max_width <= 0.0 {
+        return String::new();
+    }
+    if ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font_id.clone(), color)
+        .size()
+        .x
+        <= max_width
+    {
+        return text.to_owned();
+    }
+
+    const ELLIPSIS: &str = "...";
+    let ellipsis_width = ui
+        .painter()
+        .layout_no_wrap(ELLIPSIS.to_owned(), font_id.clone(), color)
+        .size()
+        .x;
+    if ellipsis_width > max_width {
+        return String::new();
+    }
+
+    let characters = text.chars().collect::<Vec<_>>();
+    let mut low = 0usize;
+    let mut high = characters.len();
+    while low < high {
+        let middle = (low + high).div_ceil(2);
+        let mut candidate = characters[..middle].iter().collect::<String>();
+        candidate.push_str(ELLIPSIS);
+        let width = ui
+            .painter()
+            .layout_no_wrap(candidate, font_id.clone(), color)
+            .size()
+            .x;
+        if width <= max_width {
+            low = middle;
+        } else {
+            high = middle.saturating_sub(1);
+        }
+    }
+
+    let mut result = characters[..low].iter().collect::<String>();
+    result.push_str(ELLIPSIS);
+    result
+}

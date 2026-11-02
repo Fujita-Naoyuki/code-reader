@@ -339,3 +339,33 @@ pub(super) fn markdown_page_range_overlay(ui: &egui::Ui) -> Color32 {
         Color32::from_rgba_unmultiplied(180, 210, 120, 28)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_active_source_line_range_uses_active_page_boundaries() {
+        let document = MarkdownDocument::parse(
+            "guide.md".into(),
+            "# First\n\nText\n\n## Second\n\nMore\n\n## Third\n\nEnd\n".to_owned(),
+        )
+        .unwrap();
+        let mut editor = EditorPane::empty(Pane::Left);
+        editor.markdown_active_page_id = Some("second".to_owned());
+
+        assert_eq!(
+            editor.markdown_active_source_line_range(&document),
+            Some((4, 7))
+        );
+
+        editor.prepare_markdown_source_entry(&document);
+        assert_eq!(
+            editor.pending_navigation,
+            Some(PendingEditorNavigation {
+                position: Position::new(4, 0),
+                focus_editor: true,
+            })
+        );
+    }
+}

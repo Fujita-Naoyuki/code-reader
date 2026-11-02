@@ -647,3 +647,29 @@ pub(super) fn start_syntax_highlighting(
 
     receiver
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::text::build_line_index;
+
+    #[test]
+    fn highlight_line_span_ranges_map_spans_to_lines() {
+        let source = "fn main() {\n    value\n}\n";
+        let line_index = build_line_index(source, source.len(), stable_hash(source));
+        let value_start = source.find("value").unwrap();
+        let spans = vec![
+            HighlightSpan::new(0..2, HighlightKind::Keyword),
+            HighlightSpan::new(
+                value_start..value_start + "value".len(),
+                HighlightKind::Function,
+            ),
+        ];
+
+        let ranges = build_highlight_line_span_ranges(&spans, &line_index);
+
+        assert_eq!(ranges[0], 0..1);
+        assert_eq!(ranges[1], 1..2);
+        assert_eq!(ranges[2], 2..2);
+    }
+}

@@ -789,3 +789,46 @@ pub(super) fn csv_navigation_target(
         None
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_undo_redo_restores_paste() {
+        let mut editor = EditorPane::empty(Pane::Left);
+        editor.path = Some(PathBuf::from("data.csv"));
+        editor.read_only = false;
+        editor.text = EditorTextBuffer::new("a,b\nc,d".to_owned());
+        editor.csv_mode = CsvMode::Grid;
+        editor.csv_selection = Some(CsvSelection::Columns { start: 1, end: 1 });
+
+        let cell_count = editor.paste_csv_text("x\ny").unwrap();
+
+        assert_eq!(cell_count, 2);
+        assert_eq!(editor.text.as_str(), "a,x\nc,y");
+        assert!(editor.apply_csv_undo());
+        assert_eq!(editor.text.as_str(), "a,b\nc,d");
+        assert!(editor.apply_csv_redo());
+        assert_eq!(editor.text.as_str(), "a,x\nc,y");
+    }
+
+    #[test]
+    fn csv_undo_redo_restores_delete_selection() {
+        let mut editor = EditorPane::empty(Pane::Left);
+        editor.path = Some(PathBuf::from("data.csv"));
+        editor.read_only = false;
+        editor.text = EditorTextBuffer::new("a,b\nc,d\ne,f".to_owned());
+        editor.csv_mode = CsvMode::Grid;
+        editor.csv_selection = Some(CsvSelection::Rows { start: 1, end: 1 });
+
+        let label = editor.delete_csv_selection().unwrap();
+
+        assert_eq!(label, "row 2");
+        assert_eq!(editor.text.as_str(), "a,b\ne,f");
+        assert!(editor.apply_csv_undo());
+        assert_eq!(editor.text.as_str(), "a,b\nc,d\ne,f");
+        assert!(editor.apply_csv_redo());
+        assert_eq!(editor.text.as_str(), "a,b\ne,f");
+    }
+}

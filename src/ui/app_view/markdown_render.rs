@@ -1025,3 +1025,28 @@ pub(super) fn markdown_blockquote_background(ui: &egui::Ui) -> Color32 {
         Color32::from_rgb(248, 249, 250)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn markdown_node_ui_id_stays_stable_across_reparses() {
+        let source = "| A | B |\n| - | - |\n| 1 | 2 |\n\n```rust\nfn main() {}\n```\n";
+        let ast_a = markdown::to_mdast(source, &ParseOptions::gfm()).unwrap();
+        let ast_b = markdown::to_mdast(source, &ParseOptions::gfm()).unwrap();
+        let children_a = ast_a.children().unwrap();
+        let children_b = ast_b.children().unwrap();
+
+        assert!(matches!(children_a.first(), Some(Node::Table(_))));
+        assert!(matches!(children_a.get(1), Some(Node::Code(_))));
+        assert_eq!(
+            markdown_node_ui_id(120, &children_a[0], "table"),
+            markdown_node_ui_id(120, &children_b[0], "table")
+        );
+        assert_eq!(
+            markdown_node_ui_id(120, &children_a[1], "code"),
+            markdown_node_ui_id(120, &children_b[1], "code")
+        );
+    }
+}
