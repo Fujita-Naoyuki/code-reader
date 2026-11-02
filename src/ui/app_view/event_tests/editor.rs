@@ -263,8 +263,8 @@ fn external_definitions_open_read_only() {
         Ok(vec![location(&external, 0, 7)]),
     );
     t.steps(3);
-    assert_eq!(t.app().left.path.as_deref(), Some(external.as_path()));
-    assert!(t.app().left.read_only);
+    assert_eq!(t.app().left.path(), Some(external.as_path()));
+    assert!(t.app().left.read_only());
     assert!(t.has_label("READ ONLY"));
     t.ctrl(egui::Key::S);
     t.assert_status("Focused file is read-only.");
@@ -289,10 +289,7 @@ fn opening_another_file_asks_about_unsaved_edits() {
     // Discard opens the other file and leaves the disk untouched.
     t.click_first("bin.dat.txt");
     t.click("Discard");
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("bin.dat.txt").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("bin.dat.txt").as_path()));
     assert!(!t.read("notes.txt").contains("unsaved"));
 
     // Save (Enter) writes the edits before switching.
@@ -302,10 +299,7 @@ fn opening_another_file_asks_about_unsaved_edits() {
     t.click_first("bin.dat.txt");
     t.key(egui::Key::Enter);
     assert!(t.read("notes.txt").starts_with("kept alpha"));
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("bin.dat.txt").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("bin.dat.txt").as_path()));
     assert!(!t.has_label("Unsaved Changes"));
 }
 

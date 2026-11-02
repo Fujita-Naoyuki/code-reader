@@ -13,7 +13,7 @@ impl EditorPane {
             self.title,
             tab_width
         ));
-        if let Some(path) = &self.path {
+        if let Some(path) = self.path() {
             lines.push(format!("{} path={}", self.pane.label(), path.display()));
         } else {
             lines.push(format!("{} path=none", self.pane.label()));

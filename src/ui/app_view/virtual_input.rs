@@ -26,7 +26,7 @@ impl EditorPane {
         text_edit_id: egui::Id,
         tab_width: usize,
     ) -> bool {
-        if self.read_only
+        if self.read_only()
             || !focused
             || !virtual_editor_can_handle_key(ui, text_edit_id)
             || self.source_search.open
@@ -378,7 +378,7 @@ impl EditorPane {
     }
 
     pub(super) fn apply_virtual_insert(&mut self, text: &str) -> bool {
-        if self.read_only {
+        if self.read_only() {
             return false;
         }
         let Some(range) = self.virtual_edit_range_for_insert() else {
@@ -416,7 +416,7 @@ impl EditorPane {
     }
 
     pub(super) fn apply_virtual_backspace(&mut self) -> bool {
-        if self.read_only {
+        if self.read_only() {
             return false;
         }
         if let Some(range) = self.virtual_selection_byte_range() {
@@ -437,7 +437,7 @@ impl EditorPane {
     }
 
     pub(super) fn apply_virtual_delete(&mut self) -> bool {
-        if self.read_only {
+        if self.read_only() {
             return false;
         }
         if let Some(range) = self.virtual_selection_byte_range() {
@@ -458,7 +458,7 @@ impl EditorPane {
     }
 
     pub(super) fn apply_virtual_undo(&mut self) -> bool {
-        if self.read_only {
+        if self.read_only() {
             return false;
         }
         let Some(entry) = self.virtual_editor.undo_stack.pop() else {
@@ -475,7 +475,7 @@ impl EditorPane {
     }
 
     pub(super) fn apply_virtual_redo(&mut self) -> bool {
-        if self.read_only {
+        if self.read_only() {
             return false;
         }
         let Some(entry) = self.virtual_editor.redo_stack.pop() else {
@@ -966,7 +966,10 @@ mod tests {
     fn virtual_insert_inserts_at_cursor() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("abcd".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 2));
 
         assert!(editor.apply_virtual_insert("X"));
@@ -979,7 +982,10 @@ mod tests {
     fn virtual_insert_replaces_selection() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("abcd".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 3));
         editor.virtual_editor.selection = Some(VirtualTextSelection {
             anchor: Position::new(0, 1),
@@ -996,7 +1002,10 @@ mod tests {
     fn virtual_backspace_removes_previous_character_across_lines() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("a\nb".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(1, 0));
 
         assert!(editor.apply_virtual_backspace());
@@ -1008,7 +1017,10 @@ mod tests {
     fn virtual_delete_removes_next_character_across_lines() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("a\nb".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 1));
 
         assert!(editor.apply_virtual_delete());
@@ -1020,7 +1032,10 @@ mod tests {
     fn virtual_insert_supports_multi_line_paste() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("ab".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 1));
 
         assert!(editor.apply_virtual_insert("x\ny"));
@@ -1032,7 +1047,10 @@ mod tests {
     fn virtual_edit_rejects_read_only_file() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("ab".to_owned());
-        editor.read_only = true;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: true,
+        };
         editor.cursor_position = Some(Position::new(0, 1));
 
         assert!(!editor.apply_virtual_insert("X"));
@@ -1045,7 +1063,10 @@ mod tests {
     fn virtual_undo_redo_restores_insert() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("ab".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 1));
 
         assert!(editor.apply_virtual_insert("X"));
@@ -1070,7 +1091,10 @@ mod tests {
     fn virtual_undo_redo_restores_selection_replacement() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("abcd".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 3));
         editor.virtual_editor.selection = Some(VirtualTextSelection {
             anchor: Position::new(0, 1),
@@ -1102,7 +1126,10 @@ mod tests {
     fn virtual_undo_restores_delete_and_backspace() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("a\nb".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(1, 0));
 
         assert!(editor.apply_virtual_backspace());
@@ -1123,7 +1150,10 @@ mod tests {
     fn virtual_new_edit_clears_redo_stack() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("ab".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 1));
 
         assert!(editor.apply_virtual_insert("X"));
@@ -1140,7 +1170,10 @@ mod tests {
     fn virtual_ime_preedit_does_not_change_text_until_commit() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("ab".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 1));
 
         assert_eq!(
@@ -1161,7 +1194,10 @@ mod tests {
     fn virtual_ime_commit_uses_edit_history() {
         let mut editor = EditorPane::empty(Pane::Left);
         editor.text = EditorTextBuffer::new("ab".to_owned());
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("test.txt"),
+            read_only: false,
+        };
         editor.cursor_position = Some(Position::new(0, 1));
         let command = editor.apply_virtual_ime_event(&egui::ImeEvent::Commit("日".to_owned()));
 

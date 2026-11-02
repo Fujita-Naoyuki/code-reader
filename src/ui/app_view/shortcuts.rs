@@ -189,9 +189,9 @@ impl CodeReaderApp {
             }
         } else if editor.is_csv() && editor.csv.mode == CsvMode::Grid {
             "CSV Grid"
-        } else if editor.diff_view.is_some() {
+        } else if editor.diff_view().is_some() {
             "Diff View"
-        } else if editor.git_history_view.is_some() {
+        } else if editor.git_history_view().is_some() {
             "Git History"
         } else {
             "Source"
@@ -275,7 +275,7 @@ impl CodeReaderApp {
                 ])
             };
         }
-        if editor.diff_view.is_some() || editor.git_history_view.is_some() {
+        if editor.diff_view().is_some() || editor.git_history_view().is_some() {
             return shortcuts(&[("PgUp/PgDn", "Scroll"), ("Alt+Left", "Back")]);
         }
 

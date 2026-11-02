@@ -343,7 +343,7 @@ fn csv_files_in_library_folders_are_read_only() {
     t.click_nth("Add", 0);
     t.click_first("ro.csv");
     t.steps(2);
-    assert!(t.app().left.read_only);
+    assert!(t.app().left.read_only());
     let g = grid(&t);
     t.click_at(g.row_header(0));
     t.paste_event("x");

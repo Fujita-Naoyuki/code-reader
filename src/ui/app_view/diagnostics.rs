@@ -301,7 +301,7 @@ impl CodeReaderApp {
 
         for pane in [Pane::Left, Pane::Right] {
             let editor = self.editor(pane);
-            let Some(path) = &editor.path else {
+            let Some(path) = editor.path() else {
                 lines.push(format!("  {} current_file_symbols: no file", pane.label()));
                 continue;
             };

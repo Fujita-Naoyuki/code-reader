@@ -58,7 +58,7 @@ fn new_workspace_creates_and_switches_to_a_session() {
     assert_eq!(t.app().app_state.sessions.len(), 2);
     assert!(t.has_label("Workspace 2"));
     assert!(t.has_label("fresh.txt"));
-    assert!(t.app().left.path.is_none());
+    assert!(t.app().left.path().is_none());
     assert!(!t.app().show_right_pane);
     assert!(t.app().recent_files.is_empty());
     assert!(t.saved_state().contains("Workspace 2"));
@@ -87,7 +87,7 @@ fn recent_workspaces_switches_session() {
     assert_eq!(t.app().app_state.current_session_id, "s2");
     assert!(!t.app().recent_workspaces_open);
     assert!(t.has_label("Second"));
-    assert!(t.app().left.path.as_ref().unwrap().ends_with("other.txt"));
+    assert!(t.app().left.path().unwrap().ends_with("other.txt"));
     assert_eq!(t.app().focused_pane, Pane::Left);
 }
 

@@ -32,10 +32,7 @@ fn ctrl_p_opens_search_everywhere_and_enter_opens_the_selected_file() {
     assert_eq!(t.app().search_overlay.query, "beta");
     t.key(egui::Key::Enter);
     assert!(!t.app().search_overlay.open);
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("beta.txt").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("beta.txt").as_path()));
     t.assert_status("Opened File: beta.txt");
     // Re-opening shows the file as recent history first.
     t.ctrl(egui::Key::P);
@@ -58,10 +55,7 @@ fn search_everywhere_finds_symbols_and_bookmarks() {
     t.type_text("compute_total");
     t.key(egui::Key::Enter);
     t.assert_status("Opened Symbol: compute_total");
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("src/lib.rs").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("src/lib.rs").as_path()));
 
     t.ctrl(egui::Key::P);
     t.type_text("alpha.txt:1");
@@ -135,7 +129,7 @@ fn search_everywhere_rows_can_be_hovered_and_clicked() {
     assert_eq!(t.app().search_overlay.selected_index, 1);
     t.click_at(second);
     assert!(!t.app().search_overlay.open);
-    assert!(t.app().left.path.is_some());
+    assert!(t.app().left.path().is_some());
 }
 
 #[test]
@@ -213,10 +207,7 @@ fn ctrl_shift_f_runs_workspace_search_and_opens_a_match() {
 
     t.click_containing("2: another needle");
     t.assert_status_containing("Opened search result:");
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("beta.txt").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("beta.txt").as_path()));
     assert_eq!(
         t.app().left.cursor_position,
         Some(crate::core::location::Position::new(1, 8))
@@ -298,10 +289,7 @@ fn sidebar_bookmarks_open_and_remove() {
 
     t.click("beta.txt:3");
     t.assert_status("Opened bookmark: beta.txt:3");
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("beta.txt").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("beta.txt").as_path()));
 
     // The newest bookmark is listed first.
     t.click_nth("×", 0);

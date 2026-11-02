@@ -205,8 +205,8 @@ impl CodeReaderApp {
     }
 
     pub(super) fn sync_open_files(&mut self) {
-        let left = self.left.path.clone();
-        let right = self.right.path.clone();
+        let left = self.left.path().map(Path::to_path_buf);
+        let right = self.right.path().map(Path::to_path_buf);
         let pane_positions = PanePositions {
             left: text_position_from_position(self.left.cursor_position),
             right: text_position_from_position(self.right.cursor_position),

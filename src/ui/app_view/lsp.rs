@@ -6,7 +6,7 @@ use super::*;
 impl CodeReaderApp {
     pub(super) fn go_to_definition(&mut self) {
         let editor = self.focused_editor();
-        let Some(path) = editor.path.clone() else {
+        let Some(path) = editor.path().map(Path::to_path_buf) else {
             self.status_message = "No file is open in the focused pane.".to_owned();
             return;
         };
@@ -58,11 +58,14 @@ impl CodeReaderApp {
             .into_iter()
             .filter_map(|pane| {
                 let editor = self.editor(pane);
-                let path = editor.path.as_ref()?;
+                let path = editor.path()?;
                 if !is_go_path(path) {
                     return None;
                 }
-                Some(Document::new(path.clone(), editor.text.as_str().to_owned()))
+                Some(Document::new(
+                    path.to_path_buf(),
+                    editor.text.as_str().to_owned(),
+                ))
             })
             .collect::<Vec<_>>();
 
@@ -424,11 +427,14 @@ impl CodeReaderApp {
             .into_iter()
             .filter_map(|pane| {
                 let editor = self.editor(pane);
-                let path = editor.path.as_ref()?;
+                let path = editor.path()?;
                 if !is_rust_path(path) || is_external_rust_path(path) {
                     return None;
                 }
-                Some(Document::new(path.clone(), editor.text.as_str().to_owned()))
+                Some(Document::new(
+                    path.to_path_buf(),
+                    editor.text.as_str().to_owned(),
+                ))
             })
             .collect::<Vec<_>>();
 
@@ -876,8 +882,7 @@ impl CodeReaderApp {
     pub(super) fn has_open_workspace_rust_document(&self) -> bool {
         [Pane::Left, Pane::Right].into_iter().any(|pane| {
             self.editor(pane)
-                .path
-                .as_deref()
+                .path()
                 .is_some_and(|path| is_rust_path(path) && !is_external_rust_path(path))
         })
     }

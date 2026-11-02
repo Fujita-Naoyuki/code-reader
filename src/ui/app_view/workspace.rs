@@ -217,10 +217,12 @@ impl CodeReaderApp {
 
     pub(super) fn remap_workspace_file_references(&mut self, old_path: &Path, new_path: &Path) {
         for editor in [&mut self.left, &mut self.right] {
-            if editor.path.as_deref() == Some(old_path) {
-                editor.path = Some(new_path.to_path_buf());
+            if editor.path() == Some(old_path) {
+                editor.content = EditorContent::File {
+                    path: new_path.to_path_buf(),
+                    read_only: is_external_path(new_path),
+                };
                 editor.title = file_title(new_path);
-                editor.read_only = is_external_path(new_path);
                 editor.mark_text_changed();
             }
         }
@@ -250,10 +252,10 @@ impl CodeReaderApp {
     }
 
     pub(super) fn remove_workspace_file_references(&mut self, path: &Path) {
-        if self.left.path.as_deref() == Some(path) {
+        if self.left.path() == Some(path) {
             self.left = EditorPane::empty(Pane::Left);
         }
-        if self.right.path.as_deref() == Some(path) {
+        if self.right.path() == Some(path) {
             self.right = EditorPane::empty(Pane::Right);
         }
         self.left_navigation_history.retain_path_not(path);

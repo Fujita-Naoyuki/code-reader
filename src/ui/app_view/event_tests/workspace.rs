@@ -61,7 +61,7 @@ fn new_file_is_created_in_selected_folder_and_opened() {
 
     let created = t.path("docs/intro.md");
     assert_eq!(t.read("docs/intro.md"), "# intro\n");
-    assert_eq!(t.app().left.path.as_deref(), Some(created.as_path()));
+    assert_eq!(t.app().left.path(), Some(created.as_path()));
     assert!(t.app().workspace_file_dialog.is_none());
     t.assert_status(&format!("Created file: {}", created.display()));
     assert!(t.app().file_tree.files.contains(&created));
@@ -151,7 +151,7 @@ fn f2_renames_the_selected_file_and_updates_open_editor() {
     let renamed = t.path("renamed.txt");
     assert!(renamed.exists());
     assert!(!t.path("notes.txt").exists());
-    assert_eq!(t.app().left.path.as_deref(), Some(renamed.as_path()));
+    assert_eq!(t.app().left.path(), Some(renamed.as_path()));
     assert_eq!(t.app().left.title, "renamed.txt");
     assert_eq!(t.app().recent_files.first(), Some(&renamed));
     let bookmarks = &t.app().current_session().unwrap().bookmarks;
@@ -237,7 +237,7 @@ fn delete_key_deletes_selected_file_after_confirmation() {
     t.key(egui::Key::Enter);
 
     assert!(!t.path("notes.txt").exists());
-    assert!(t.app().left.path.is_none());
+    assert!(t.app().left.path().is_none());
     assert!(t.app().recent_files.is_empty());
     assert!(t.app().current_session().unwrap().bookmarks.is_empty());
     assert!(t.app().selected_workspace_path.is_none());
@@ -251,14 +251,14 @@ fn delete_button_removes_file_shown_in_right_pane() {
     t.drag(from, egui::pos2(1250.0, 400.0));
     t.steps(2);
     assert_eq!(
-        t.app().right.path.as_deref(),
+        t.app().right.path(),
         Some(t.path("docs/guide.txt").as_path())
     );
     t.click_first("guide.txt");
     t.click_nth("Delete", 0);
     t.click_nth("Delete", 1);
     assert!(!t.path("docs/guide.txt").exists());
-    assert!(t.app().right.path.is_none());
+    assert!(t.app().right.path().is_none());
 }
 
 #[test]
@@ -354,10 +354,7 @@ fn dragging_a_file_onto_the_right_side_opens_it_in_the_right_pane() {
     t.steps(2);
     assert!(t.app().show_right_pane);
     assert_eq!(t.app().focused_pane, Pane::Right);
-    assert_eq!(
-        t.app().right.path.as_deref(),
-        Some(t.path("notes.txt").as_path())
-    );
+    assert_eq!(t.app().right.path(), Some(t.path("notes.txt").as_path()));
     assert!(t.app().dragging_workspace_file.is_none());
 }
 
@@ -370,7 +367,7 @@ fn dragging_onto_a_visible_right_pane_replaces_its_file() {
     t.drag(from, egui::pos2(1250.0, 400.0));
     t.steps(2);
     assert_eq!(
-        t.app().right.path.as_deref(),
+        t.app().right.path(),
         Some(t.path("docs/guide.txt").as_path())
     );
 }
@@ -382,7 +379,7 @@ fn dropping_a_dragged_file_elsewhere_cancels_the_drag() {
     t.drag(from, egui::pos2(600.0, 400.0));
     t.steps(2);
     assert!(t.app().dragging_workspace_file.is_none());
-    assert!(t.app().right.path.is_none());
+    assert!(t.app().right.path().is_none());
 }
 
 #[test]
@@ -452,12 +449,9 @@ fn session_restores_open_files_and_positions() {
         .file("docs/guide.txt", "guide line\n")
         .state(state)
         .build();
+    assert_eq!(t.app().left.path(), Some(t.path("notes.txt").as_path()));
     assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("notes.txt").as_path())
-    );
-    assert_eq!(
-        t.app().right.path.as_deref(),
+        t.app().right.path(),
         Some(t.path("docs/guide.txt").as_path())
     );
     assert_eq!(
@@ -484,9 +478,9 @@ fn files_under_external_library_folders_open_read_only() {
     t.platform.queue_folder_pick(&gomod);
     t.click_nth("Add", 0);
     t.click_first("lib.rs");
-    assert!(t.app().left.read_only);
+    assert!(t.app().left.read_only());
     t.click_first("dep.go");
-    assert!(t.app().left.read_only);
+    assert!(t.app().left.read_only());
     t.click("Report");
     assert!(
         t.platform

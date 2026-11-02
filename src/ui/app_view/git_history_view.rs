@@ -6,7 +6,7 @@ impl EditorPane {
     pub(super) fn git_history_ui(&mut self, ui: &mut egui::Ui, focused: bool) {
         let total_start = Instant::now();
         let scroll_before_y = self.scroll.y;
-        let Some(history_view) = self.git_history_view.clone() else {
+        let Some(history_view) = self.git_history_view().cloned() else {
             return;
         };
 
@@ -61,7 +61,7 @@ impl EditorPane {
             }
         });
         if let Some(commit) = clicked_commit {
-            if let Some(history_view) = self.git_history_view.as_mut() {
+            if let Some(history_view) = self.git_history_view_mut() {
                 history_view.selected_commit_hash = Some(commit.hash.clone());
             }
             self.pending_action = Some(EditorAction::OpenGitCommitDetails {

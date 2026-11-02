@@ -41,7 +41,7 @@ impl CodeReaderApp {
         self.remember_markdown_mode(pane);
         let mut next = EditorPane::from_path(pane, path);
         self.restore_markdown_mode(&mut next);
-        if let Some(path) = &next.path {
+        if let Some(path) = next.path() {
             if is_external_rust_path(path) {
                 // Rust definition navigation is handled by rust-analyzer. Indexing external
                 // Rust sources here can be very expensive and is no longer needed for F12.
@@ -51,7 +51,7 @@ impl CodeReaderApp {
             } else {
                 self.symbol_index.add_file(path, &self.language_registry);
             }
-            self.remember_recent_file(path.clone());
+            self.remember_recent_file(path.to_path_buf());
         }
         self.replace_editor(pane, next, true, None);
     }
@@ -69,7 +69,7 @@ impl CodeReaderApp {
     ) -> bool {
         let current = self.editor_mut(pane);
         if current.has_unsaved_changes() {
-            if current.path == next.path && !next.read_only {
+            if current.path() == next.path() && !next.read_only() {
                 next.adopt_unsaved_text(current);
             } else {
                 self.status_message = format!(
@@ -201,16 +201,16 @@ impl CodeReaderApp {
     pub(super) fn remember_markdown_mode(&mut self, pane: Pane) {
         let editor = self.editor(pane);
         if editor.is_markdown()
-            && let Some(path) = &editor.path
+            && let Some(path) = editor.path()
         {
             self.markdown_modes
-                .insert(path.clone(), editor.markdown.mode);
+                .insert(path.to_path_buf(), editor.markdown.mode);
         }
     }
 
     pub(super) fn restore_markdown_mode(&self, editor: &mut EditorPane) {
         if editor.is_markdown()
-            && let Some(path) = &editor.path
+            && let Some(path) = editor.path()
             && let Some(mode) = self.markdown_modes.get(path)
         {
             editor.markdown.mode = *mode;

@@ -36,7 +36,7 @@ impl EditorPane {
     }
 
     pub(super) fn reload_current_file_diff_context(&mut self, context_mode: GitDiffContextMode) {
-        let Some(diff_view) = self.diff_view.clone() else {
+        let Some(diff_view) = self.diff_view().cloned() else {
             return;
         };
         if !diff_view_can_switch_context(&diff_view) || diff_view.context_mode == context_mode {
@@ -65,7 +65,7 @@ impl EditorPane {
                 self.diff.display_cache = None;
                 self.diff.side_selection = None;
                 self.diff.unified_selection = None;
-                if let Some(diff_view) = &mut self.diff_view {
+                if let Some(diff_view) = self.diff_view_mut() {
                     diff_view.context_mode = context_mode;
                 }
                 let label = match context_mode {
@@ -86,12 +86,11 @@ impl EditorPane {
 
     pub(super) fn diff_view_ui(&mut self, ui: &mut egui::Ui, focused: bool) {
         let return_history = self
-            .diff_view
-            .as_ref()
+            .diff_view()
             .and_then(|diff_view| diff_view.return_history.clone());
         let mut back_to_history = false;
         let mut next_context_mode = None;
-        if let Some(diff_view) = &self.diff_view {
+        if let EditorContent::Diff(diff_view) = &self.content {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&diff_view.repository_name).small().weak());
                 ui.separator();
@@ -239,7 +238,7 @@ impl EditorPane {
                 viewport_width,
             );
         }
-        if self.diff_view.as_ref().is_some_and(|diff_view| {
+        if self.diff_view().is_some_and(|diff_view| {
             diff_view.file_path.is_some() && diff_view.scope != GitDiffScope::All
         }) {
             paint_diff_overview_markers(

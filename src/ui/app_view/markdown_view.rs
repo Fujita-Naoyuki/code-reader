@@ -5,7 +5,7 @@ use super::*;
 
 impl EditorPane {
     pub(super) fn is_markdown(&self) -> bool {
-        self.path.as_deref().is_some_and(is_markdown_path)
+        self.path().is_some_and(is_markdown_path)
     }
 
     pub(super) fn markdown_ui(
@@ -16,7 +16,7 @@ impl EditorPane {
         tab_width: usize,
         bookmark_lines: &[u32],
     ) {
-        let Some(path) = self.path.clone() else {
+        let Some(path) = self.path().map(Path::to_path_buf) else {
             ui.label(RichText::new("No Markdown file open.").weak());
             return;
         };

@@ -18,7 +18,7 @@ impl EditorPane {
     }
 
     pub(super) fn can_source_search(&self) -> bool {
-        self.path.is_some()
+        self.path().is_some()
             && !self.is_markdown()
             && (!self.is_csv() || self.csv.mode == CsvMode::Source)
     }
@@ -457,7 +457,7 @@ impl EditorPane {
                 }
                 self.cursor_position = Some(target_position);
             }
-            if focused && !self.read_only {
+            if focused && !self.read_only() {
                 self.handle_input_assistance(ui, text_edit_id, tab_width);
             }
 
@@ -481,6 +481,7 @@ impl EditorPane {
                     ui.fonts_mut(|fonts| fonts.layout_job(job))
                 };
 
+                let interactive = !self.read_only();
                 let output = TextEdit::multiline(&mut self.text)
                     .id(text_edit_id)
                     .font(TextStyle::Monospace)
@@ -489,7 +490,7 @@ impl EditorPane {
                     .desired_width(editor_width)
                     .desired_rows(TEXTEDIT_SOURCE_MIN_ROWS)
                     .layouter(&mut layouter)
-                    .interactive(!self.read_only)
+                    .interactive(interactive)
                     .show(ui);
 
                 if let Some(cursor_range) = output.cursor_range {
@@ -532,7 +533,7 @@ impl EditorPane {
                     bookmark_lines,
                     &output,
                     viewport_rect,
-                ) && let Some(path) = self.path.clone()
+                ) && let Some(path) = self.path().map(Path::to_path_buf)
                 {
                     self.pending_action = Some(EditorAction::ToggleBookmark { path, line });
                 }

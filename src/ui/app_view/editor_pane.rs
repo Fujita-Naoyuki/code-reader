@@ -4,19 +4,12 @@
 use super::*;
 
 impl EditorPane {
-    fn new(
-        pane: Pane,
-        title: String,
-        path: Option<PathBuf>,
-        text: String,
-        read_only: bool,
-    ) -> Self {
+    fn new(pane: Pane, title: String, content: EditorContent, text: String) -> Self {
         Self {
             pane,
             title,
-            path,
+            content,
             text: EditorTextBuffer::new(text),
-            read_only,
             cursor_position: None,
             target_position: None,
             pending_navigation: None,
@@ -28,8 +21,6 @@ impl EditorPane {
             diff: DiffPaneState::default(),
             caches: EditorCaches::default(),
             debug: EditorDebugState::default(),
-            diff_view: None,
-            git_history_view: None,
             pending_action: None,
             saved_fingerprint: (0, 0),
         }
@@ -37,7 +28,7 @@ impl EditorPane {
 
     pub(super) fn empty(pane: Pane) -> Self {
         let text = "Select a file from the workspace sidebar.".to_owned();
-        Self::new(pane, "No file open".to_owned(), None, text, true)
+        Self::new(pane, "No file open".to_owned(), EditorContent::Empty, text)
     }
 
     pub(super) fn from_path(pane: Pane, path: PathBuf) -> Self {
@@ -55,37 +46,80 @@ impl EditorPane {
                     .unwrap_or("<invalid>")
                     .to_owned();
                 let read_only = is_external_path(&path);
-                Self::new(pane, title, Some(path), text, read_only)
+                Self::new(pane, title, EditorContent::File { path, read_only }, text)
             }
             Err(error) => {
                 let text = format!("Failed to read file: {error}");
                 Self::new(
                     pane,
                     "Unable to open file".to_owned(),
-                    Some(path),
+                    EditorContent::Unreadable { path },
                     text,
-                    true,
                 )
             }
         }
     }
 
     pub(super) fn from_diff(pane: Pane, diff_view: GitDiffView, text: String) -> Self {
-        let mut editor = Self::new(pane, diff_view.title.clone(), None, text, true);
-        editor.diff_view = Some(diff_view);
-        editor
+        let title = diff_view.title.clone();
+        Self::new(pane, title, EditorContent::Diff(Box::new(diff_view)), text)
     }
 
     pub(super) fn from_git_history(pane: Pane, history_view: GitHistoryView) -> Self {
         let title = format!("{}: Git Graph", history_view.repository_name);
-        let mut editor = Self::new(pane, title, None, String::new(), true);
-        editor.git_history_view = Some(history_view);
-        editor
+        let content = EditorContent::GitHistory(Box::new(history_view));
+        Self::new(pane, title, content, String::new())
+    }
+
+    /// The file on screen, readable or not. Diffs and history have none.
+    pub(super) fn path(&self) -> Option<&Path> {
+        match &self.content {
+            EditorContent::File { path, .. } | EditorContent::Unreadable { path } => Some(path),
+            EditorContent::Empty | EditorContent::Diff(_) | EditorContent::GitHistory(_) => None,
+        }
+    }
+
+    pub(super) fn read_only(&self) -> bool {
+        !matches!(
+            self.content,
+            EditorContent::File {
+                read_only: false,
+                ..
+            }
+        )
+    }
+
+    pub(super) fn diff_view(&self) -> Option<&GitDiffView> {
+        match &self.content {
+            EditorContent::Diff(view) => Some(view),
+            _ => None,
+        }
+    }
+
+    pub(super) fn diff_view_mut(&mut self) -> Option<&mut GitDiffView> {
+        match &mut self.content {
+            EditorContent::Diff(view) => Some(view),
+            _ => None,
+        }
+    }
+
+    pub(super) fn git_history_view(&self) -> Option<&GitHistoryView> {
+        match &self.content {
+            EditorContent::GitHistory(view) => Some(view),
+            _ => None,
+        }
+    }
+
+    pub(super) fn git_history_view_mut(&mut self) -> Option<&mut GitHistoryView> {
+        match &mut self.content {
+            EditorContent::GitHistory(view) => Some(view),
+            _ => None,
+        }
     }
 
     pub(super) fn navigation_point(&self) -> Option<NavigationPoint> {
         Some(NavigationPoint {
-            path: self.path.clone()?,
+            path: self.path().map(Path::to_path_buf)?,
             position: self.cursor_position.unwrap_or(Position::new(0, 0)),
         })
     }
@@ -100,11 +134,7 @@ impl EditorPane {
 
     /// An editable file whose text differs from what was last read or saved.
     pub(super) fn has_unsaved_changes(&self) -> bool {
-        self.path.is_some()
-            && !self.read_only
-            && self.diff_view.is_none()
-            && self.git_history_view.is_none()
-            && self.text_fingerprint() != self.saved_fingerprint
+        !self.read_only() && self.text_fingerprint() != self.saved_fingerprint
     }
 
     /// Takes over `other`'s unsaved text when `self` is a fresh copy of the same file, so
@@ -134,11 +164,11 @@ impl EditorPane {
     }
 
     pub(super) fn save_to_disk(&mut self) -> Result<PathBuf, String> {
-        if self.read_only {
+        if self.read_only() {
             return Err("Focused file is read-only.".to_owned());
         }
 
-        let Some(path) = self.path.clone() else {
+        let Some(path) = self.path().map(Path::to_path_buf) else {
             return Err("No file is open in the focused pane.".to_owned());
         };
 
@@ -193,7 +223,7 @@ impl EditorPane {
                     },
                 );
 
-                if self.read_only {
+                if self.read_only() {
                     ui.label(
                         RichText::new("READ ONLY")
                             .small()
@@ -206,12 +236,12 @@ impl EditorPane {
 
             ui.separator();
 
-            if self.diff_view.is_some() {
+            if self.diff_view().is_some() {
                 self.diff_view_ui(ui, focused);
                 return;
             }
 
-            if self.git_history_view.is_some() {
+            if self.git_history_view().is_some() {
                 self.git_history_ui(ui, focused);
                 return;
             }
@@ -239,12 +269,27 @@ pub(super) struct PendingEditorNavigation {
     pub(super) focus_editor: bool,
 }
 
+/// What a pane shows. `EditorPane::text` holds the file's text, the diff text, or the message
+/// shown for `Empty` and `Unreadable`.
+pub(super) enum EditorContent {
+    Empty,
+    File {
+        path: PathBuf,
+        read_only: bool,
+    },
+    /// Reading the file failed; the text is the error message.
+    Unreadable {
+        path: PathBuf,
+    },
+    Diff(Box<GitDiffView>),
+    GitHistory(Box<GitHistoryView>),
+}
+
 pub(super) struct EditorPane {
     pub(super) pane: Pane,
     pub(super) title: String,
-    pub(super) path: Option<PathBuf>,
+    pub(super) content: EditorContent,
     pub(super) text: EditorTextBuffer,
-    pub(super) read_only: bool,
     pub(super) cursor_position: Option<Position>,
     pub(super) target_position: Option<Position>,
     pub(super) pending_navigation: Option<PendingEditorNavigation>,
@@ -256,8 +301,6 @@ pub(super) struct EditorPane {
     pub(super) diff: DiffPaneState,
     pub(super) caches: EditorCaches,
     pub(super) debug: EditorDebugState,
-    pub(super) diff_view: Option<GitDiffView>,
-    pub(super) git_history_view: Option<GitHistoryView>,
     pub(super) pending_action: Option<EditorAction>,
     /// Text fingerprint when the file was last read or saved; see `has_unsaved_changes`.
     pub(super) saved_fingerprint: (usize, u64),

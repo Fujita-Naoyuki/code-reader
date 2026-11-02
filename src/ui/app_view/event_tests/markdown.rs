@@ -294,10 +294,7 @@ fn local_markdown_links_open_with_fragments() {
     let mut t = md_app();
     t.click_text_label("guide link");
     t.assert_status_containing("Opened Markdown link:");
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("guide.md").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("guide.md").as_path()));
     assert_eq!(
         t.app().left.markdown.active_page_id.as_deref(),
         Some("target-section")
@@ -305,10 +302,7 @@ fn local_markdown_links_open_with_fragments() {
     assert_eq!(t.app().left.cursor_position, Some(Position::new(4, 0)));
 
     t.alt(egui::Key::ArrowLeft);
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("doc.md").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("doc.md").as_path()));
 
     t.click_text_label("bad frag");
     t.assert_status("Fragment not found: #nope");

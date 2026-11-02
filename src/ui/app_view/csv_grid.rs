@@ -72,7 +72,7 @@ impl EditorPane {
     }
 
     pub(super) fn is_csv(&self) -> bool {
-        self.path.as_deref().is_some_and(is_csv_path)
+        self.path().is_some_and(is_csv_path)
     }
 
     pub(super) fn is_csv_grid(&self) -> bool {
@@ -93,7 +93,7 @@ impl EditorPane {
     }
 
     pub(super) fn paste_csv_text(&mut self, text: &str) -> Result<usize, String> {
-        if self.read_only {
+        if self.read_only() {
             return Err("Focused file is read-only.".to_owned());
         }
 
@@ -114,7 +114,7 @@ impl EditorPane {
     }
 
     pub(super) fn delete_csv_selection(&mut self) -> Result<String, String> {
-        if self.read_only {
+        if self.read_only() {
             return Err("Focused file is read-only.".to_owned());
         }
 
@@ -382,7 +382,7 @@ impl EditorPane {
                                                 .id(id)
                                                 .font(TextStyle::Monospace)
                                                 .desired_width(edit_rect.width())
-                                                .interactive(!self.read_only)
+                                                .interactive(!self.read_only())
                                                 .show(ui)
                                         },
                                     )
@@ -817,8 +817,10 @@ mod tests {
     #[test]
     fn csv_undo_redo_restores_paste() {
         let mut editor = EditorPane::empty(Pane::Left);
-        editor.path = Some(PathBuf::from("data.csv"));
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("data.csv"),
+            read_only: false,
+        };
         editor.text = EditorTextBuffer::new("a,b\nc,d".to_owned());
         editor.csv.mode = CsvMode::Grid;
         editor.csv.selection = Some(CsvSelection::Columns { start: 1, end: 1 });
@@ -836,8 +838,10 @@ mod tests {
     #[test]
     fn csv_undo_redo_restores_delete_selection() {
         let mut editor = EditorPane::empty(Pane::Left);
-        editor.path = Some(PathBuf::from("data.csv"));
-        editor.read_only = false;
+        editor.content = EditorContent::File {
+            path: PathBuf::from("data.csv"),
+            read_only: false,
+        };
         editor.text = EditorTextBuffer::new("a,b\nc,d\ne,f".to_owned());
         editor.csv.mode = CsvMode::Grid;
         editor.csv.selection = Some(CsvSelection::Rows { start: 1, end: 1 });

@@ -437,7 +437,7 @@ fn file_diff_views_switch_layout_and_context() {
     let path_cell = changed_row_path(&t, 0);
     t.click_at(path_cell);
     t.assert_status("Opened diff: workspace | tracked.txt");
-    assert!(t.app().left.diff_view.is_some());
+    assert!(t.app().left.diff_view().is_some());
     assert!(t.has_label("tracked.txt: Diff"));
     assert!(t.has_label("Worktree"));
 
@@ -445,7 +445,7 @@ fn file_diff_views_switch_layout_and_context() {
     t.click("Full File");
     t.assert_status("Diff context: Full File | tracked.txt");
     assert_eq!(
-        t.app().left.diff_view.as_ref().unwrap().context_mode,
+        t.app().left.diff_view().unwrap().context_mode,
         GitDiffContextMode::FullFile
     );
     t.click_nth("Changes", 1);
@@ -494,10 +494,7 @@ fn untracked_file_diff_and_all_diffs() {
         let cell = changed_row_path(&t, index);
         t.click_at(cell);
     }
-    assert!(
-        t.app().left.diff_view.as_ref().unwrap().untracked
-            || t.saw_status_containing("Opened diff")
-    );
+    assert!(t.app().left.diff_view().unwrap().untracked || t.saw_status_containing("Opened diff"));
 }
 
 #[test]
@@ -536,7 +533,7 @@ fn history_commit_details_and_commit_diff() {
     t.assert_status("Opened Git graph: workspace");
     assert!(t.has_label("workspace: Git Graph"));
     assert!(t.has_label("2 commits"));
-    assert!(t.app().left.git_history_view.is_some());
+    assert!(t.app().left.git_history_view().is_some());
 
     // Click the newest commit row (first row below the header).
     let header = t.label_rect("2 commits");
@@ -558,7 +555,7 @@ fn history_commit_details_and_commit_diff() {
     assert!(t.has_label("Back to History"));
 
     t.click("Back to History");
-    assert!(t.app().left.git_history_view.is_some());
+    assert!(t.app().left.git_history_view().is_some());
 
     // Root commit details: no parents.
     let header = t.label_rect("2 commits");
@@ -768,7 +765,7 @@ fn history_of_a_detached_head_and_an_octopus_merge() {
     t.click("History");
     assert!(t.has_label("5 commits"));
     assert!(
-        t.app().left.git_history_view.as_ref().unwrap().rows[0]
+        t.app().left.git_history_view().unwrap().rows[0]
             .graph
             .starts_with("*-.")
     );

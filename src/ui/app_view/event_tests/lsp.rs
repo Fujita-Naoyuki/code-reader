@@ -135,10 +135,7 @@ fn definition_in_another_file_opens_it_and_reveals_it_in_the_tree() {
     let request = f12_on_helper(&mut t);
     let target = location(&t.path("src/other.rs"), 1, 7);
     respond(&mut t, RUST, &request, Ok(vec![target]));
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("src/other.rs").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("src/other.rs").as_path()));
     assert_eq!(
         t.app().selected_workspace_path,
         Some(t.path("src/other.rs"))
@@ -147,10 +144,7 @@ fn definition_in_another_file_opens_it_and_reveals_it_in_the_tree() {
     assert!(t.has_label_containing("main.rs:6"));
     t.click_containing("main.rs:6");
     t.assert_status_containing("Opened navigation history: main.rs:6");
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("src/main.rs").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("src/main.rs").as_path()));
 }
 
 #[test]
@@ -212,7 +206,7 @@ fn definition_at_the_cursor_falls_back_to_references_overlay() {
     assert!(t.has_label("1 references in 1 files"));
     t.key(egui::Key::Enter);
     assert!(!t.app().references_overlay.open);
-    assert_eq!(t.app().left.path.as_deref(), Some(other.as_path()));
+    assert_eq!(t.app().left.path(), Some(other.as_path()));
     assert_eq!(t.app().left.cursor_position, Some(Position::new(1, 7)));
 }
 
@@ -760,8 +754,8 @@ fn jumping_into_external_go_modules_indexes_them() {
     std::fs::write(&external, "package dep\n\nfunc Helper() {}\n").unwrap();
     let request = go_f12(&mut t);
     respond(&mut t, GO, &request, Ok(vec![location(&external, 2, 5)]));
-    assert_eq!(t.app().left.path.as_deref(), Some(external.as_path()));
-    assert!(t.app().left.read_only);
+    assert_eq!(t.app().left.path(), Some(external.as_path()));
+    assert!(t.app().left.read_only());
     t.click("Report");
     let report = t.platform.clipboard_text().unwrap();
     assert!(report.contains("external="), "{report}");

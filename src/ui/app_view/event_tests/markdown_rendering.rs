@@ -211,10 +211,7 @@ fn percent_encoded_and_absolute_link_targets() {
     t.click_first("abs.md");
     t.steps(3);
     t.click_text_label("back home");
-    assert_eq!(
-        t.app().left.path.as_deref(),
-        Some(t.path("inline.md").as_path())
-    );
+    assert_eq!(t.app().left.path(), Some(t.path("inline.md").as_path()));
 }
 
 #[test]

@@ -815,8 +815,8 @@ impl eframe::App for CodeReaderApp {
             .show_inside(ui, |ui| {
                 let editor_can_take_focus = !self.editing_session_name;
                 let left_navigation_history = self.left_navigation_history.back.clone();
-                let left_bookmark_lines = self.bookmark_lines_for_path(self.left.path.as_deref());
-                let right_bookmark_lines = self.bookmark_lines_for_path(self.right.path.as_deref());
+                let left_bookmark_lines = self.bookmark_lines_for_path(self.left.path());
+                let right_bookmark_lines = self.bookmark_lines_for_path(self.right.path());
                 let dragging_workspace_file = self.dragging_workspace_file.clone();
                 let mut right_drop = None;
 

@@ -81,11 +81,11 @@ impl EditorPane {
                 self.cursor_position = Some(target_position);
             }
 
-            if focused && !self.read_only {
+            if focused && !self.read_only() {
                 self.handle_input_assistance(ui, text_edit_id, tab_width);
             }
             if focused
-                && !self.read_only
+                && !self.read_only()
                 && !self.markdown.search.open
                 && !self.source_search.open
                 && !ui.memory(|memory| memory.has_focus(text_edit_id))
@@ -102,6 +102,7 @@ impl EditorPane {
                     ui.fonts_mut(|fonts| fonts.layout_job(job))
                 };
 
+                let interactive = !self.read_only();
                 let output = TextEdit::multiline(&mut self.text)
                     .id(text_edit_id)
                     .font(TextStyle::Monospace)
@@ -110,7 +111,7 @@ impl EditorPane {
                     .desired_width(editor_width)
                     .desired_rows(TEXTEDIT_SOURCE_MIN_ROWS)
                     .layouter(&mut layouter)
-                    .interactive(!self.read_only)
+                    .interactive(interactive)
                     .show(ui);
 
                 if let Some(cursor_range) = output.cursor_range {
@@ -147,7 +148,7 @@ impl EditorPane {
                     bookmark_lines,
                     &output,
                     viewport_rect,
-                ) && let Some(path) = self.path.clone()
+                ) && let Some(path) = self.path().map(Path::to_path_buf)
                 {
                     self.pending_action = Some(EditorAction::ToggleBookmark { path, line });
                 }

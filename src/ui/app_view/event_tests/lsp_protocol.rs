@@ -85,7 +85,7 @@ fn single_object_and_empty_results() {
     t.platform.scripted(RUST).script.lock().unwrap().definition = lsp_location(&other, 0, 7);
     press_f12_on_helper(&mut t);
     wait(&mut t, "Jumped to definition of `helper`.");
-    assert_eq!(t.app().left.path.as_deref(), Some(other.as_path()));
+    assert_eq!(t.app().left.path(), Some(other.as_path()));
 
     t.alt(egui::Key::ArrowLeft);
     t.platform.scripted(RUST).script.lock().unwrap().definition = json!("not a location");

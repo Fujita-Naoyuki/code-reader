@@ -13,7 +13,7 @@ impl EditorPane {
     ) -> Rc<Vec<HighlightSpan>> {
         self.poll_syntax_highlight(ui);
 
-        let path = self.path.clone();
+        let path = self.path().map(Path::to_path_buf);
         if let Some(cache) = &self.caches.syntax_highlight
             && cache.path == path
             && cache.source_len == source_len
@@ -90,7 +90,7 @@ impl EditorPane {
         match receiver.try_recv() {
             Ok(result) => {
                 let (current_source_len, current_source_hash) = self.text_fingerprint();
-                let current_path = self.path.clone();
+                let current_path = self.path().map(Path::to_path_buf);
                 let pending_matches =
                     self.caches
                         .syntax_highlight_pending
@@ -138,7 +138,7 @@ impl EditorPane {
             .syntax_highlight
             .as_ref()
             .filter(|cache| {
-                cache.path == self.path
+                cache.path.as_deref() == self.path()
                     && cache.source_len == source_len
                     && cache.source_hash == source_hash
             })

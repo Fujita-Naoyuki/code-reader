@@ -454,7 +454,7 @@ fn read_only_large_files_ignore_edits() {
     t.click_nth("Add", 0);
     t.click_first("big.txt");
     t.steps(2);
-    assert!(t.app().left.read_only);
+    assert!(t.app().left.read_only());
     t.click_virtual(0, 0);
     t.type_text("nope");
     t.key(egui::Key::Backspace);

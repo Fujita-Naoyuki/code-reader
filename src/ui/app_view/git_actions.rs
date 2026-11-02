@@ -125,14 +125,18 @@ impl CodeReaderApp {
     }
 
     pub(super) fn open_git_commit_diff(&mut self, details: &GitCommitDetailsWindow) {
-        let return_history = self.focused_editor().git_history_view.clone().map(|view| {
-            let editor = self.focused_editor();
-            GitHistoryReturnState {
-                view,
-                scroll_y: editor.scroll.y,
-                scroll_x: editor.scroll.x,
-            }
-        });
+        let return_history = self
+            .focused_editor()
+            .git_history_view()
+            .cloned()
+            .map(|view| {
+                let editor = self.focused_editor();
+                GitHistoryReturnState {
+                    view,
+                    scroll_y: editor.scroll.y,
+                    scroll_x: editor.scroll.x,
+                }
+            });
         match git_commit_diff_text(&details.root, &details.commit.hash) {
             Ok(text) => {
                 let short_hash = details.commit.short_hash.clone();

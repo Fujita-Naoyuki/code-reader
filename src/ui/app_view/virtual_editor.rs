@@ -502,7 +502,7 @@ impl EditorPane {
                 );
             }
             if bookmark_response.clicked()
-                && let Some(path) = self.path.clone()
+                && let Some(path) = self.path().map(Path::to_path_buf)
             {
                 self.pending_action = Some(EditorAction::ToggleBookmark {
                     path,
@@ -568,7 +568,7 @@ impl EditorPane {
             content_rect,
         );
         if focused
-            && !self.read_only
+            && !self.read_only()
             && virtual_editor_can_handle_key(ui, text_edit_id)
             && let Some(cursor_rect) = cursor_rect
         {
@@ -583,7 +583,7 @@ impl EditorPane {
                 });
             });
         }
-        if response.hovered() && !self.read_only {
+        if response.hovered() && !self.read_only() {
             ui.output_mut(|output| {
                 output.mutable_text_under_cursor = true;
             });

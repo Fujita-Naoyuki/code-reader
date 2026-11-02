@@ -26,7 +26,7 @@ impl CodeReaderApp {
             focus_editor: true,
         });
         next.cursor_position = Some(point.position);
-        let opened_path = next.path.clone();
+        let opened_path = next.path().map(Path::to_path_buf);
 
         if let Some(path) = opened_path.as_deref() {
             if is_external_rust_path(path) {
