@@ -229,33 +229,9 @@ impl EditorPane {
         let viewport_size = ui.available_size();
         let viewport_size = egui::vec2(viewport_size.x.max(1.0), viewport_size.y.max(1.0));
         let (viewport_rect, _) = ui.allocate_exact_size(viewport_size, egui::Sense::hover());
-        // The viewport is the focusable widget behind `text_edit_id`: keys reach the editor
-        // only while it holds focus, and the lock keeps Tab / arrows from moving focus away.
+        // The viewport is the focusable widget behind `text_edit_id`.
         let response = ui.interact(viewport_rect, text_edit_id, egui::Sense::click_and_drag());
-        if response.has_focus() {
-            let pressed_outside = ui.input(|input| {
-                input.pointer.any_pressed()
-                    && input
-                        .pointer
-                        .interact_pos()
-                        .is_some_and(|position| !viewport_rect.contains(position))
-            });
-            if pressed_outside {
-                response.surrender_focus();
-            } else {
-                ui.memory_mut(|memory| {
-                    memory.set_focus_lock_filter(
-                        text_edit_id,
-                        egui::EventFilter {
-                            tab: true,
-                            horizontal_arrows: true,
-                            vertical_arrows: true,
-                            escape: false,
-                        },
-                    );
-                });
-            }
-        }
+        lock_virtual_editor_focus(ui, &response, viewport_rect, text_edit_id);
         let scrollbar_layout = virtual_scrollbar_layout(viewport_rect, total_width, total_height);
         let content_rect = scrollbar_layout.content_rect;
         let max_scroll_y = (total_height - content_rect.height()).max(0.0);
@@ -263,41 +239,7 @@ impl EditorPane {
         self.scroll.y = self.scroll.y.clamp(0.0, max_scroll_y);
         self.scroll.x = self.scroll.x.clamp(0.0, max_scroll_x);
 
-        if response.hovered() {
-            let (immediate_scroll, smooth_scroll, shift) = ui.input(|input| {
-                (
-                    immediate_wheel_scroll_delta(&input.raw.events, content_rect.height()),
-                    input.smooth_scroll_delta(),
-                    input.modifiers.shift,
-                )
-            });
-            // Wheel notches are applied at once; egui smooths the same notch over the next
-            // frames, so that later smoothed delta is skipped instead of scrolling twice.
-            let scroll_delta = match immediate_scroll {
-                Some(raw) => {
-                    let raw = if shift {
-                        egui::vec2(raw.x + raw.y, 0.0)
-                    } else {
-                        raw
-                    };
-                    self.virtual_editor.wheel_lead += raw - smooth_scroll;
-                    raw
-                }
-                None => consume_wheel_lead(&mut self.virtual_editor.wheel_lead, smooth_scroll),
-            };
-            if scroll_delta != egui::Vec2::ZERO {
-                self.scroll.y = (self.scroll.y - scroll_delta.y).clamp(0.0, max_scroll_y);
-                self.scroll.x = (self.scroll.x - scroll_delta.x).clamp(0.0, max_scroll_x);
-            }
-            if smooth_scroll != egui::Vec2::ZERO {
-                ui.input_mut(|input| {
-                    input.smooth_scroll_delta = egui::Vec2::ZERO;
-                });
-                ui.ctx().request_repaint();
-            }
-        } else {
-            self.virtual_editor.wheel_lead = egui::Vec2::ZERO;
-        }
+        self.apply_virtual_wheel(ui, &response, content_rect, max_scroll_x, max_scroll_y);
 
         let visible_start = (self.scroll.y / row_height).floor().max(0.0) as usize;
         let visible_end = (((self.scroll.y + content_rect.height()) / row_height).ceil() as usize
@@ -306,8 +248,6 @@ impl EditorPane {
         let visible_range = visible_start.min(line_count)..visible_end;
         let visible_rows = visible_range.end.saturating_sub(visible_range.start);
         let painter = ui.painter_at(viewport_rect);
-        let inactive_color = ui.visuals().weak_text_color();
-        let active_color = ui.visuals().text_color();
         let char_width = editor_char_width(ui);
         let content_left = content_rect.left();
         let text_clip_left = content_left + gutter_width + 1.0;
@@ -354,87 +294,16 @@ impl EditorPane {
             text_left: content_left + gutter_width + 8.0 - self.scroll.x,
             ..viewport
         };
-        let text_left = viewport.text_left;
-        if let Some((anchor, head)) =
-            virtual_editor_drag_selection(ui, &response, line_index.as_ref(), &self.text, &viewport)
-        {
-            self.virtual_editor.selection = Some(VirtualTextSelection { anchor, head });
-            self.cursor_position = Some(head);
-            self.virtual_editor.ime_preedit = None;
-            current_line = Some(head.line);
-            self.target_position = None;
-            response.request_focus();
-            ui.memory_mut(|memory| memory.request_focus(text_edit_id));
-            ui.ctx().request_repaint();
-        }
-
-        let click_input = virtual_editor_click_input(
+        if let Some(line) = self.handle_virtual_pointer(
             ui,
             &response,
             text_edit_id,
             focused,
+            line_index.as_ref(),
             &viewport,
-            line_count,
             visible_range.clone(),
-        );
-        let click_event_index = click_input
-            .event
-            .map(|event| self.debug.virtual_click.push_event(event));
-        if let Some(pointer_pos) = click_input.position {
-            let line = ((pointer_pos.y - content_rect.top() + self.scroll.y) / row_height)
-                .floor()
-                .max(0.0) as usize;
-            let line = line.min(line_count.saturating_sub(1));
-            if let Some(line_info) = line_index.line(line) {
-                let line_text = self.text.line_text_or_empty(line_info);
-                let character = virtual_click_byte_column(
-                    Some(ui),
-                    line_text,
-                    pointer_pos.x,
-                    text_left,
-                    text_clip_rect.left(),
-                    char_width,
-                );
-                let position = Position::new(line as u32, character);
-                if click_input.double_clicked {
-                    if let Some(selection) =
-                        virtual_word_selection_at_position(line_text, line as u32, character)
-                    {
-                        self.cursor_position = Some(selection.head);
-                        current_line = Some(selection.head.line);
-                        self.virtual_editor.selection = Some(selection);
-                    } else {
-                        self.cursor_position = Some(position);
-                        current_line = Some(position.line);
-                        self.virtual_editor.selection = None;
-                    }
-                } else {
-                    self.cursor_position = Some(position);
-                    current_line = Some(position.line);
-                    self.virtual_editor.selection = None;
-                }
-                self.virtual_editor.ime_preedit = None;
-                self.target_position = None;
-                if let Some(event_index) = click_event_index {
-                    self.debug.virtual_click.last_accept = Some(VirtualClickAcceptDebug {
-                        event_index,
-                        pointer_pos,
-                        line,
-                        character,
-                        cursor_position: position,
-                        text_left,
-                        text_clip_left: text_clip_rect.left(),
-                        x_offset: virtual_click_x_offset(
-                            pointer_pos.x,
-                            text_left,
-                            text_clip_rect.left(),
-                        ),
-                    });
-                }
-                response.request_focus();
-                ui.memory_mut(|memory| memory.request_focus(text_edit_id));
-                ui.ctx().request_repaint();
-            }
+        ) {
+            current_line = Some(line);
         }
 
         self.debug.render = Some(capture_virtual_editor_render_debug(
@@ -510,78 +379,26 @@ impl EditorPane {
             let Some(line_info) = line_index.line(line_number) else {
                 continue;
             };
-            let top = content_rect.top() + line_number as f32 * row_height - self.scroll.y;
-            let is_current_line = current_line == Some(line_number as u32);
-            let bookmark_rect = egui::Rect::from_min_max(
-                egui::pos2(content_left, top),
-                egui::pos2(
-                    (content_left + BOOKMARK_GUTTER_WIDTH).min(content_rect.right()),
-                    top + row_height,
-                ),
-            );
-            let bookmark_response = ui.interact(
-                bookmark_rect,
-                text_edit_id.with(("virtual_bookmark_gutter", line_number)),
-                egui::Sense::click(),
-            );
-            let bookmarked = bookmark_lines.contains(&(line_number as u32));
-            if bookmarked || bookmark_response.hovered() || is_current_line {
-                painter.text(
-                    bookmark_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    if bookmarked { "★" } else { "☆" },
-                    bookmark_gutter_font_id(row_height),
-                    if bookmarked {
-                        ui.visuals().selection.bg_fill
-                    } else {
-                        inactive_color
-                    },
-                );
-            }
-            if bookmark_response.clicked()
-                && let Some(path) = self.path().map(Path::to_path_buf)
-            {
-                self.pending_action = Some(EditorAction::ToggleBookmark {
-                    path,
-                    line: line_number as u32,
-                });
-            }
-            let line_number_galley = self.cached_virtual_line_number_galley(
-                ui,
-                line_number,
-                line_count,
-                is_current_line,
-                (inactive_color, active_color),
-                Some(&mut frame_counters),
-            );
-            painter.galley(
-                egui::pos2(
-                    content_left + gutter_width - 8.0 - line_number_galley.size().x,
-                    top,
-                ),
-                line_number_galley,
-                if is_current_line {
-                    active_color
-                } else {
-                    inactive_color
-                },
-            );
-
-            let galley = self.cached_virtual_line_galley(
+            self.paint_virtual_line(
                 ui,
                 line_number,
                 line_info,
-                &line_style,
-                highlight_line_span_ranges
-                    .get(line_number)
-                    .cloned()
-                    .unwrap_or(0..0),
-                Some(&mut frame_counters),
-            );
-            text_painter.galley(
-                egui::pos2(text_left, top),
-                galley,
-                ui.visuals().text_color(),
+                &VirtualLinePaint {
+                    painter: &painter,
+                    text_painter: &text_painter,
+                    viewport: &viewport,
+                    gutter_width,
+                    line_count,
+                    is_current_line: current_line == Some(line_number as u32),
+                    bookmarked: bookmark_lines.contains(&(line_number as u32)),
+                    text_edit_id,
+                    style: &line_style,
+                    highlight_line_span_range: highlight_line_span_ranges
+                        .get(line_number)
+                        .cloned()
+                        .unwrap_or(0..0),
+                },
+                &mut frame_counters,
             );
         }
 
@@ -593,27 +410,7 @@ impl EditorPane {
             visible_start..visible_end,
             &viewport,
         );
-        if focused
-            && !self.read_only()
-            && virtual_editor_can_handle_key(ui, text_edit_id)
-            && let Some(cursor_rect) = cursor_rect
-        {
-            let to_global = ui
-                .ctx()
-                .layer_transform_to_global(ui.layer_id())
-                .unwrap_or_default();
-            ui.output_mut(|output| {
-                output.ime = Some(egui::output::IMEOutput {
-                    rect: to_global * viewport_rect,
-                    cursor_rect: to_global * cursor_rect,
-                });
-            });
-        }
-        if response.hovered() && !self.read_only() {
-            ui.output_mut(|output| {
-                output.mutable_text_under_cursor = true;
-            });
-        }
+        self.publish_virtual_ime_area(ui, &response, focused, text_edit_id, cursor_rect);
 
         paint_virtual_ime_preedit(
             ui,
@@ -680,6 +477,337 @@ impl EditorPane {
                 .map(|cache| cache.entries.len())
                 .unwrap_or(0),
         });
+    }
+
+    /// Scrolls for this frame's wheel input while the pointer is over the editor.
+    fn apply_virtual_wheel(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        content_rect: egui::Rect,
+        max_scroll_x: f32,
+        max_scroll_y: f32,
+    ) {
+        if response.hovered() {
+            let (immediate_scroll, smooth_scroll, shift) = ui.input(|input| {
+                (
+                    immediate_wheel_scroll_delta(&input.raw.events, content_rect.height()),
+                    input.smooth_scroll_delta(),
+                    input.modifiers.shift,
+                )
+            });
+            // Wheel notches are applied at once; egui smooths the same notch over the next
+            // frames, so that later smoothed delta is skipped instead of scrolling twice.
+            let scroll_delta = match immediate_scroll {
+                Some(raw) => {
+                    let raw = if shift {
+                        egui::vec2(raw.x + raw.y, 0.0)
+                    } else {
+                        raw
+                    };
+                    self.virtual_editor.wheel_lead += raw - smooth_scroll;
+                    raw
+                }
+                None => consume_wheel_lead(&mut self.virtual_editor.wheel_lead, smooth_scroll),
+            };
+            if scroll_delta != egui::Vec2::ZERO {
+                self.scroll.y = (self.scroll.y - scroll_delta.y).clamp(0.0, max_scroll_y);
+                self.scroll.x = (self.scroll.x - scroll_delta.x).clamp(0.0, max_scroll_x);
+            }
+            if smooth_scroll != egui::Vec2::ZERO {
+                ui.input_mut(|input| {
+                    input.smooth_scroll_delta = egui::Vec2::ZERO;
+                });
+                ui.ctx().request_repaint();
+            }
+        } else {
+            self.virtual_editor.wheel_lead = egui::Vec2::ZERO;
+        }
+    }
+
+    /// Drag selection and clicks. Returns the line the cursor moved to, if it did.
+    fn handle_virtual_pointer(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        text_edit_id: egui::Id,
+        focused: bool,
+        line_index: &LineIndex,
+        viewport: &VirtualViewport,
+        visible_range: std::ops::Range<usize>,
+    ) -> Option<u32> {
+        let VirtualViewport {
+            content_rect,
+            text_clip_rect,
+            text_left,
+            row_height,
+            char_width,
+            ..
+        } = *viewport;
+        let line_count = line_index.line_count();
+        let mut moved_to_line = None;
+        if let Some((anchor, head)) =
+            virtual_editor_drag_selection(ui, response, line_index, &self.text, viewport)
+        {
+            self.virtual_editor.selection = Some(VirtualTextSelection { anchor, head });
+            self.cursor_position = Some(head);
+            self.virtual_editor.ime_preedit = None;
+            moved_to_line = Some(head.line);
+            self.target_position = None;
+            response.request_focus();
+            ui.memory_mut(|memory| memory.request_focus(text_edit_id));
+            ui.ctx().request_repaint();
+        }
+
+        let click_input = virtual_editor_click_input(
+            ui,
+            response,
+            text_edit_id,
+            focused,
+            viewport,
+            line_count,
+            visible_range.clone(),
+        );
+        let click_event_index = click_input
+            .event
+            .map(|event| self.debug.virtual_click.push_event(event));
+        if let Some(pointer_pos) = click_input.position {
+            let line = ((pointer_pos.y - content_rect.top() + self.scroll.y) / row_height)
+                .floor()
+                .max(0.0) as usize;
+            let line = line.min(line_count.saturating_sub(1));
+            if let Some(line_info) = line_index.line(line) {
+                let line_text = self.text.line_text_or_empty(line_info);
+                let character = virtual_click_byte_column(
+                    Some(ui),
+                    line_text,
+                    pointer_pos.x,
+                    text_left,
+                    text_clip_rect.left(),
+                    char_width,
+                );
+                let position = Position::new(line as u32, character);
+                if click_input.double_clicked {
+                    if let Some(selection) =
+                        virtual_word_selection_at_position(line_text, line as u32, character)
+                    {
+                        self.cursor_position = Some(selection.head);
+                        moved_to_line = Some(selection.head.line);
+                        self.virtual_editor.selection = Some(selection);
+                    } else {
+                        self.cursor_position = Some(position);
+                        moved_to_line = Some(position.line);
+                        self.virtual_editor.selection = None;
+                    }
+                } else {
+                    self.cursor_position = Some(position);
+                    moved_to_line = Some(position.line);
+                    self.virtual_editor.selection = None;
+                }
+                self.virtual_editor.ime_preedit = None;
+                self.target_position = None;
+                if let Some(event_index) = click_event_index {
+                    self.debug.virtual_click.last_accept = Some(VirtualClickAcceptDebug {
+                        event_index,
+                        pointer_pos,
+                        line,
+                        character,
+                        cursor_position: position,
+                        text_left,
+                        text_clip_left: text_clip_rect.left(),
+                        x_offset: virtual_click_x_offset(
+                            pointer_pos.x,
+                            text_left,
+                            text_clip_rect.left(),
+                        ),
+                    });
+                }
+                response.request_focus();
+                ui.memory_mut(|memory| memory.request_focus(text_edit_id));
+                ui.ctx().request_repaint();
+            }
+        }
+        moved_to_line
+    }
+
+    fn paint_virtual_line(
+        &mut self,
+        ui: &egui::Ui,
+        line_number: usize,
+        line_info: LineInfo,
+        paint: &VirtualLinePaint<'_>,
+        frame_counters: &mut VirtualFrameCounters,
+    ) {
+        let VirtualLinePaint {
+            painter,
+            text_painter,
+            viewport,
+            gutter_width,
+            line_count,
+            is_current_line,
+            bookmarked,
+            text_edit_id,
+            style,
+            ref highlight_line_span_range,
+        } = *paint;
+        let highlight_line_span_range = highlight_line_span_range.clone();
+        let VirtualViewport {
+            content_rect,
+            text_left,
+            row_height,
+            ..
+        } = *viewport;
+        let content_left = content_rect.left();
+        let inactive_color = ui.visuals().weak_text_color();
+        let active_color = ui.visuals().text_color();
+        let top = content_rect.top() + line_number as f32 * row_height - self.scroll.y;
+        let bookmark_rect = egui::Rect::from_min_max(
+            egui::pos2(content_left, top),
+            egui::pos2(
+                (content_left + BOOKMARK_GUTTER_WIDTH).min(content_rect.right()),
+                top + row_height,
+            ),
+        );
+        let bookmark_response = ui.interact(
+            bookmark_rect,
+            text_edit_id.with(("virtual_bookmark_gutter", line_number)),
+            egui::Sense::click(),
+        );
+        if bookmarked || bookmark_response.hovered() || is_current_line {
+            painter.text(
+                bookmark_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                if bookmarked { "★" } else { "☆" },
+                bookmark_gutter_font_id(row_height),
+                if bookmarked {
+                    ui.visuals().selection.bg_fill
+                } else {
+                    inactive_color
+                },
+            );
+        }
+        if bookmark_response.clicked()
+            && let Some(path) = self.path().map(Path::to_path_buf)
+        {
+            self.pending_action = Some(EditorAction::ToggleBookmark {
+                path,
+                line: line_number as u32,
+            });
+        }
+        let line_number_galley = self.cached_virtual_line_number_galley(
+            ui,
+            line_number,
+            line_count,
+            is_current_line,
+            (inactive_color, active_color),
+            Some(&mut *frame_counters),
+        );
+        painter.galley(
+            egui::pos2(
+                content_left + gutter_width - 8.0 - line_number_galley.size().x,
+                top,
+            ),
+            line_number_galley,
+            if is_current_line {
+                active_color
+            } else {
+                inactive_color
+            },
+        );
+
+        let galley = self.cached_virtual_line_galley(
+            ui,
+            line_number,
+            line_info,
+            style,
+            highlight_line_span_range,
+            Some(frame_counters),
+        );
+        text_painter.galley(
+            egui::pos2(text_left, top),
+            galley,
+            ui.visuals().text_color(),
+        );
+    }
+
+    /// Tells the platform where the IME window goes, and that text under the pointer is editable.
+    fn publish_virtual_ime_area(
+        &self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        focused: bool,
+        text_edit_id: egui::Id,
+        cursor_rect: Option<egui::Rect>,
+    ) {
+        if focused
+            && !self.read_only()
+            && virtual_editor_can_handle_key(ui, text_edit_id)
+            && let Some(cursor_rect) = cursor_rect
+        {
+            let to_global = ui
+                .ctx()
+                .layer_transform_to_global(ui.layer_id())
+                .unwrap_or_default();
+            ui.output_mut(|output| {
+                output.ime = Some(egui::output::IMEOutput {
+                    rect: to_global * response.rect,
+                    cursor_rect: to_global * cursor_rect,
+                });
+            });
+        }
+        if response.hovered() && !self.read_only() {
+            ui.output_mut(|output| {
+                output.mutable_text_under_cursor = true;
+            });
+        }
+    }
+}
+
+/// How to paint one line of the large-file editor.
+struct VirtualLinePaint<'a> {
+    painter: &'a egui::Painter,
+    text_painter: &'a egui::Painter,
+    viewport: &'a VirtualViewport,
+    gutter_width: f32,
+    line_count: usize,
+    is_current_line: bool,
+    bookmarked: bool,
+    text_edit_id: egui::Id,
+    style: &'a VirtualLineStyle<'a>,
+    highlight_line_span_range: std::ops::Range<usize>,
+}
+
+/// Keys reach the editor only while it holds focus, and the lock keeps Tab and arrows from
+/// moving focus away. A press elsewhere gives the focus up.
+fn lock_virtual_editor_focus(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    viewport_rect: egui::Rect,
+    text_edit_id: egui::Id,
+) {
+    if response.has_focus() {
+        let pressed_outside = ui.input(|input| {
+            input.pointer.any_pressed()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|position| !viewport_rect.contains(position))
+        });
+        if pressed_outside {
+            response.surrender_focus();
+        } else {
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    text_edit_id,
+                    egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: false,
+                    },
+                );
+            });
+        }
     }
 }
 
