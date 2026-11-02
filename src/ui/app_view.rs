@@ -98,6 +98,7 @@ use crate::core::{
 use crate::features::search::{SearchResult, search_everywhere};
 use crate::languages::LanguageRegistry;
 use crate::platform;
+use clipboard::*;
 use csv_grid::*;
 use diff_view::*;
 use editor_debug::*;
@@ -1032,14 +1033,6 @@ fn text_position_from_position(position: Option<Position>) -> TextPosition {
     position
         .map(|position| TextPosition::new(position.line, position.character))
         .unwrap_or_default()
-}
-
-fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
-    platform::current().copy_text(text)
-}
-
-fn read_text_from_system_clipboard() -> Result<String, String> {
-    platform::current().read_text()
 }
 
 fn ui_was_primary_clicked(ui: &egui::Ui) -> bool {

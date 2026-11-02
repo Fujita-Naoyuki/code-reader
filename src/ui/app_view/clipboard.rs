@@ -138,3 +138,11 @@ impl CodeReaderApp {
         }
     }
 }
+
+pub(super) fn copy_text_to_system_clipboard(text: &str) -> Result<(), String> {
+    platform::current().copy_text(text)
+}
+
+pub(super) fn read_text_from_system_clipboard() -> Result<String, String> {
+    platform::current().read_text()
+}
