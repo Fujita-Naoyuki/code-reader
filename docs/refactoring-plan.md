@@ -232,3 +232,41 @@ src/
 | 5 仕上げ | 小（3〜4） | 最後 |
 
 フェーズ 0〜2 は挙動に触れない機械的な作業が中心で、AI に任せやすい部分です。フェーズ 3・4 は設計判断を含むため、ステップごとに差分のレビューを挟むことを推奨します。
+
+## 10. 実施結果
+
+フェーズ 0〜5 を実施しました（`d211a25` 以降のコミット）。判断が必要だった 4 点は、次のとおり決まりました。
+
+- LSP 非対応言語向けの定義解決：削除した。
+- 診断用のクリック記録・性能計測：製品に残し、`editor_debug.rs` と `diagnostics.rs` に隔離した。
+- `EditorContent` enum 化：実施した（範囲は下記）。
+- Git テスト：本物の git のまま。そのためフェーズ 1-6（`GitClient`）は行わなかった。
+
+### 指標
+
+| 指標 | 開始時 | 目標 | 結果 | 達成 |
+|---|---|---|---|---|
+| 最大ファイル行数（テストを含む） | 23,796 | 1,200 以下 | 1,223（`core/lsp.rs`。次点は 1,194） | ほぼ達成 |
+| `app_view.rs` | 23,796 | 骨組みのみ | 966 | 達成 |
+| 200 行超の関数 | 11 | — | 5 | — |
+| 100 行超の関数 | 38 | 5 以下 | 25 | **未達** |
+| `CodeReaderApp` / `EditorPane` の直接フィールド数 | 69 / 66 | 20 / 15 以下 | 20 / 17 | ほぼ達成 |
+| clippy 警告 | 57 | 0 | 0（`-D warnings` で検証） | 達成 |
+| `allow(dead_code)` / `allow(too_many_arguments)` | 1 / 8 | 0 / 0 | 0 / 0 | 達成 |
+| テスト | 386 件・95.4% | 全件通過・95% 以上 | 385 件・97.58% | 達成 |
+| キー割り当ての定義元 | 3 か所 | 1 か所 | 表示は 1 か所、処理は機能ごと | 一部 |
+
+カバレッジが上がったのは、主に未カバーだった未使用コードを削除したためです。テスト数の増減は、削除したコードのテストを除き、ステータスと Esc のテストを追加した結果です。
+
+### 計画と違う点
+
+- **ファイル構成：** `ui/app_view/` の下にサブフォルダを作らず、35 ファイルをフラットに置いた。子モジュールが `use super::*` と `pub(super)` で親を共有する形は、階層を増やすと可視性の指定が煩雑になるため。
+- **`EditorContent`（3-3）：** `path`・`read_only`・差分・履歴を enum にまとめたが、Markdown・CSV・大容量エディタの状態は `File` の中に入れず、ペイン直下の構造体のまま。これらのビューはペインのテキストと一緒に状態を読み書きし、ペインのメソッドを呼び返すため、`File` の中へ移すにはビューの書き直しが必要になる。完了条件の「差分・履歴・空のペインではファイル用の状態が型として存在しない」は満たしていない。
+- **キー割り当て（4-1）：** Help とステータスバーは `keymap.rs` の表から作るようにしたが、キーの処理そのものは各機能のまま。処理は egui の入力の消費順と各画面の状態に結びついていて、表から生成すると挙動が変わるおそれがある。処理を変えるときは表の行も直す必要がある。
+- **`Modal`（4-2）：** 開いている UI を保持する状態を 1 つの enum にはせず、既存のフィールドから最前面を求める `top_dialog()` にした。優先順位と Esc の配分は 1 か所になったが、複数のダイアログが同時に開ける状態自体は残っている。
+- **長い関数（3-4）：** 上の表のとおり未達。残りの大半はウィンドウや描画の 1 つのクロージャが長いもの。
+
+### 残っている 100 行超の関数
+
+`virtual_source_editor_ui`、`source_editor_ui`、`show_recent_workspaces_window`、`show_workspace_file_dialog`、`show_git_switch_branch_window`、`show_search_overlay`、`markdown_inline_widgets_ui`、`show_references_overlay`、`markdown_source_ui`、`diff_view_ui`、`markdown_render_node_ui`、`git_ui`、`git_history_row_ui`、`markdown_ui`、`debug_report_lines`、`virtual_editor_click_input`、`show_shortcuts_help_window`、`csv_ui`、`workspace_search_ui`、`handle_lsp_response`、`markdown_search_ui`、`show_git_commit_details_window`、`source_search_ui`、`parse_diff_display_rows`、`handle_virtual_pointer`
+
