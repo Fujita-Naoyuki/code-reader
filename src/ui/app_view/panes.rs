@@ -384,3 +384,15 @@ impl CodeReaderApp {
         }
     }
 }
+
+/// What to do once the user has saved or discarded unsaved edits.
+pub(super) enum UnsavedChangesAction {
+    ReplaceEditor {
+        pane: Pane,
+        next: Box<EditorPane>,
+        sync_open_files: bool,
+        status: Option<String>,
+    },
+    SwitchSession(String),
+    CreateSession,
+}

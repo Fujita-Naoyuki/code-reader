@@ -109,6 +109,7 @@ use git_windows::*;
 use lsp::*;
 use markdown_render::*;
 use markdown_view::*;
+use panes::*;
 use search::*;
 use shortcuts::*;
 use source_editor::*;
@@ -928,18 +929,6 @@ impl eframe::App for CodeReaderApp {
             page_key,
         );
     }
-}
-
-/// What to do once the user has saved or discarded unsaved edits.
-enum UnsavedChangesAction {
-    ReplaceEditor {
-        pane: Pane,
-        next: Box<EditorPane>,
-        sync_open_files: bool,
-        status: Option<String>,
-    },
-    SwitchSession(String),
-    CreateSession,
 }
 
 impl EditorPane {}
